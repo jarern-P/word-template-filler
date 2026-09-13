@@ -97,10 +97,22 @@ word-template-filler/
 │   │   └── db/
 │   │       └── db-worker.cjs
 │   │
-│   └── renderer/
+│   └── renderer/          # Vite root
 │       ├── index.html
-│       ├── app.js
 │       └── style.css
+│
+├── public/                # Renderer scripts (เสิร์ฟตรง ๆ ไม่ผ่าน bundler)
+│   ├── app.js
+│   ├── db.js
+│   ├── extract.js
+│   ├── fieldTypes.js
+│   ├── replace.js
+│   └── components/
+│
+├── data/                  # SQLite (ตอน development)
+│   └── templates.db
+│
+├── dist/                  # Vite build output (ถูก package เข้า .exe)
 │
 ├── vite.config.js
 ├── package.json
@@ -108,13 +120,20 @@ word-template-filler/
 └── README.md
 ```
 
+> ไฟล์ Renderer (`.js`/`.css`/`.svg`) อยู่ใน `public/` ที่เดียว
+> ถ้าเพิ่มไฟล์ใหม่ให้ใส่ที่นี่ ห้ามคัดลอกไปไว้ใน `src/renderer`
+> เพราะจะทำให้ dev กับ .exe โหลดคนละไฟล์
+
 ---
 
 ## Development Environment
 
 ### Node.js
 
-โปรเจกต์นี้พัฒนาบน Node.js 22
+โปรเจกต์นี้พัฒนาบน Node.js 22 (ต้องเป็น **22.12 ขึ้นไป**)
+
+ถ้าใช้ Node ต่ำกว่านี้ `vite build` จะเตือน และ `electron-builder` จะล้มเหลว
+ด้วย error `ERR_REQUIRE_ESM`
 
 ตรวจสอบ Version:
 
@@ -152,7 +171,11 @@ Vite           8.3.0
 better-sqlite3 13.0.3
 concurrently   9.2.4
 wait-on        9.1.0
+jszip          3.10.2
 ```
+
+> `jszip` ใช้ตอน build เท่านั้น (Vite คัดลอกไฟล์ไปที่ `dist/vendor/`)
+> Renderer จึงโหลด jszip จากในแอปได้ ไม่ต้องต่ออินเทอร์เน็ต
 
 ---
 
@@ -217,6 +240,20 @@ concurrently
 ```
 
 Electron จะรอจนกว่า Vite จะพร้อมก่อนจึงเปิด Application
+
+### แก้โค้ด Renderer ตอน dev
+
+ไฟล์ `.js` ของ Renderer อยู่ใน `public/` ซึ่งเป็นที่เดียวที่ทั้ง dev และ `.exe` ใช้
+
+```text
+public/app.js  ->  dev: Vite เสิร์ฟที่ http://localhost:5173/app.js
+               ->  build: ถูกคัดลอกไป dist/app.js แล้วเข้า app.asar
+```
+
+- แก้ไฟล์ใน `public/` แล้วบันทึก → หน้าต่าง Electron รีเฟรชเอง
+  (มี plugin `public-dir-reload` ใน `vite.config.js` ช่วย reload ให้)
+- ไม่ต้องคัดลอกไฟล์ไปที่อื่น และ **ห้ามแก้ใน `dist/`** เพราะจะถูกลบทุกครั้งที่ build
+- ถ้าแก้ `vite.config.js` ต้องปิด dev server แล้วเปิดใหม่
 
 ---
 
@@ -556,7 +593,74 @@ Start Vite และ Electron พร้อมกัน
 npm run build
 ```
 
-Build Renderer สำหรับ Production
+Build Renderer สำหรับ Production (ออกไปที่ `dist/`)
+
+```text
+npm run build:exe
+```
+
+Build Renderer แล้ว package เป็น `.exe` (portable) ที่โฟลเดอร์ `release/`
+
+---
+
+## Production (.exe)
+
+### ทางลัด: build script (PowerShell)
+
+`scripts/build-exe.ps1` ทำงานแทนขั้นตอนทั้งหมดข้างบนให้อัตโนมัติ
+
+```powershell
+# build ปกติ -> release\Word Template Filler 1.0.0.exe
+npm run build:exe:ps
+
+# build ใหม่หมด (ลบ dist/ + โฟลเดอร์ปลายทางก่อน)
+npm run build:exe:ps -- -Clean
+
+# ปิดโปรแกรมที่รันอยู่อัตโนมัติก่อน build
+npm run build:exe:ps -- -KillRunning
+
+# build ทดสอบ ไปโฟลเดอร์อื่น (ไม่ทับ release/ ที่โปรแกรมกำลังเปิดอยู่)
+npm run build:exe:ps -- -OutputDir release-test
+```
+
+สคริปต์ทําให้ 5 ขั้น:
+
+```text
+1. หา Node 22.12+ ที่ใช้ build ได้ (ถ้า node ใน PATH เก่า จะหาเวอร์ชันอื่นให้เอง)
+2. เช็คว่าโปรแกรมไม่ได้รันอยู่ (ไฟล์ .exe ถูก lock)
+3. npm run build        -> dist/
+4. electron-builder     -> <output>/Word Template Filler 1.0.0.exe
+5. ตรวจผลลัพธ์ (asar, native module, css path, jszip)
+```
+
+ข้อควรรู้: build ไม่ได้ถ้าเปิด `.exe` ค้างไว้ เพราะ Windows ล็อกไฟล์
+ให้ปิดหน้าต่างโปรแกรมก่อน หรือใช้ `-KillRunning` หรือ `-OutputDir release-test`
+
+### ตำแหน่งข้อมูล (SQLite)
+
+```text
+Development           -> <project>/data/templates.db
+Portable .exe         -> <โฟลเดอร์ของ .exe>/data/templates.db
+โฟลเดอร์เขียนไม่ได้    -> userData/data/templates.db
+```
+
+Renderer ไม่ต้องแก้อะไร ทั้ง dev และ .exe ใช้ `window.electronAPI` ชุดเดียวกัน
+เพราะตำแหน่งไฟล์ถูกคำนวณจากฝั่ง Main Process แล้วส่งต่อให้ DB Worker
+
+### หมายเหตุเรื่อง asar
+
+`dist/` ถูก pack เข้า `app.asar` แต่ `.node` และ DB Worker จะโหลดจากใน asar
+โดยตรงไม่ได้ จึงต้องมี `asarUnpack` ใน `package.json`
+
+```json
+"asarUnpack": [
+  "**/*.node",
+  "src/main/db/**"
+]
+```
+
+และ `vite.config.js` ต้อง build ด้วย `base: "./"` เพื่อให้ path ของ CSS
+เป็นแบบ relative เพราะหน้าเว็บถูกเปิดด้วย `file://` ไม่ใช่ http server
 
 ---
 

@@ -10,17 +10,7 @@ contextBridge.exposeInMainWorld(
         getAppInfo: () =>
             ipcRenderer.invoke("app:get-info"),
 
-        // Old test API
-        pingDatabase: () =>
-            ipcRenderer.invoke("db:ping"),
-
-        getSqliteVersion: () =>
-            ipcRenderer.invoke("db:sqlite-version"),
-
-        checkDatabaseSchema: () =>
-            ipcRenderer.invoke("db:check-schema"),
-
-        // New Database API
+        // Database API
         dbInit: () =>
             ipcRenderer.invoke("db:init"),
 
@@ -35,7 +25,8 @@ contextBridge.exposeInMainWorld(
 
         dbRemove: (id) =>
             ipcRenderer.invoke("db:remove", id),
-                // ─────────────────────────────
+
+        // ─────────────────────────────
         // File
         // ─────────────────────────────
 

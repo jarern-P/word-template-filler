@@ -15,22 +15,66 @@ const {
 // Data Path
 // ============================================================
 
+function isWritableDir(dir) {
+
+    try {
+
+        fs.mkdirSync(
+            dir,
+            {
+                recursive: true
+            }
+        );
+
+        fs.accessSync(
+            dir,
+            fs.constants.W_OK
+        );
+
+        return true;
+
+    } catch (error) {
+
+        return false;
+    }
+}
+
+
+// Development            -> <project>/data
+// Portable .exe          -> <โฟลเดอร์ของ .exe>/data
+// เขียนไม่ได้ (ติดตั้ง)  -> userData/data
 function getDataPath() {
 
-    // Development
-    if (!app.isPackaged) {
-        return path.join(
-            app.getAppPath(),
-            "data"
-        );
+    const candidates =
+        app.isPackaged
+            ? [
+                path.join(
+                    process.env.PORTABLE_EXECUTABLE_DIR ||
+                    path.dirname(process.execPath),
+                    "data"
+                ),
+                path.join(
+                    app.getPath("userData"),
+                    "data"
+                )
+            ]
+            : [
+                path.join(
+                    app.getAppPath(),
+                    "data"
+                )
+            ];
+
+
+    for (const dir of candidates) {
+
+        if (isWritableDir(dir)) {
+            return dir;
+        }
     }
 
-    // Production
-    // data อยู่ข้าง .exe
-    return path.join(
-        path.dirname(process.execPath),
-        "data"
-    );
+
+    return candidates[candidates.length - 1];
 }
 
 
@@ -38,23 +82,112 @@ function getDataPath() {
 // DB Worker
 // ============================================================
 
-const dbWorkerPath = path.join(
-    __dirname,
-    "db",
-    "db-worker.cjs"
-);
+// worker เป็นไฟล์ .cjs ที่อ่านจาก asar ตรง ๆ ไม่ได้
+// จึงอ้าง path จาก app.asar.unpacked (ดู asarUnpack ใน package.json)
+function getDbWorkerPath() {
 
-const dbDataPath = getDataPath();
+    if (app.isPackaged) {
 
-const dbWorker = new Worker(
-    dbWorkerPath,
-    {
-        workerData: {
-            dbDataPath: dbDataPath
-        }
+        return path.join(
+            process.resourcesPath,
+            "app.asar.unpacked",
+            "src",
+            "main",
+            "db",
+            "db-worker.cjs"
+        );
     }
-);
 
+    return path.join(
+        __dirname,
+        "db",
+        "db-worker.cjs"
+    );
+}
+
+
+let dbWorker = null;
+let dbReadyPromise = null;
+let dbReadyResolve = null;
+let dbReadyReject = null;
+let dbDataPath = "";
+
+
+function dbReady() {
+
+    if (!dbReadyPromise) {
+
+        return Promise.reject(
+            new Error("DB Worker ยังไม่เริ่มทำงาน")
+        );
+    }
+
+    return dbReadyPromise;
+}
+
+
+function startDbWorker() {
+
+    dbDataPath = getDataPath();
+
+    console.log(
+        "Data path:",
+        dbDataPath
+    );
+
+
+    dbReadyPromise = new Promise(
+        (resolve, reject) => {
+            dbReadyResolve = resolve;
+            dbReadyReject = reject;
+        }
+    );
+
+
+    // แจ้งให้ผู้ใช้เห็นว่าเปิดฐานข้อมูลไม่ได้เพราะอะไร
+    // แทนที่จะเงียบ ๆ แล้วเหลือ UI ที่ใช้งานไม่ได้
+    dbReadyPromise.catch((error) => {
+
+        console.error(
+            "เปิดฐานข้อมูลไม่สำเร็จ:",
+            error
+        );
+
+        dialog.showErrorBox(
+            "เปิดฐานข้อมูลไม่สำเร็จ",
+            `ตำแหน่งไฟล์: ${dbDataPath}\n\n${error?.message || String(error)}`
+        );
+    });
+
+
+    dbWorker = new Worker(
+        getDbWorkerPath(),
+        {
+            workerData: {
+                dbDataPath: dbDataPath
+            }
+        }
+    );
+
+
+    dbWorker.on(
+        "message",
+        onDbWorkerMessage
+    );
+
+    dbWorker.on(
+        "error",
+        onDbWorkerError
+    );
+
+    dbWorker.on(
+        "exit",
+        onDbWorkerExit
+    );
+
+
+    return dbReadyPromise;
+}
 
 // ============================================================
 // DB Request Management
@@ -66,29 +199,14 @@ const pendingRequests = new Map();
 
 
 // ============================================================
-// DB Ready
-// ============================================================
-
-let dbReadyResolve;
-let dbReadyReject;
-
-const dbReadyPromise = new Promise(
-    (resolve, reject) => {
-        dbReadyResolve = resolve;
-        dbReadyReject = reject;
-    }
-);
-
-
-// ============================================================
 // Worker Message
 // ============================================================
 
-dbWorker.on("message", (message) => {
+function onDbWorkerMessage(message) {
 
     console.log(
         "DB Worker:",
-        message
+        message.type || message.id
     );
 
 
@@ -149,15 +267,14 @@ dbWorker.on("message", (message) => {
 
         request.resolve(message);
     }
-
-});
+}
 
 
 // ============================================================
 // Worker Error
 // ============================================================
 
-dbWorker.on("error", (error) => {
+function onDbWorkerError(error) {
 
     console.error(
         "DB Worker error:",
@@ -179,20 +296,20 @@ dbWorker.on("error", (error) => {
 
 
     dbReadyReject(error);
-});
+}
 
 
 // ============================================================
 // Worker Exit
 // ============================================================
 
-dbWorker.on("exit", (code) => {
+function onDbWorkerExit(code) {
 
     console.log(
         `DB Worker exited with code ${code}`
     );
 
-});
+}
 
 
 // ============================================================
@@ -237,40 +354,38 @@ function dbRequest(
 
 function createWindow() {
 
-    const win =
-        new BrowserWindow({
+    const win = new BrowserWindow({
+        width: 1400,
+        height: 900,
 
-            width: 1200,
-            height: 800,
+        webPreferences: {
+            preload: path.join(
+                __dirname,
+                "preload.cjs"
+            ),
+            contextIsolation: true,
+            nodeIntegration: false
+        }
+    });
 
-            minWidth: 1000,
-            minHeight: 700,
+    if (app.isPackaged) {
 
+        win.loadFile(
+            path.join(
+                app.getAppPath(),
+                "dist",
+                "index.html"
+            )
+        );
 
-            webPreferences: {
+    } else {
 
-                contextIsolation: true,
+        win.loadURL(
+            "http://localhost:5173"
+        );
+    }
 
-                nodeIntegration: false,
-
-                preload:
-                    path.join(
-                        __dirname,
-                        "preload.cjs"
-                    )
-
-            }
-
-        });
-
-
-    win.loadURL(
-        "http://localhost:5173"
-    );
-
-
-    win.webContents.openDevTools();
-
+    return win;
 }
 
 
@@ -310,7 +425,7 @@ ipcMain.handle(
         try {
 
             const result =
-                await dbReadyPromise;
+                await dbReady();
 
 
             return {
@@ -356,7 +471,7 @@ ipcMain.handle(
 
         try {
 
-            await dbReadyPromise;
+            await dbReady();
 
 
             const result =
@@ -396,7 +511,7 @@ ipcMain.handle(
 
         try {
 
-            await dbReadyPromise;
+            await dbReady();
 
 
             const result =
@@ -439,7 +554,7 @@ ipcMain.handle(
 
         try {
 
-            await dbReadyPromise;
+            await dbReady();
 
 
             const result =
@@ -484,7 +599,7 @@ ipcMain.handle(
 
         try {
 
-            await dbReadyPromise;
+            await dbReady();
 
 
             const result =
@@ -612,6 +727,8 @@ ipcMain.handle(
 // ============================================================
 
 app.whenReady().then(() => {
+
+    startDbWorker();
 
     createWindow();
 

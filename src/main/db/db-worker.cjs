@@ -1,4 +1,4 @@
-const { parentPort } = require("worker_threads");
+const { parentPort, workerData } = require("worker_threads");
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
@@ -7,11 +7,17 @@ const fs = require("fs");
 // Database Path
 // ============================================================
 
-// const dbDir = path.join(__dirname, "data");
-const dbDir = path.resolve(
-    __dirname,
-    "../../../data"
-);
+// ตำแหน่ง data มาจาก main process เท่านั้น
+// (dev = <project>/data, .exe = <โฟลเดอร์ของ exe>/data)
+// เพราะ path ใน app.asar นั้นเขียนไฟล์ไม่ได้
+const dbDir =
+    (workerData && workerData.dbDataPath) ||
+    path.resolve(
+        __dirname,
+        "../../../data"
+    );
+
+console.log("DB data path:", dbDir);
 
 if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, {
