@@ -11,17 +11,48 @@ const {
     Worker
 } = require("worker_threads");
 
+// ============================================================
+// Data Path
+// ============================================================
+
+function getDataPath() {
+
+    // Development
+    if (!app.isPackaged) {
+        return path.join(
+            app.getAppPath(),
+            "data"
+        );
+    }
+
+    // Production
+    // data อยู่ข้าง .exe
+    return path.join(
+        path.dirname(process.execPath),
+        "data"
+    );
+}
+
 
 // ============================================================
 // DB Worker
 // ============================================================
 
+const dbWorkerPath = path.join(
+    __dirname,
+    "db",
+    "db-worker.cjs"
+);
+
+const dbDataPath = getDataPath();
+
 const dbWorker = new Worker(
-    path.join(
-        __dirname,
-        "db",
-        "db-worker.cjs"
-    )
+    dbWorkerPath,
+    {
+        workerData: {
+            dbDataPath: dbDataPath
+        }
+    }
 );
 
 

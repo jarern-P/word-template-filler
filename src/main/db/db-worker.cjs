@@ -7,7 +7,11 @@ const fs = require("fs");
 // Database Path
 // ============================================================
 
-const dbDir = path.join(__dirname, "data");
+// const dbDir = path.join(__dirname, "data");
+const dbDir = path.resolve(
+    __dirname,
+    "../../../data"
+);
 
 if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, {
