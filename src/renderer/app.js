@@ -5,9 +5,12 @@ async function testElectronIPC() {
 
     const sqlite = await window.electronAPI.getSqliteVersion();
 
+    const schema = await window.electronAPI.checkDatabaseSchema();
+
     console.log("App Info:", info);
     console.log("DB Worker:", db);
     console.log("SQLite:", sqlite);
+    console.log("Schema:", schema);
 
     document.querySelector("#app").innerHTML = `
         <h1>${info.name}</h1>

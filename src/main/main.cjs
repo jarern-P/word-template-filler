@@ -83,6 +83,28 @@ ipcMain.handle("db:sqlite-version", () => {
     });
 });
 
+ipcMain.handle("db:check-schema", () => {
+    return new Promise((resolve, reject) => {
+
+        const handleMessage = (message) => {
+
+            if (message.type !== "check-schema") {
+                return;
+            }
+
+            dbWorker.off("message", handleMessage);
+
+            resolve(message);
+        };
+
+        dbWorker.on("message", handleMessage);
+
+        dbWorker.postMessage({
+            type: "check-schema"
+        });
+    });
+});
+
 app.whenReady().then(() => {
     createWindow();
 

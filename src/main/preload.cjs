@@ -6,5 +6,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     pingDatabase: () => ipcRenderer.invoke("db:ping"),
     
     getSqliteVersion: () =>
-        ipcRenderer.invoke("db:sqlite-version")
+        ipcRenderer.invoke("db:sqlite-version"),
+
+    checkDatabaseSchema: () =>
+    ipcRenderer.invoke("db:check-schema")
 });
