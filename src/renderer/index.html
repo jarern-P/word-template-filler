@@ -1,29 +1,81 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="th">
+
 <head>
-    <meta charset="UTF-8" />
+    <meta charset="UTF-8">
 
     <meta
         name="viewport"
         content="width=device-width, initial-scale=1.0"
-    />
+    >
 
     <title>Word Template Filler</title>
 
-    <link rel="stylesheet" href="./style.css" />
+    <link
+        rel="stylesheet"
+        href="./style.css"
+    >
 </head>
 
 <body>
 
-    <div id="app">
-        <h1>Word Template Filler</h1>
+    <div class="sidebar">
 
-        <p>
-            Electron + Vite ทำงานแล้ว
-        </p>
+        <h3>เมนู</h3>
+
+        <div
+            class="menu-item active"
+            data-page="report"
+        >
+            📄 รายงาน
+        </div>
+
+        <div
+            class="menu-item"
+            data-page="master"
+        >
+            ⚙️ Master
+        </div>
+
+        <div
+            class="submenu"
+            id="masterSubmenu"
+        >
+            <div
+                class="menu-item"
+                data-page="template-config"
+            >
+                📋 Template Configuration
+            </div>
+        </div>
+
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <div
+        class="main"
+        id="mainContent"
+    ></div>
+
+
+    <!--
+        Dependency
+        jszip -> modules -> components -> db -> app
+    -->
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+    <script src="./extract.js"></script>
+    <script src="./replace.js"></script>
+    <script src="./fieldTypes.js"></script>
+
+    <script src="./components/formPage.js"></script>
+    <script src="./components/sidebar.js"></script>
+    <script src="./components/reportPage.js"></script>
+    <script src="./components/templateConfigPage.js"></script>
+
+    <script src="./db.js"></script>
+    <script src="./app.js"></script>
 
 </body>
+
 </html>

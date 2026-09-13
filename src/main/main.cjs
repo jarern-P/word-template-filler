@@ -1,14 +1,15 @@
 const {
     app,
     BrowserWindow,
-    ipcMain
+    ipcMain,
+    dialog
 } = require("electron");
 
+const fs = require("fs");
+const path = require("path");
 const {
     Worker
 } = require("worker_threads");
-
-const path = require("path");
 
 
 // ============================================================
@@ -480,6 +481,97 @@ ipcMain.handle(
 
         }
 
+    }
+);
+// ============================================================
+// File
+// ============================================================
+
+ipcMain.handle(
+    "file:save",
+    async function (_event, payload) {
+
+        try {
+
+            if (!payload) {
+                throw new Error(
+                    "ไม่ได้รับข้อมูลไฟล์"
+                );
+            }
+
+            const fileName =
+                String(
+                    payload.fileName ||
+                    "document.docx"
+                );
+
+            const data =
+                payload.data;
+
+            if (!data) {
+                throw new Error(
+                    "ไม่ได้รับข้อมูลไฟล์"
+                );
+            }
+
+            const result =
+                await dialog.showSaveDialog({
+                    title: "บันทึกเอกสาร",
+                    defaultPath: fileName,
+                    filters: [
+                        {
+                            name: "Word Document",
+                            extensions: ["docx"]
+                        }
+                    ]
+                });
+
+            // ผู้ใช้กด Cancel
+            if (result.canceled) {
+                return {
+                    ok: true,
+                    canceled: true
+                };
+            }
+
+            if (!result.filePath) {
+                return {
+                    ok: true,
+                    canceled: true
+                };
+            }
+
+            const buffer =
+                Buffer.from(
+                    data
+                );
+
+            await fs.promises.writeFile(
+                result.filePath,
+                buffer
+            );
+
+            return {
+                ok: true,
+                canceled: false,
+                filePath:
+                    result.filePath
+            };
+
+        } catch (error) {
+
+            console.error(
+                "file:save error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error.message ||
+                    "บันทึกไฟล์ไม่สำเร็จ"
+            };
+        }
     }
 );
 

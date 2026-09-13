@@ -34,6 +34,15 @@ contextBridge.exposeInMainWorld(
             ipcRenderer.invoke("db:get", id),
 
         dbRemove: (id) =>
-            ipcRenderer.invoke("db:remove", id)
+            ipcRenderer.invoke("db:remove", id),
+                // ─────────────────────────────
+        // File
+        // ─────────────────────────────
+
+        saveFile: (payload) =>
+            ipcRenderer.invoke(
+                "file:save",
+                payload
+            )
     }
 );

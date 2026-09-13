@@ -7,3 +7,242 @@ body {
 #app {
     padding: 40px;
 }
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 200px;
+    background: #f5f5f5;
+    border-right: 1px solid #ddd;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.sidebar h3 {
+    font-size: 14px;
+    margin: 0 0 10px 0;
+    color: #333;
+}
+
+.sidebar .menu-item {
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #555;
+}
+
+.sidebar .menu-item:hover {
+    background: #e8e8e8;
+}
+
+.sidebar .menu-item.active {
+    background: #e0e0e0;
+    color: #000;
+    font-weight: bold;
+}
+
+.sidebar .menu-item.locked {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sidebar .lock-icon {
+    font-size: 12px;
+    margin-left: 6px;
+}
+
+.sidebar .submenu {
+    margin-left: 20px;
+    display: none;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 10px;
+    border-left: 2px solid #ccc;
+}
+
+.sidebar .submenu.open {
+    display: flex;
+}
+
+.sidebar .submenu .menu-item {
+    font-size: 13px;
+    padding: 6px 10px;
+}
+
+.main {
+    flex: 1;
+    padding: 40px;
+    max-width: 900px;
+}
+
+.box {
+    border: 2px dashed #aaa;
+    padding: 40px;
+    text-align: center;
+    border-radius: 10px;
+}
+
+.field {
+    margin: 15px 0;
+}
+
+.field label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.field input,
+.field select,
+.field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    font-size: 16px;
+    font-family: inherit;
+}
+
+/* checkbox ไม่ต้องกว้างเต็มบรรทัด / textarea ย่อขยายได้เฉพาะแนวตั้ง */
+.field input[type="checkbox"] {
+    width: auto;
+    padding: 0;
+}
+
+.field textarea {
+    resize: vertical;
+}
+
+.hint {
+    color: #777;
+    font-size: 15px;
+}
+
+/* ช่องวันที่ + ข้อความแสดงค่าที่จะใส่จริงในเอกสาร */
+.field-control {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.field-preview {
+    font-size: 13px;
+    color: #0a7a3d;
+    min-height: 16px;
+}
+
+button {
+    margin-top: 20px;
+    padding: 12px 20px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+#form {
+    margin-top: 30px;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ── หน้าตั้งค่า template ── */
+.template-meta {
+    margin-top: 25px;
+}
+
+.template-meta label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+}
+
+.template-meta input,
+.template-meta select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    font-size: 16px;
+    font-family: inherit;
+}
+
+.saved-templates {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid #ddd;
+}
+
+.saved-templates h2 {
+    font-size: 18px;
+}
+
+.db-status {
+    font-size: 13px;
+    color: #666;
+    min-height: 18px;
+}
+
+.db-status.warn {
+    color: #a06000;
+}
+
+.db-status.error {
+    color: #b00020;
+}
+
+.saved-list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+}
+
+.saved-list .empty {
+    color: #888;
+    font-size: 14px;
+    padding: 10px 0;
+}
+
+.saved-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.saved-item .info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.saved-item .meta {
+    font-size: 12px;
+    color: #777;
+}
+
+.saved-item .actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.saved-item button {
+    margin-top: 0;
+    padding: 8px 12px;
+    font-size: 14px;
+}
+
+.saved-item button.danger {
+    color: #b00020;
+}

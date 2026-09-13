@@ -1,23 +1,10 @@
-//
-// DB Module
-// สื่อสารกับ Electron Main Process ผ่าน IPC
-// SQLite ทำงานใน DB Worker
-//
-
 (function (scope) {
-
     'use strict';
-
-
-    // ============================================================
-    // State
-    // ============================================================
 
     let readyPromise = null;
 
-
     // ============================================================
-    // Initialize
+    // Initialize Database
     // ============================================================
 
     function init() {
@@ -26,68 +13,81 @@
             return readyPromise;
         }
 
+        readyPromise =
+            Promise.resolve()
+                .then(function () {
 
-        readyPromise = Promise.resolve()
-            .then(function () {
+                    if (!window.electronAPI) {
+                        throw new Error(
+                            'Electron API not available'
+                        );
+                    }
 
-                if (!window.electronAPI) {
-                    throw new Error(
-                        'Electron API not available'
-                    );
-                }
+                    return window.electronAPI.dbInit();
 
+                })
+                .then(function (result) {
 
-                return window.electronAPI.dbInit();
-            })
-            .then(function (result) {
+                    if (!result || !result.ok) {
 
-                if (!result || !result.ok) {
+                        throw new Error(
+                            result?.error ||
+                            'เริ่มฐานข้อมูลไม่สำเร็จ'
+                        );
 
-                    throw new Error(
-                        result?.error ||
-                        'เริ่มฐานข้อมูลไม่สำเร็จ'
-                    );
-                }
+                    }
 
+                    return {
+                        persistent:
+                            result.persistent,
 
-                return {
-                    persistent: true
-                };
-            })
-            .catch(function (error) {
+                        dbPath:
+                            result.dbPath
+                    };
 
-                // ให้ครั้งต่อไปสามารถลอง init ใหม่ได้
-                readyPromise = null;
+                })
+                .catch(function (error) {
 
-                throw error;
-            });
+                    readyPromise = null;
 
+                    throw error;
+
+                });
 
         return readyPromise;
     }
 
-
     // ============================================================
-    // Database Request
+    // Common Request
     // ============================================================
 
     function dbRequest(method, ...args) {
 
         return init()
+
             .then(function () {
 
                 if (!window.electronAPI) {
-
                     throw new Error(
                         'Electron API not available'
                     );
                 }
 
+                const fn =
+                    window.electronAPI[method];
 
-                return window.electronAPI[method](
-                    ...args
-                );
+                if (typeof fn !== 'function') {
+
+                    throw new Error(
+                        `Electron API "${method}" ไม่มี`
+                    );
+
+                }
+
+                return fn(...args);
+
             })
+
             .then(function (result) {
 
                 if (!result || !result.ok) {
@@ -96,13 +96,13 @@
                         result?.error ||
                         'คำสั่งฐานข้อมูลล้มเหลว'
                     );
+
                 }
 
-
                 return result.result;
+
             });
     }
-
 
     // ============================================================
     // Public API
@@ -110,68 +110,29 @@
 
     scope.Db = {
 
-        // --------------------------------------------------------
-        // Initialize
-        // --------------------------------------------------------
-
         init: init,
 
-
-        // --------------------------------------------------------
-        // Save
-        //
-        // payload:
-        //
-        // {
-        //     id?,
-        //     name,
-        //     fileName,
-        //     docx,
-        //     fields,
-        //     types
-        // }
-        // --------------------------------------------------------
-
         save: function (payload) {
-
             return dbRequest(
                 'dbSave',
                 payload
             );
         },
 
-
-        // --------------------------------------------------------
-        // List
-        // --------------------------------------------------------
-
         list: function () {
-
             return dbRequest(
                 'dbList'
             );
         },
 
-
-        // --------------------------------------------------------
-        // Get
-        // --------------------------------------------------------
-
         get: function (id) {
-
             return dbRequest(
                 'dbGet',
                 id
             );
         },
 
-
-        // --------------------------------------------------------
-        // Delete
-        // --------------------------------------------------------
-
         remove: function (id) {
-
             return dbRequest(
                 'dbRemove',
                 id
