@@ -1,4 +1,5 @@
 // Replace Module - แทน {{field}} ใน XML ด้วยค่าจาก values
+// รองรับ "ล็อกตำแหน่ง" ของ field ที่ติ๊กไว้ในหน้า Template Configuration
 (function (scope) {
     'use strict';
 
@@ -15,10 +16,11 @@
         return String(value == null ? '' : value).replace(/\r\n?|\n/g, ' ');
     }
 
-    // ใส่ข้อความลง text node และคงช่องว่างหัว/ท้ายไว้ (Word ตัดทิ้งถ้าไม่มี xml:space)
+    // ใส่ข้อความลง text node และคงช่องว่างไว้ (Word ตัด/ยุบช่องว่างถ้าไม่มี xml:space)
+    // ต้องกันทั้งช่องว่างหัว-ท้าย และช่องว่างซ้ำกลางข้อความที่มาจากการล็อกตำแหน่ง
     function setText(node, text) {
         node.textContent = text;
-        if (text && text !== text.trim()) {
+        if (text && (text !== text.trim() || /\s{2,}/.test(text))) {
             node.setAttribute('xml:space', 'preserve');
         }
     }
@@ -27,6 +29,51 @@
         if (fields.length === 0) return null;
         const pattern = fields.map(escapeRegex).join('|');
         return new RegExp('\\{\\{\\s*(' + pattern + ')\\s*\\}\\}', 'g');
+    }
+
+    // แปลงข้อมูล field ที่ถูกล็อกตำแหน่งให้เป็น lookup object
+    // รับได้ทั้ง { A: true } และ [ 'A' ]
+    function toLockedSet(lockedFields) {
+        const locked = {};
+
+        if (!lockedFields) return locked;
+
+        if (Array.isArray(lockedFields)) {
+            lockedFields.forEach(function (field) {
+                if (field) locked[field] = true;
+            });
+            return locked;
+        }
+
+        Object.keys(lockedFields).forEach(function (field) {
+            if (lockedFields[field]) locked[field] = true;
+        });
+        return locked;
+    }
+
+    // ล็อกตำแหน่งแบบเข้ม: ค่าก่อนหน้าฟิลด์ที่ล็อกต้องกินความกว้างเท่า {{field}} เดิมเป๊ะ
+    //   สั้นกว่า -> เติมช่องว่างท้าย
+    //   ยาวกว่า -> ตัดให้พอดีช่อง (ถ้าไม่ตัด ฟิลด์ที่ล็อกจะถูกดันไปทางขวา)
+    // อยากให้ช่องกว้างขึ้น เขียนช่องว่างใน placeholder ได้ เช่น {{A     }} (กว้าง 10)
+    function fitWidth(value, width) {
+        if (value.length === width) return value;
+        if (value.length < width) return value + ' '.repeat(width - value.length);
+        return value.slice(0, width);
+    }
+
+    // ในย่อหน้าเดียวกัน ยังมี field ที่ถูกล็อกตำแหน่งอยู่ถัดจากตำแหน่งนี้หรือไม่
+    function hasLockedAfter(text, from, pattern, locked) {
+        if (Object.keys(locked).length === 0) return false;
+
+        const rest = text.slice(from);
+        const regex = new RegExp(pattern, 'g');
+
+        let match;
+        while ((match = regex.exec(rest)) !== null) {
+            if (locked[match[1]]) return true;
+        }
+
+        return false;
     }
 
     // หา text node ที่ offset ตกอยู่ พร้อมตำแหน่งภายใน node นั้น
@@ -74,7 +121,10 @@
         return true;
     }
 
-    function replaceInParagraph(paragraph, regex, values) {
+    // locked = field ที่ติ๊ก "ล็อกตำแหน่ง" ไว้ในหน้า Template Configuration
+    // ค่าที่อยู่ก่อนหน้าฟิลด์ที่ล็อกจะถูกบังคับให้กว้างเท่า placeholder เดิม
+    // ทำให้ฟิลด์ที่ล็อกเริ่มที่ตำแหน่งเดิมในบรรทัดเสมอ
+    function replaceInParagraph(paragraph, regex, values, locked) {
         const textNodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
         if (textNodes.length === 0) return;
 
@@ -91,18 +141,34 @@
             const match = regex.exec(fullText);
             if (!match) return;
 
-            const replacement = normalizeValue(values[match[1]]);
+            let replacement = normalizeValue(values[match[1]]);
+
+            if (hasLockedAfter(fullText, match.index + match[0].length, regex.source, locked)) {
+
+                // เตือนให้เห็นว่าเกิดการตัดข้อความ เพราะ field ถัดไปถูกล็อกตำแหน่งไว้
+                if (replacement.length > match[0].length) {
+                    console.warn(
+                        'ล็อกตำแหน่ง: ตัดค่า "' + match[1] + '" จาก ' +
+                        replacement.length + ' เหลือ ' + match[0].length + ' ตัวอักษร'
+                    );
+                }
+
+                replacement = fitWidth(replacement, match[0].length);
+            }
+
             if (!replaceMatch(textNodes, parts, match, replacement)) return;
         }
 
         console.warn('หยุดแทนค่าใน paragraph หนึ่งเพราะถึงขีดจำกัดรอบ');
     }
 
-    function replaceFields(xml, values) {
+    function replaceFields(xml, values, lockedFields) {
         if (!xml || !values) return xml;
 
         const regex = buildFieldRegex(Object.keys(values));
         if (!regex) return xml;
+
+        const locked = toLockedSet(lockedFields);
 
         const doc = new DOMParser().parseFromString(xml, 'application/xml');
         if (doc.getElementsByTagName('parsererror').length > 0) {
@@ -112,7 +178,7 @@
 
         const paragraphs = doc.getElementsByTagNameNS(W_NS, 'p');
         for (const paragraph of paragraphs) {
-            replaceInParagraph(paragraph, regex, values);
+            replaceInParagraph(paragraph, regex, values, locked);
         }
 
         return new XMLSerializer().serializeToString(doc);

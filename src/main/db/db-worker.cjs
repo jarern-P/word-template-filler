@@ -40,6 +40,7 @@ const SCHEMA = `
         docx       BLOB NOT NULL,
         fields     TEXT NOT NULL DEFAULT '[]',
         types      TEXT NOT NULL DEFAULT '{}',
+        locks      TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
@@ -128,6 +129,38 @@ function migrateMasterTable() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ locks ให้ตาราง templates
+// ============================================================
+
+// เก็บ field ที่ติ๊ก "ล็อกตำแหน่ง" ไว้ในหน้า Template Configuration
+function migrateTemplateLocks() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(templates)
+        `).all();
+
+    // ยังไม่มีตาราง templates (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "locks")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE templates
+        ADD COLUMN locks TEXT NOT NULL DEFAULT '{}'
+    `);
+
+    console.log(
+        "Migrated templates table: added 'locks' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -137,6 +170,7 @@ function openDatabase() {
 
     // ต้องย้ายข้อมูลก่อน exec(SCHEMA) เพราะ SCHEMA เป็น IF NOT EXISTS
     migrateMasterTable();
+    migrateTemplateLocks();
 
     db.exec(SCHEMA);
 
@@ -179,7 +213,8 @@ function handleSave(message) {
             fileName,
             docx,
             fields,
-            types
+            types,
+            locks
         } = payload;
 
 
@@ -198,6 +233,9 @@ function handleSave(message) {
 
         const typesJson =
             JSON.stringify(types || {});
+
+        const locksJson =
+            JSON.stringify(locks || {});
 
 
         const docxBuffer =
@@ -222,6 +260,7 @@ function handleSave(message) {
                         docx = @docx,
                         fields = @fields,
                         types = @types,
+                        locks = @locks,
                         updated_at = @updated_at
                     WHERE id = @id
                 `)
@@ -232,6 +271,7 @@ function handleSave(message) {
                     docx: docxBuffer,
                     fields: fieldsJson,
                     types: typesJson,
+                    locks: locksJson,
                     updated_at: new Date().toISOString()
                 });
 
@@ -264,6 +304,7 @@ function handleSave(message) {
                         docx,
                         fields,
                         types,
+                        locks,
                         created_at,
                         updated_at
                     )
@@ -273,6 +314,7 @@ function handleSave(message) {
                         @docx,
                         @fields,
                         @types,
+                        @locks,
                         @created_at,
                         @updated_at
                     )
@@ -283,6 +325,7 @@ function handleSave(message) {
                     docx: docxBuffer,
                     fields: fieldsJson,
                     types: typesJson,
+                    locks: locksJson,
                     created_at: now,
                     updated_at: now
                 });
@@ -344,6 +387,7 @@ function handleList(message) {
                     file_name,
                     fields,
                     types,
+                    locks,
                     created_at,
                     updated_at
                 FROM templates
@@ -359,6 +403,7 @@ function handleList(message) {
                 file_name: row.file_name,
                 fields: JSON.parse(row.fields),
                 types: JSON.parse(row.types),
+                locks: JSON.parse(row.locks || "{}"),
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
@@ -411,6 +456,7 @@ function handleGet(message) {
                     docx,
                     fields,
                     types,
+                    locks,
                     created_at,
                     updated_at
                 FROM templates
@@ -448,6 +494,9 @@ function handleGet(message) {
 
             types:
                 JSON.parse(row.types),
+
+            locks:
+                JSON.parse(row.locks || "{}"),
 
             created_at:
                 row.created_at,

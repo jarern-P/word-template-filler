@@ -116,6 +116,33 @@ body {
     padding: 0;
 }
 
+/* แถวเลือก type + checkbox "ล็อกตำแหน่ง" (หน้า Template Configuration) */
+.field-type-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.field-type-row select {
+    flex: 1;
+    min-width: 0;
+}
+
+/* label ของ checkbox ต้องไม่ถูกทับด้วยสไตล์ .field label */
+.field .lock-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 0;
+    font-weight: normal;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.field .lock-toggle .lock-box {
+    margin: 0;
+}
+
 .field textarea {
     resize: vertical;
 }

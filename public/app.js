@@ -71,6 +71,17 @@
         Object.keys(pageMeta).forEach(function (page) {
             delete pageMeta[page];
         });
+
+        // ล้างสถานะ "ล็อกตำแหน่ง" ที่ติ๊กไว้ในหน้า Template Configuration
+        const config =
+            getComponent(CONFIG_PAGE);
+
+        if (
+            config &&
+            config.setLocks
+        ) {
+            config.setLocks(null);
+        }
     }
 
     function getPageHTML(page) {
@@ -408,6 +419,23 @@
             return;
         }
 
+        // checkbox ล็อกตำแหน่งของข้อความ (หน้า Template Configuration)
+        if (target.dataset.lockField) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setLock) {
+
+                config.setLock(
+                    target.dataset.lockField,
+                    target.checked
+                );
+            }
+
+            return;
+        }
+
         if (target.dataset.field) {
 
             // ใช้ตัวอ่านค่าร่วมกับ FormPage
@@ -715,10 +743,23 @@
         // แทนค่าจาก xml ต้นฉบับ
         // และสร้าง zip ใหม่จาก byte ต้นฉบับ
         // → กดดาวน์โหลดซ้ำได้ค่าที่ถูกต้องเสมอ
+        // field ที่ติ๊ก "ล็อกตำแหน่ง" ไว้ในหน้า Template Configuration
+        const config =
+            getComponent(
+                CONFIG_PAGE
+            );
+
+        const locks =
+            config &&
+            config.getLocks
+                ? config.getLocks()
+                : null;
+
         const xml =
             scope.Replace.replaceFields(
                 state.xml,
-                values
+                values,
+                locks
             );
 
         try {
@@ -817,7 +858,10 @@
                         state.fields,
 
                     types:
-                        config.getValues()
+                        config.getValues(),
+
+                    locks:
+                        config.getLocks()
 
                 });
 
@@ -959,6 +1003,16 @@
                     configValues[field] =
                         types[field];
                 }
+            );
+
+            // คืนสถานะ "ล็อกตำแหน่ง" ที่บันทึกไว้ใน template
+            const config =
+                getComponent(
+                    CONFIG_PAGE
+                );
+
+            config.setLocks(
+                record.locks
             );
 
             applyMeta(

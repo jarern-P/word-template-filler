@@ -21,7 +21,11 @@
         '</section>'
     ].join('\n');
 
+    // select เลือก type + checkbox "ล็อกตำแหน่ง" ของ field นั้น
     function createTypeSelect(field) {
+        const row = document.createElement('div');
+        row.className = 'field-type-row';
+
         const select = document.createElement('select');
         select.dataset.field = field;
         select.className = 'field-type';
@@ -34,7 +38,29 @@
         }
 
         select.value = scope.FieldTypes.defaultValue;
-        return select;
+
+        const lockBox = document.createElement('input');
+        lockBox.type = 'checkbox';
+        // ใช้ data-lock-field (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
+        lockBox.dataset.lockField = field;
+        lockBox.className = 'lock-box';
+
+        const lockLabel = document.createElement('label');
+        lockLabel.className = 'lock-toggle';
+        lockLabel.title =
+            'ล็อกตำแหน่งเริ่มต้นของข้อความนี้ให้ตรงกับที่อยู่ใน template ' +
+            'ค่าของ field ก่อนหน้าที่สั้นกว่าจะถูกเติมช่องว่าง ' +
+            'และค่าที่ยาวเกินช่องจะถูกตัดให้พอดี';
+
+        const lockText = document.createElement('span');
+        lockText.textContent = 'ล็อกตำแหน่ง';
+
+        lockLabel.appendChild(lockBox);
+        lockLabel.appendChild(lockText);
+
+        row.appendChild(select);
+        row.appendChild(lockLabel);
+        return row;
     }
 
     function parseJson(text, fallback) {
@@ -111,6 +137,52 @@
     });
 
     // ── ส่วนที่ใช้เฉพาะหน้านี้ ──
+
+    // field ที่ถูกล็อกตำแหน่ง (เก็บแยกจากค่าของ type)
+    let lockState = {};
+
+    // เติมสถานะติ๊กกลับเข้า checkbox หลังฟอร์มถูกวาดใหม่
+    function renderLockState() {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        form.querySelectorAll('[data-lock-field]').forEach(function (box) {
+            box.checked = lockState[box.dataset.lockField] === true;
+        });
+    }
+
+    const baseRenderForm = page.renderForm;
+
+    page.renderForm = function (fields) {
+        baseRenderForm.call(page, fields);
+        renderLockState();
+    };
+
+    page.setLock = function (field, locked) {
+        if (locked) {
+            lockState[field] = true;
+        } else {
+            delete lockState[field];
+        }
+    };
+
+    page.getLocks = function () {
+        return Object.assign({}, lockState);
+    };
+
+    // คืนค่าที่บันทึกไว้กลับมา (ตอนโหลด template) — null/{} = ไม่มี field ที่ล็อก
+    page.setLocks = function (locks) {
+        lockState = {};
+
+        if (locks && typeof locks === 'object') {
+            Object.keys(locks).forEach(function (field) {
+                if (locks[field]) lockState[field] = true;
+            });
+        }
+
+        renderLockState();
+    };
+
     page.setSaveEnabled = function (enabled) {
         const btn = document.getElementById('saveBtn');
         if (btn) btn.disabled = !enabled;
