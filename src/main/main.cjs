@@ -630,6 +630,179 @@ ipcMain.handle(
     }
 );
 // ============================================================
+// DB Master Save
+// ============================================================
+
+ipcMain.handle(
+    "db:master-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "master-save",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Master List
+// ============================================================
+
+ipcMain.handle(
+    "db:master-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "master-list",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Master Get
+// ============================================================
+
+ipcMain.handle(
+    "db:master-get",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "master-get",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Master Remove
+// ============================================================
+
+ipcMain.handle(
+    "db:master-delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "master-delete",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 

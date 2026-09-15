@@ -43,6 +43,14 @@ const SCHEMA = `
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS master (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        code_group TEXT NOT NULL,
+        name       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
 `;
 
 
@@ -54,12 +62,81 @@ let db = null;
 
 
 // ============================================================
+// Migration: ตัดคอลัมน์ code ออกจากตาราง master
+// ============================================================
+
+// ฐานข้อมูลรุ่นก่อนเก็บ code แยกจาก name
+// ตอนนี้เหลือ name อย่างเดียว จึงสร้างตารางใหม่และย้ายข้อมูลเดิม
+function migrateMasterTable() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(master)
+        `).all();
+
+    // ยังไม่มีตาราง master (ฐานข้อมูลใหม่) ไม่ต้องย้ายอะไร
+    if (columns.length === 0) {
+        return;
+    }
+
+    const hasCode =
+        columns.some(
+            column => column.name === "code"
+        );
+
+    if (!hasCode) {
+        return;
+    }
+
+    db.exec(`
+        BEGIN;
+
+        CREATE TABLE master_new (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_group TEXT NOT NULL,
+            name       TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        INSERT INTO master_new (
+            id,
+            code_group,
+            name,
+            created_at,
+            updated_at
+        )
+        SELECT
+            id,
+            code_group,
+            name,
+            created_at,
+            updated_at
+        FROM master;
+
+        DROP TABLE master;
+
+        ALTER TABLE master_new RENAME TO master;
+
+        COMMIT;
+    `);
+
+    console.log(
+        "Migrated master table: removed 'code' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
 function openDatabase() {
 
     db = new Database(dbPath);
+
+    // ต้องย้ายข้อมูลก่อน exec(SCHEMA) เพราะ SCHEMA เป็น IF NOT EXISTS
+    migrateMasterTable();
 
     db.exec(SCHEMA);
 
@@ -450,6 +527,314 @@ function handleDelete(message) {
     }
 }
 
+
+// ============================================================
+// Master Save
+// ============================================================
+
+function handleMasterSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+
+        // id > 0 = แก้ไขรายการเดิม, id = 0 = เพิ่มรายการใหม่
+        const id =
+            Number(payload.id) || 0;
+
+        // ตัดช่องว่างหัวท้าย เพื่อไม่ให้ "ลูกค้า" กับ "ลูกค้า " กลายเป็นคนละรายการ
+        const codeGroup =
+            String(payload.codeGroup || "").trim();
+
+        const name =
+            String(payload.name || "").trim();
+
+        if (!codeGroup) {
+            throw new Error("กรุณาระบุ Code Group");
+        }
+
+        if (!name) {
+            throw new Error("กรุณาระบุ Name");
+        }
+
+        // name ต้องไม่ซ้ำภายใน code_group เดียวกัน
+        const duplicate =
+            db.prepare(`
+                SELECT id
+                FROM master
+                WHERE code_group = ?
+                  AND name = ?
+                  AND id <> ?
+            `).get(
+                codeGroup,
+                name,
+                id
+            );
+
+        if (duplicate) {
+            throw new Error(
+                `ชื่อ "${name}" มีอยู่แล้วในกลุ่ม "${codeGroup}"`
+            );
+        }
+
+        const now = new Date().toISOString();
+
+        let resultId;
+
+        // ----------------------------------------------------
+        // Update
+        // ----------------------------------------------------
+
+        if (id > 0) {
+
+            const result =
+                db.prepare(`
+                    UPDATE master
+                    SET
+                        code_group = @code_group,
+                        name = @name,
+                        updated_at = @updated_at
+                    WHERE id = @id
+                `)
+                .run({
+                    id: id,
+                    code_group: codeGroup,
+                    name: name,
+                    updated_at: now
+                });
+
+            if (result.changes === 0) {
+                throw new Error(`ไม่พบข้อมูล master id=${id}`);
+            }
+
+            resultId = id;
+        }
+
+        // ----------------------------------------------------
+        // Insert
+        // ----------------------------------------------------
+
+        else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO master (
+                        code_group,
+                        name,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        @code_group,
+                        @name,
+                        @created_at,
+                        @updated_at
+                    )
+                `)
+                .run({
+                    code_group: codeGroup,
+                    name: name,
+                    created_at: now,
+                    updated_at: now
+                });
+
+            resultId =
+                Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "handleMasterSave error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+// ============================================================
+// Master List
+// ============================================================
+
+function handleMasterList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    code_group,
+                    name,
+                    created_at,
+                    updated_at
+                FROM master
+                ORDER BY code_group ASC, name ASC
+            `)
+            .all();
+
+        const records =
+            rows.map(row => ({
+                id: row.id,
+                code_group: row.code_group,
+                name: row.name,
+                created_at: row.created_at,
+                updated_at: row.updated_at
+            }));
+
+        send({
+            id: message.id,
+            ok: true,
+            result: records
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Master Get
+// ============================================================
+
+function handleMasterGet(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+        const row =
+            db.prepare(`
+                SELECT
+                    id,
+                    code_group,
+                    name,
+                    created_at,
+                    updated_at
+                FROM master
+                WHERE id = ?
+            `)
+            .get(id);
+
+        if (!row) {
+
+            send({
+                id: message.id,
+                ok: true,
+                result: null
+            });
+
+            return;
+        }
+
+        const record = {
+
+            id: row.id,
+
+            code_group: row.code_group,
+
+            name: row.name,
+
+            created_at: row.created_at,
+
+            updated_at: row.updated_at
+
+        };
+
+        send({
+            id: message.id,
+            ok: true,
+            result: record
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Master Delete
+// ============================================================
+
+function handleMasterDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+        const result =
+            db.prepare(`
+                DELETE FROM master
+                WHERE id = ?
+            `)
+            .run(id);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted:
+                    result.changes > 0
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
 // ============================================================
 // Check Schema
 // ============================================================
@@ -598,6 +983,46 @@ parentPort.on("message", (message) => {
 
                 handleDelete(message);
 
+                break;
+                
+            // ------------------------------------------------
+            // Master Save
+            // ------------------------------------------------
+            
+            case "master-save":
+
+                handleMasterSave(message);
+                
+                break;
+
+            // ------------------------------------------------
+            // Master List
+            // ------------------------------------------------
+            
+            case "master-list":
+                
+                handleMasterList(message);
+                
+                break;
+                
+            // ------------------------------------------------
+            // Master Get
+            // ------------------------------------------------
+            
+            case "master-get":
+                
+                handleMasterGet(message);
+                
+                break;
+                
+            // ------------------------------------------------
+            // Master Delete
+            // ------------------------------------------------
+            
+            case "master-delete":
+                
+                handleMasterDelete(message);
+                
                 break;
 
 

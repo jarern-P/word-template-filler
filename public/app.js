@@ -5,11 +5,13 @@
 
     const DEFAULT_PAGE = 'report';
     const CONFIG_PAGE = 'template-config';
+    const MASTER_PAGE = 'master-data';
 
     // ชื่อหน้า -> ชื่อ component บน window (ลำดับโหลดอยู่ใน index.html)
     const PAGE_COMPONENTS = {
         'report': 'ReportPage',
-        'template-config': 'TemplateConfigPage'
+        'template-config': 'TemplateConfigPage',
+        'master-data': 'MasterDataPage'
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -31,6 +33,7 @@
     let mainEl = null;
     let dbPromise = null;
     let templateRecords = null;   // cache รายการ template ล่าสุดจากฐานข้อมูล
+    let masterRecords = null;     // cache รายการ master data ล่าสุดจากฐานข้อมูล
 
     // ──────────────────────────────────────────────────────────────
     // Helpers
@@ -177,6 +180,11 @@
     // วาดฟอร์ม + ปุ่มของหน้าให้ตรงกับ state ปัจจุบัน
     function fillForm(page) {
 
+        // หน้าที่ไม่ผูกกับไฟล์ .docx (เช่น Master Data) วาด UI เองทั้งหมด
+        if (getComponent(page).standalone) {
+            return;
+        }
+
         const component =
             getComponent(page);
 
@@ -282,6 +290,8 @@
 
         const config =
             getComponent(CONFIG_PAGE);
+        const master =
+            getComponent(MASTER_PAGE);
 
         if (
             config &&
@@ -289,6 +299,17 @@
         ) {
 
             config.setDbStatus(
+                text,
+                kind
+            );
+        }
+
+        if (
+            master &&
+            master.setDbStatus
+        ) {
+
+            master.setDbStatus(
                 text,
                 kind
             );
@@ -454,6 +475,24 @@
             'input',
             function (event) {
 
+                const target =
+                    event.target;
+
+                // ช่องค้นหาของหน้า Master Data กรองรายการทันที
+                if (
+                    target &&
+                    target.id === 'masterSearch'
+                ) {
+
+                    getComponent(
+                        MASTER_PAGE
+                    ).setSearch(
+                        target.value
+                    );
+
+                    return;
+                }
+
                 captureValue(
                     event.target
                 );
@@ -492,6 +531,18 @@
                     return;
                 }
 
+                if (id === 'masterSaveBtn') {
+
+                    onSaveMaster();
+                    return;
+                }
+
+                if (id === 'masterCancelBtn') {
+
+                    onCancelMasterEdit();
+                    return;
+                }
+
                 const action =
                     target.dataset &&
                     target.dataset.action;
@@ -502,7 +553,21 @@
                         target.dataset.id
                     );
 
-                if (action === 'load') {
+                if (action === 'master-edit') {
+
+                    onEditMaster(
+                        recordId
+                    );
+
+                } else if (
+                    action === 'master-delete'
+                ) {
+
+                    onDeleteMaster(
+                        recordId
+                    );
+
+                } else if (action === 'load') {
 
                     onLoadTemplate(
                         recordId
@@ -549,6 +614,7 @@
         renderPage(page);
 
         refreshTemplateList();
+        refreshMasterList();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -962,6 +1028,207 @@
             );
 
             await refreshTemplateList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            alert(
+                'ลบไม่สำเร็จ: ' +
+                error.message
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Master Data handlers
+    // ──────────────────────────────────────────────────────────────
+
+    async function refreshMasterList() {
+
+        // ข้ามการโหลดฐานข้อมูลถ้าหน้าปัจจุบันไม่มีที่แสดงรายการ master
+        if (!document.getElementById('masterList')) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            const info =
+                await ensureDb();
+
+            masterRecords =
+                await scope.Db.masterList();
+
+            // สถานะของ ensureDb ถูกส่งตอนหน้าแรกเริ่มทำงาน จึงอาจไม่ถึงหน้านี้
+            master.setDbStatus(
+                'ฐานข้อมูล: SQLite — ' +
+                (
+                    info && info.dbPath
+                        ? info.dbPath
+                        : 'บันทึกถาวร'
+                )
+            );
+
+            master.renderMasterList(
+                masterRecords
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.renderMasterList(
+                [],
+                'โหลดรายการไม่สำเร็จ: ' +
+                error.message
+            );
+        }
+    }
+
+    function onCancelMasterEdit() {
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        master.resetForm();
+        master.setFormStatus('');
+    }
+
+    function onEditMaster(recordId) {
+
+        const record =
+            (masterRecords || []).find(
+                function (item) {
+
+                    return Number(item.id) ===
+                        Number(recordId);
+                }
+            );
+
+        if (!record) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        master.loadIntoForm(record);
+        master.setFormStatus('');
+    }
+
+    async function onSaveMaster() {
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        const payload =
+            master.readForm();
+
+        if (!payload.codeGroup) {
+
+            master.setFormStatus(
+                'กรุณาระบุ Code Group',
+                'error'
+            );
+
+            return;
+        }
+
+        if (!payload.name) {
+
+            master.setFormStatus(
+                'กรุณาระบุ Name',
+                'error'
+            );
+
+            return;
+        }
+
+        // id > 0 = แก้ไขรายการเดิม, id = 0 = เพิ่มรายการใหม่
+        const editing =
+            Number(payload.id) > 0;
+
+        master.setSaveEnabled(false);
+        master.setFormStatus('กำลังบันทึก...');
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.masterSave(
+                payload
+            );
+
+            master.resetForm();
+
+            master.setFormStatus(
+                editing
+                    ? 'แก้ไขข้อมูลแล้ว'
+                    : 'เพิ่มข้อมูลแล้ว',
+                'ok'
+            );
+
+            await refreshMasterList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setFormStatus(
+                'บันทึกไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+
+        } finally {
+
+            master.setSaveEnabled(true);
+        }
+    }
+
+    async function onDeleteMaster(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        if (
+            !window.confirm(
+                'ต้องการลบข้อมูล Master นี้ใช่ไหม?'
+            )
+        ) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.masterDelete(
+                recordId
+            );
+
+            // ถ้ารายการที่ถูกลบคือรายการที่กำลังแก้ไขอยู่ ให้ล้างฟอร์มทิ้ง
+            const current =
+                master.readForm();
+
+            if (Number(current.id) === Number(recordId)) {
+
+                master.resetForm();
+            }
+
+            master.setFormStatus(
+                'ลบข้อมูลแล้ว',
+                'ok'
+            );
+
+            await refreshMasterList();
 
         } catch (error) {
 

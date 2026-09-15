@@ -26,6 +26,18 @@ contextBridge.exposeInMainWorld(
         dbRemove: (id) =>
             ipcRenderer.invoke("db:remove", id),
 
+        dbMasterSave: (payload) =>
+            ipcRenderer.invoke("db:master-save", payload),
+
+        dbMasterList: () =>
+            ipcRenderer.invoke("db:master-list"),
+
+        dbMasterGet: (id) =>
+            ipcRenderer.invoke("db:master-get", id),
+
+        dbMasterDelete: (id) =>
+            ipcRenderer.invoke("db:master-delete", id),
+
         // ─────────────────────────────
         // File
         // ─────────────────────────────

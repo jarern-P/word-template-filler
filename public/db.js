@@ -137,7 +137,42 @@
                 'dbRemove',
                 id
             );
-        }
+        },
+
+        masterSave: function (payload) {
+
+            return dbRequest(
+                'dbMasterSave',
+                payload
+            );
+
+        },
+
+        masterList: function () {
+
+            return dbRequest(
+                'dbMasterList'
+            );
+
+        },
+
+        masterGet: function (id) {
+
+            return dbRequest(
+                'dbMasterGet',
+                id
+            );
+
+        },
+
+        masterDelete: function (id) {
+
+            return dbRequest(
+                'dbMasterDelete',
+                id
+            );
+
+        },
 
     };
 
