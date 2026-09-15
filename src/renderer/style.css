@@ -305,3 +305,152 @@ button:disabled {
 .db-status.ok {
     color: #0a7a3d;
 }
+
+/* ── ช่องข้อความ + ปุ่มค้นหา Master Data (หน้ารายงาน) ── */
+.lookup-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.lookup-field input {
+    flex: 1;
+    min-width: 0;
+}
+
+.lookup-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 42px;
+    height: 42px;
+    margin-top: 0;
+    padding: 0;
+    color: #555;
+    background: #fff;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.lookup-btn:hover {
+    color: #000;
+    background: #f0f0f0;
+}
+
+/* ── Popup เลือกข้อมูล Master Data ── */
+.lookup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+}
+
+.lookup-overlay.open {
+    display: flex;
+}
+
+.lookup-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+}
+
+.lookup-dialog {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 480px;
+    max-width: calc(100vw - 40px);
+    max-height: 80vh;
+    padding: 20px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.lookup-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.lookup-head h2 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.lookup-close {
+    margin-top: 0;
+    padding: 4px 10px;
+    font-size: 14px;
+    background: transparent;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.lookup-toolbar {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.lookup-toolbar select,
+.lookup-toolbar input {
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.lookup-toolbar select {
+    flex: 0 0 40%;
+}
+
+.lookup-toolbar input {
+    flex: 1;
+    min-width: 0;
+}
+
+.lookup-list {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    overflow-y: auto;
+}
+
+.lookup-list .empty {
+    padding: 10px 0;
+    font-size: 14px;
+    color: #888;
+}
+
+.lookup-item {
+    display: block;
+    width: 100%;
+    margin: 0 0 4px;
+    padding: 10px;
+    font-size: 14px;
+    font-family: inherit;
+    text-align: left;
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 6px;
+}
+
+.lookup-item:hover {
+    background: #f0f6ff;
+    border-color: #bcd6ff;
+}
+
+.lookup-item .lookup-group {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: #777;
+}

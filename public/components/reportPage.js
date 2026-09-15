@@ -22,8 +22,13 @@
         metaHTML: META_HTML,
         emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปเลือกไฟล์ที่หน้า Template Configuration ก่อน',
 
+        // ช่องที่เป็น type text จะมีปุ่มแว่นขยายให้เลือกค่าจาก Master Data
         renderControl: function (field) {
-            return scope.FieldTypes.createFieldControl(getConfiguredTypes()[field], field);
+            return scope.FieldTypes.createFieldControl(
+                getConfiguredTypes()[field],
+                field,
+                { lookup: true }
+            );
         }
     });
 

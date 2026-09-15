@@ -59,9 +59,37 @@
         return wrapper;
     }
 
+    // รูปแว่นขยายของปุ่มค้นหา (ใช้ inline SVG เพื่อไม่ต้องพึ่ง font/ไอคอนภายนอก)
+    const MAGNIFIER_SVG = [
+        '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">',
+        '<circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"></circle>',
+        '<line x1="15.4" y1="15.4" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>',
+        '</svg>'
+    ].join('');
+
+    // ช่องข้อความ + ปุ่มแว่นขยาย เปิด popup เลือกข้อมูลจาก Master Data
+    function wrapWithLookup(input, field) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-control lookup-field';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'lookup-btn';
+        button.dataset.lookupFor = field;
+        button.title = 'ค้นหาจาก Master Data';
+        button.setAttribute('aria-label', 'ค้นหาจาก Master Data');
+        button.innerHTML = MAGNIFIER_SVG;
+
+        wrapper.appendChild(input);
+        wrapper.appendChild(button);
+        return wrapper;
+    }
+
     // สร้าง control ของหน้ารายงานตาม type ที่ตั้งไว้
-    function createFieldControl(value, field) {
+    // options.lookup = true → ช่องข้อความธรรมดาได้ปุ่มค้นหา Master Data
+    function createFieldControl(value, field, options) {
         const type = get(value);
+        const opts = options || {};
 
         if (type.input === 'textarea') {
             const textarea = document.createElement('textarea');
@@ -81,6 +109,11 @@
         if (type.input === 'date') {
             return wrapWithPreview(input, field);
         }
+
+        if (type.input === 'text' && opts.lookup) {
+            return wrapWithLookup(input, field);
+        }
+
         return input;
     }
 
