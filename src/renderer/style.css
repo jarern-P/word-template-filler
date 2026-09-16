@@ -383,6 +383,47 @@ button:disabled {
     background: #f0f0f0;
 }
 
+/* ── ช่อง currency: input + ปุ่ม toggle สลับ "ตัวเลข / ตัวหนังสือ" (ไม่มี lookup) ── */
+.currency-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.currency-field input {
+    flex: 1;
+    min-width: 0;
+}
+
+.currency-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: 92px;
+    height: 42px;
+    margin-top: 0;
+    padding: 0 12px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #555;
+    background: #fff;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.currency-toggle-btn:hover {
+    color: #000;
+    background: #f0f6ff;
+    border-color: #bcd6ff;
+}
+
+.currency-toggle-btn.active {
+    color: #0a7a3d;
+    background: #f2faf2;
+    border-color: #b6dfb6;
+}
+
 /* ── Popup เลือกข้อมูล Master Data ── */
 .lookup-overlay {
     display: none;

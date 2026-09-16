@@ -20,6 +20,18 @@
         return (scope.App && scope.App.getFieldTypes) ? scope.App.getFieldTypes() : {};
     }
 
+    // โหมด "ตัวเลข/ตัวหนังสือ" ปัจจุบันของช่อง currency ทุกช่อง (เก็บไว้ที่ FieldTypes)
+    function getCurrencyModes() {
+        const modes = {};
+        const form = document.getElementById('form');
+        if (!form) return modes;
+
+        form.querySelectorAll('[data-currency-toggle]').forEach(function (button) {
+            modes[button.dataset.currencyToggle] = scope.FieldTypes.getCurrencyMode(button.dataset.currencyToggle);
+        });
+        return modes;
+    }
+
     const page = scope.FormPage.create({
         title: 'Word Template Filler',
         showFileInput: false,
@@ -73,9 +85,10 @@
     page.getValues = function () {
         const values = baseGetValues.call(page);
         const types = getConfiguredTypes();
+        const modes = getCurrencyModes();
 
         Object.keys(values).forEach(function (field) {
-            values[field] = scope.FieldTypes.formatValue(types[field], values[field]);
+            values[field] = scope.FieldTypes.formatValue(types[field], values[field], modes, field);
         });
         return values;
     };
@@ -103,6 +116,18 @@
             if (!control) return;
 
             const raw = scope.FormPage.readControlValue(control);
+
+            // currency มีปุ่ม toggle เป็นของตัวเอง — อ่านโหมดจากปุ่ม ไม่ใช่ค่าในช่อง
+            if (control.dataset.currencyInput === '1') {
+                preview.textContent = raw === ''
+                    ? ''
+                    : scope.FieldTypes.currencyPreviewText(
+                        raw,
+                        scope.FieldTypes.getCurrencyMode(field)
+                    );
+                return;
+            }
+
             preview.textContent = raw === ''
                 ? ''
                 : scope.FieldTypes.formatValue(types[field], raw);

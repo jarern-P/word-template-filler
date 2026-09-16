@@ -73,6 +73,14 @@
             delete pageMeta[page];
         });
 
+        // ล้างโหมด "ตัวเลข/ตัวหนังสือ" ของช่อง currency ที่เคยสลับไว้
+        if (
+            scope.FieldTypes &&
+            scope.FieldTypes.resetCurrencyModes
+        ) {
+            scope.FieldTypes.resetCurrencyModes();
+        }
+
         // ล้างสถานะ "ล็อกตำแหน่ง" ที่ติ๊กไว้ในหน้า Template Configuration
         const config =
             getComponent(CONFIG_PAGE);
@@ -469,6 +477,64 @@
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Currency (จำนวนเงิน) — หน้ารายงาน
+    //
+    // ช่องเก็บค่าเป็นตัวเลขล้วนเสมอ (เช่น 1000) ส่วนรูปแบบตอนเขียนลงเอกสาร
+    // (1,000 หรือ หนึ่งพันบาทถ้วน) กำหนดด้วยโหมดของช่องที่สลับด้วยปุ่ม toggle
+    // ──────────────────────────────────────────────────────────────
+
+    // คัดค่าในช่องให้เหลือแต่ตัวเลข/จุดทศนิยม (รับเลขไทย ๐-๙ ด้วย) แล้วเก็บค่า + อัปเดต preview
+    function onCurrencyInput(input) {
+
+        input.value =
+            scope.FieldTypes.parseCurrencyInput(
+                input.value
+            );
+
+        captureValue(input);
+    }
+
+    // ปุ่ม toggle สลับโหมด "ตัวเลข / ตัวหนังสือ" ของช่อง currency ที่กด
+    function onCurrencyToggle(button) {
+
+        const field =
+            button.dataset.currencyToggle;
+
+        const modes =
+            scope.FieldTypes.CURRENCY_MODES;
+
+        const nextMode =
+            scope.FieldTypes.getCurrencyMode(field) === modes.TEXT
+                ? modes.NUMBER
+                : modes.TEXT;
+
+        scope.FieldTypes.setCurrencyMode(
+            field,
+            nextMode
+        );
+
+        // label ของปุ่มบอกโหมด "ที่จะสลับไป" เหมือน toggle ทั่วไป
+        button.textContent =
+            nextMode === modes.TEXT ? 'เปลี่ยนเป็นตัวอักษร' : 'เปลี่ยนเป็นตัวเลข';
+
+        // ไฮไลต์เมื่ออยู่โหมดตัวหนังสือ (ต้องดูก่อนว่าเขียนลงเอกสารเป็นข้อความอยู่)
+        button.classList.toggle(
+            'active',
+            nextMode === modes.TEXT
+        );
+
+        // โหมดเปลี่ยน = รูปที่จะเขียนลงเอกสารเปลี่ยน คำเตือนล็อกตำแหน่งเดิมอาจไม่จริงอีก
+        clearReplaceWarnings();
+
+        const component =
+            getComponent(currentPage);
+
+        if (component.refreshPreviews) {
+            component.refreshPreviews();
+        }
+    }
+
     function bindMainEvents() {
 
         mainEl.addEventListener(
@@ -525,6 +591,20 @@
                     return;
                 }
 
+                // ช่อง currency: คัดให้เหลือแต่ตัวเลข/จุดทศนิยม
+                if (
+                    target &&
+                    target.dataset &&
+                    target.dataset.currencyInput === '1'
+                ) {
+
+                    onCurrencyInput(
+                        target
+                    );
+
+                    return;
+                }
+
                 captureValue(
                     event.target
                 );
@@ -534,6 +614,21 @@
         mainEl.addEventListener(
             'click',
             function (event) {
+
+                // ปุ่ม toggle "ตัวเลข/ตัวหนังสือ" ของช่อง currency (หน้ารายงาน)
+                const currencyToggle =
+                    event.target.closest
+                        ? event.target.closest('[data-currency-toggle]')
+                        : null;
+
+                if (currencyToggle) {
+
+                    onCurrencyToggle(
+                        currencyToggle
+                    );
+
+                    return;
+                }
 
                 const target =
                     event.target;
