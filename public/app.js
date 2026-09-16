@@ -447,14 +447,26 @@
 
         if (target.dataset.field) {
 
-            // ใช้ตัวอ่านค่าร่วมกับ FormPage
-            // เพื่อให้ checkbox/textarea ตรงกัน
-            getPageValues(
-                currentPage
-            )[target.dataset.field] =
-                scope.FormPage.readControlValue(
-                    target
-                );
+            // ช่อง currency แสดงรูปแบบตามโหมด (comma / ตัวหนังสือ)
+            // แต่ค่าที่เก็บต้องเป็นตัวเลขล้วนเสมอ จึงอ่านจาก dataset
+            if (target.dataset.currencyInput === '1') {
+
+                getPageValues(
+                    currentPage
+                )[target.dataset.field] =
+                    target.dataset.currencyValue || '';
+
+            } else {
+
+                // ใช้ตัวอ่านค่าร่วมกับ FormPage
+                // เพื่อให้ checkbox/textarea ตรงกัน
+                getPageValues(
+                    currentPage
+                )[target.dataset.field] =
+                    scope.FormPage.readControlValue(
+                        target
+                    );
+            }
 
             // อัปเดตข้อความกำกับ
             // เช่น วันที่แบบไทย
@@ -484,18 +496,44 @@
     // (1,000 หรือ หนึ่งพันบาทถ้วน) กำหนดด้วยโหมดของช่องที่สลับด้วยปุ่ม toggle
     // ──────────────────────────────────────────────────────────────
 
-    // คัดค่าในช่องให้เหลือแต่ตัวเลข/จุดทศนิยม (รับเลขไทย ๐-๙ ด้วย) แล้วเก็บค่า + อัปเดต preview
+    // พิมพ์ในช่อง currency: เก็บค่า canonical (ตัวเลขล้วน) ไว้ที่ dataset แล้วจัดรูปในช่องใหม่
+    // โหมดตัวเลขช่องจะโชว์ comma ทันที (1,000) โหมดตัวหนังสือช่องเป็น read-only จึงไม่มาที่นี่
     function onCurrencyInput(input) {
 
-        input.value =
+        input.dataset.currencyValue =
             scope.FieldTypes.parseCurrencyInput(
                 input.value
             );
+
+        scope.FieldTypes.refreshCurrencyInputDisplay(
+            input
+        );
+
+        captureValue(input);
+    }
+
+    // ออกจากช่อง (blur): เก็บกวาดจุดทศนิยมที่ค้างท้าย เช่น "1,000." -> "1,000"
+    // (ตอนพิมพ์ต้องเก็บจุดไว้ก่อน ไม่งั้นพิมพ์ทศนิยมไม่ได้)
+    function onCurrencyChange(input) {
+
+        const digits =
+            input.dataset.currencyValue || '';
+
+        if (digits.endsWith('.')) {
+
+            input.dataset.currencyValue =
+                digits.slice(0, -1);
+
+            scope.FieldTypes.refreshCurrencyInputDisplay(
+                input
+            );
+        }
 
         captureValue(input);
     }
 
     // ปุ่ม toggle สลับโหมด "ตัวเลข / ตัวหนังสือ" ของช่อง currency ที่กด
+    // กดแล้วเปลี่ยนค่าในช่อง input ทันที เช่น 1,000 <-> หนึ่งพันบาทถ้วน
     function onCurrencyToggle(button) {
 
         const field =
@@ -514,9 +552,14 @@
             nextMode
         );
 
+        // เปลี่ยนค่าในช่อง input ตามโหมดใหม่ทันที
+        scope.FieldTypes.refreshCurrencyInputDisplay(
+            findCurrencyInput(field)
+        );
+
         // label ของปุ่มบอกโหมด "ที่จะสลับไป" เหมือน toggle ทั่วไป
         button.textContent =
-            nextMode === modes.TEXT ? 'เปลี่ยนเป็นตัวอักษร' : 'เปลี่ยนเป็นตัวเลข';
+            nextMode === modes.TEXT ? 'เปลี่ยนเป็นตัวเลข' : 'เปลี่ยนเป็นตัวอักษร';
 
         // ไฮไลต์เมื่ออยู่โหมดตัวหนังสือ (ต้องดูก่อนว่าเขียนลงเอกสารเป็นข้อความอยู่)
         button.classList.toggle(
@@ -535,6 +578,27 @@
         }
     }
 
+    // หาช่อง input ของ field currency ในฟอร์มปัจจุบัน
+    function findCurrencyInput(field) {
+
+        const form =
+            document.getElementById('form');
+
+        if (!form) {
+            return null;
+        }
+
+        let found = null;
+
+        form.querySelectorAll('[data-currency-input]').forEach(function (input) {
+            if (input.dataset.field === field) {
+                found = input;
+            }
+        });
+
+        return found;
+    }
+
     function bindMainEvents() {
 
         mainEl.addEventListener(
@@ -543,6 +607,20 @@
 
                 const target =
                     event.target;
+
+                // ช่อง currency: ตอนออกจากช่อง เก็บกวาดทศนิยมที่ค้างท้าย (เช่น "1,000.")
+                if (
+                    target &&
+                    target.dataset &&
+                    target.dataset.currencyInput === '1'
+                ) {
+
+                    onCurrencyChange(
+                        target
+                    );
+
+                    return;
+                }
 
                 if (
                     target &&

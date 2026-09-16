@@ -107,28 +107,41 @@
     // 1,000,001 = หนึ่งล้านเอ็ด — ส่วนเลข 1 ตัวเดียว (หน่วยล้านพอดี) อ่านว่า "หนึ่งล้าน"
     // digits ที่ส่งเข้ามาต้องคงความยาวบล็อกเดิม (ไม่ตัดเลข 0 นำหน้า) กฎนี้จึงถูกต้อง
     function readThaiNumber(digits) {
-        let text = '';
-        const length = digits.length;
+    let text = '';
+    const length = digits.length;
 
-        for (let i = 0; i < length; i++) {
-            const digit = Number(digits[i]);
-            const position = length - i - 1;   // ตำแหน่งภายในหลักล้านนี้ (0 = หน่วย)
+    for (let i = 0; i < length; i++) {
+        const digit = Number(digits[i]);
+        const position = length - i - 1;
 
-            if (digit === 0) continue;
+        if (digit === 0) continue;
 
-            if (position === 0 && digit === 1 && length > 1) {
-                text += 'เอ็ด';                     // ...หนึ่ง -> เอ็ด
-            } else if (position === 1 && digit === 1) {
-                text += 'สิบ';                      // หนึ่งสิบ -> สิบ
-            } else if (position === 1 && digit === 2) {
-                text += 'ยี่สิบ';                   // สองสิบ -> ยี่สิบ
-            } else {
-                text += DIGIT_WORDS[digit] + POSITION_WORDS[position];
+        // ตรวจว่าก่อนหน้านี้มีตัวเลขที่ไม่ใช่ 0 หรือไม่
+        let hasPreviousNonZero = false;
+
+        for (let j = 0; j < i; j++) {
+            if (Number(digits[j]) !== 0) {
+                hasPreviousNonZero = true;
+                break;
             }
         }
 
-        return text;
+        if (position === 0 && digit === 1 && hasPreviousNonZero) {
+            text += 'เอ็ด';
+        } 
+        else if (position === 1 && digit === 1) {
+            text += 'สิบ';
+        } 
+        else if (position === 1 && digit === 2) {
+            text += 'ยี่สิบ';
+        } 
+        else {
+            text += DIGIT_WORDS[digit] + POSITION_WORDS[position];
+        }
     }
+
+    return text;
+}
 
     // อ่านจำนวนเต็ม (ยาวเท่าไรก็ได้) โดยแบ่งเป็นกลุ่มละ 6 หลัก (หน่วยล้าน) จากขวาไปซ้าย
     // กลุ่มที่ไม่ใช่กลุ่มสุดท้ายต่อด้วย "ล้าน" เสมอ — แม้กลุ่มนั้นเป็น 0
@@ -197,18 +210,34 @@
             : formatCurrencyComma(text);
     }
 
-    // ข้อความกำกับใต้ช่อง: โหมดตัวหนังสือแสดงตัวเลข comma กำกับไว้ด้วย เพื่อเทียบค่าได้
+    // ข้อความกำกับใต้ช่อง: แสดงรูปแบบ "อีกโหมด" เพื่อเทียบค่าได้
+    // (ช่อง input แสดงรูปแบบของโหมดปัจจุบันอยู่แล้ว)
     function currencyPreviewText(numericText, mode) {
         const text = String(numericText == null ? '' : numericText);
 
         if (text === '') return '';
         if (!/^\d+(\.\d+)?$/.test(text)) return text;
 
-        const comma = formatCurrencyComma(text);
-
         return mode === CURRENCY_MODES.TEXT
-            ? comma + ' = ' + thaiBahtText(text)
+            ? formatCurrencyComma(text)
             : thaiBahtText(text);
+    }
+
+    // ตั้งค่าที่แสดงในช่อง currency ตามโหมดปัจจุบัน
+    // - โหมดตัวเลข: แสดงเลขพร้อม comma แก้ไขได้ตามปกติ
+    // - โหมดตัวหนังสือ: แสดงข้อความไทย (อ่านอย่างเดียว ต้องสลับกลับเป็นตัวเลขเพื่อแก้ไข)
+    // ค่า canonical (ตัวเลขล้วน) เก็บไว้ที่ dataset.currencyValue ของช่อง จึงสลับโหมดกลับไปกลับมาได้
+    function refreshCurrencyInputDisplay(input) {
+        if (!input) return;
+
+        const digits = input.dataset.currencyValue || '';
+        const textMode = getCurrencyMode(input.dataset.field) === CURRENCY_MODES.TEXT;
+
+        input.value = formatCurrency(digits, textMode ? CURRENCY_MODES.TEXT : CURRENCY_MODES.NUMBER);
+        input.readOnly = textMode;
+        input.title = textMode
+            ? 'โหมดตัวหนังสือ (อ่านอย่างเดียว) — กดปุ่มด้านขวาเพื่อสลับกลับเป็นตัวเลขเพื่อแก้ไข'
+            : '';
     }
 
     // '2013-08-11' -> '11 สิงหาคม 2556' (พ.ศ. = ค.ศ. + 543)
@@ -300,13 +329,13 @@
         toggleBtn.textContent = TOGGLE_LABELS[getCurrencyMode(field)];
 
         // ข้อความกำกับใต้ช่อง แสดงรูปแบบอีกโหมดเพื่อเทียบค่าได้
-        const preview = document.createElement('span');
-        preview.className = 'field-preview';
-        preview.dataset.previewFor = field;
+        // const preview = document.createElement('span');
+        // preview.className = 'field-preview';
+        // preview.dataset.previewFor = field;
 
         wrapper.appendChild(input);
         wrapper.appendChild(toggleBtn);
-        wrapper.appendChild(preview);
+        // wrapper.appendChild(preview);
         return wrapper;
     }
 
@@ -363,6 +392,7 @@
         formatCurrencyComma: formatCurrencyComma,
         thaiBahtText: thaiBahtText,
         currencyPreviewText: currencyPreviewText,
+        refreshCurrencyInputDisplay: refreshCurrencyInputDisplay,
         parseCurrencyInput: parseCurrencyInput
     };
 })(window);

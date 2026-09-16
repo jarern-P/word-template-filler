@@ -87,6 +87,16 @@
         const types = getConfiguredTypes();
         const modes = getCurrencyModes();
 
+        // ช่อง currency แสดงรูปแบบตามโหมด (comma / ตัวหนังสือ)
+        // ค่าที่ใช้แปลงต้องเป็นตัวเลขล้วน จึงอ่านจาก dataset ของช่อง
+        const form = document.getElementById('form');
+
+        if (form) {
+            form.querySelectorAll('[data-currency-input]').forEach(function (input) {
+                values[input.dataset.field] = input.dataset.currencyValue || '';
+            });
+        }
+
         Object.keys(values).forEach(function (field) {
             values[field] = scope.FieldTypes.formatValue(types[field], values[field], modes, field);
         });
@@ -117,12 +127,15 @@
 
             const raw = scope.FormPage.readControlValue(control);
 
-            // currency มีปุ่ม toggle เป็นของตัวเอง — อ่านโหมดจากปุ่ม ไม่ใช่ค่าในช่อง
+            // currency มีปุ่ม toggle เป็นของตัวเอง — ค่า canonical อยู่ที่ dataset
+            // แล้วแสดงรูปแบบ "อีกโหมด" กำกับใต้ช่องเพื่อเทียบค่าได้
             if (control.dataset.currencyInput === '1') {
-                preview.textContent = raw === ''
+                const digits = control.dataset.currencyValue || '';
+
+                preview.textContent = digits === ''
                     ? ''
                     : scope.FieldTypes.currencyPreviewText(
-                        raw,
+                        digits,
                         scope.FieldTypes.getCurrencyMode(field)
                     );
                 return;
@@ -134,8 +147,26 @@
         });
     };
 
+    // ซิงก์ช่อง currency ให้แสดงรูปแบบตามโหมดปัจจุบัน (ใช้หลังเติมค่ากลับเข้าฟอร์ม)
+    // ค่า canonical (ตัวเลขล้วน) เขียนลง dataset ก่อนแล้วช่องค่อยแสดงรูปแบบของโหมด
+    page.syncCurrencyInputs = function (values) {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        form.querySelectorAll('[data-currency-input]').forEach(function (input) {
+            const field = input.dataset.field;
+
+            if (values && Object.prototype.hasOwnProperty.call(values, field)) {
+                input.dataset.currencyValue = values[field] == null ? '' : String(values[field]);
+            }
+
+            scope.FieldTypes.refreshCurrencyInputDisplay(input);
+        });
+    };
+
     page.applyValues = function (values) {
         baseApplyValues.call(page, values);
+        page.syncCurrencyInputs(values);
         page.refreshPreviews();
     };
 
