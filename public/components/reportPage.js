@@ -2,6 +2,10 @@
 (function (scope) {
     'use strict';
 
+    // เตือนเมื่อล็อกตำแหน่งไม่สมบูรณ์ เช่น ช่องว่างด้านหน้า field ไม่พอให้ลบ
+    const FOOTER_HTML =
+        '<p id="replaceWarning" class="replace-warning" style="display:none"></p>';
+
     const META_HTML = [
         '<div class="template-meta">',
         '    <label for="templateSelect">Template ที่จะใช้</label>',
@@ -20,6 +24,7 @@
         title: 'Word Template Filler',
         showFileInput: false,
         metaHTML: META_HTML,
+        footerHTML: FOOTER_HTML,
         emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปเลือกไฟล์ที่หน้า Template Configuration ก่อน',
 
         // ช่องที่เป็น type text จะมีปุ่มแว่นขยายให้เลือกค่าจาก Master Data

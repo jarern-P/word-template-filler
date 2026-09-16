@@ -32,6 +32,7 @@
     const pageCache = {};    // cache HTML ของแต่ละหน้า
     let mainEl = null;
     let dbPromise = null;
+    let textMeasurer = null;   // ตัววัดความกว้างจริง ใช้ตอนล็อกตำแหน่ง
     let templateRecords = null;   // cache รายการ template ล่าสุดจากฐานข้อมูล
     let masterRecords = null;     // cache รายการ master data ล่าสุดจากฐานข้อมูล
 
@@ -456,6 +457,9 @@
                 component.refreshPreviews();
             }
 
+            // ค่าเปลี่ยนแล้ว คำเตือนล็อกตำแหน่งเดิมอาจไม่จริงอีก
+            clearReplaceWarnings();
+
         } else if (target.dataset.persist) {
 
             getPageMeta(
@@ -643,11 +647,112 @@
 
         refreshTemplateList();
         refreshMasterList();
-    }
-
-    // ──────────────────────────────────────────────────────────────
+    }    // ──────────────────────────────────────────────────────────────
     // File / Template handlers
     // ──────────────────────────────────────────────────────────────
+
+    // ระยะที่ชดเชยไป (cm ถ้าตัววัดวัดเป็น cm จริง, ไม่งั้นเป็นจำนวนช่อง)
+    function describeDistance(distance) {
+
+        if (!distance) {
+            return '';
+        }
+
+        return distance.unit === 'cm'
+            ? distance.value.toFixed(2) + ' ซม.'
+            : distance.value + ' ช่อง';
+    }
+
+    function describeWarning(item) {
+
+        return item.field + ' (' +
+            (item.side === 'before' ? 'ช่องว่างด้านหน้า' : 'ช่องว่างด้านหลัง') +
+            'ต้องลบ ' + item.needed + ' ช่อง แต่มี ' +
+            item.available + ' ช่อง' +
+            (item.missing ? ' คลาด ~' + describeDistance(item.missing) : '') +
+            ')';
+    }
+
+    function describeApplied(item) {
+
+        return item.field + ' (' +
+            (item.side === 'before' ? 'ด้านหน้า' : 'ด้านหลัง') +
+            (item.action === 'add' ? ' +' : ' -') +
+            item.count + ' ช่อง' +
+            (item.distance ? ' ≈ ' + describeDistance(item.distance) : '') +
+            ')';
+    }
+
+    // แสดงผลการล็อกตำแหน่งหลังสร้างเอกสาร
+    // - มีคำเตือน = ช่องว่างไม่พอให้ชดเชยตำแหน่ง (ระบบไม่ตัดข้อความผู้ใช้)
+    // - มีรายการที่ชดเชยแล้ว = บอกว่าเพิ่ม/ลบช่องว่างไปเท่าไร (ผู้ใช้ตรวจสอบได้)
+    function showReplaceResult(warnings, applied, approximate) {
+
+        const el =
+            document.getElementById(
+                'replaceWarning'
+            );
+
+        if (!el) {
+            return;
+        }
+
+        const failed =
+            !!(warnings && warnings.length > 0);
+
+        const parts = [];
+
+        if (failed) {
+            parts.push(
+                'ล็อกตำแหน่งไม่สมบูรณ์: ' +
+                warnings.map(describeWarning).join(' · ')
+            );
+        }
+
+        if (applied && applied.length > 0) {
+            parts.push(
+                'ล็อกตำแหน่งแล้ว: ' +
+                applied.map(describeApplied).join(' · ')
+            );
+        }
+
+        if (approximate) {
+            parts.push(
+                'ไม่พบฟอนต์ของเอกสารในเครื่องนี้ ' +
+                'จึงวัดตำแหน่งด้วยฟอนต์ใกล้เคียง'
+            );
+        }
+
+        if (parts.length === 0) {
+
+            el.textContent = '';
+            el.style.display = 'none';
+            return;
+        }
+
+        el.className =
+            'replace-warning' +
+            (failed ? '' : ' ok');
+
+        el.textContent = parts.join(' ');
+        el.style.display = 'block';
+    }
+
+    function clearReplaceWarnings() {
+
+        const el =
+            document.getElementById(
+                'replaceWarning'
+            );
+
+        if (!el) {
+            return;
+        }
+
+        el.className = 'replace-warning';
+        el.textContent = '';
+        el.style.display = 'none';
+    }
 
     async function onFileChange(event) {
 
@@ -761,6 +866,17 @@
                 values,
                 locks
             );
+
+        // ล็อกตำแหน่งได้ครบหรือไม่ + ปรับช่องว่างไปเท่าไร แจ้งบนหน้ารายงาน
+        showReplaceResult(
+            scope.Replace.getWarnings
+                ? scope.Replace.getWarnings()
+                : [],
+            scope.Replace.getApplied
+                ? scope.Replace.getApplied()
+                : [],
+            !!(textMeasurer && textMeasurer.approximate)
+        );
 
         try {
 
@@ -1339,6 +1455,13 @@
         }
 
         bindMainEvents();
+
+        // ให้ replace.js วัดความกว้างข้อความจริง (ตามฟอนต์/ขนาดในเอกสาร)
+        // ตำแหน่งที่ล็อกไว้จึงเทียบเป็นความกว้างจริง (cm) ไม่ใช่จำนวนตัวอักษร
+        textMeasurer =
+            scope.TextMeasure.createMeasurer();
+
+        scope.Replace.setMeasurer(textMeasurer);
 
         scope.Sidebar.init();
 

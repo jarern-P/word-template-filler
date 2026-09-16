@@ -152,6 +152,24 @@ body {
     font-size: 15px;
 }
 
+/* ผลการล็อกตำแหน่งหลังสร้างเอกสาร (เตือนเมื่อชดเชยไม่ได้ / บอกเมื่อชดเชยแล้ว) */
+.replace-warning {
+    margin-top: 20px;
+    padding: 10px 14px;
+    border: 1px solid #e8c47a;
+    border-radius: 4px;
+    background: #fdf6e3;
+    color: #8a5a00;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.replace-warning.ok {
+    border-color: #b6dfb6;
+    background: #f2faf2;
+    color: #0a7a3d;
+}
+
 /* ช่องวันที่ + ข้อความแสดงค่าที่จะใส่จริงในเอกสาร */
 .field-control {
     display: flex;
