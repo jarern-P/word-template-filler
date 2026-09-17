@@ -799,7 +799,7 @@
             return;
         }
 
-        scope.Sidebar.closeMasterSubmenu();
+        // คลิกเมนูย่อยแล้ว submenu ยังกางค้างไว้ (setActive จัดการให้เอง)
         scope.Sidebar.setActive(page);
 
         if (page === currentPage) {
