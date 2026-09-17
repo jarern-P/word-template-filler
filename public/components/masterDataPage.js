@@ -13,7 +13,9 @@
 
         '    <div class="field">',
         '        <label for="masterCodeGroup">Code Group</label>',
-        '        <input type="text" id="masterCodeGroup" list="masterGroupOptions"' +
+        // data-suggest = ให้ selectMenu.js แสดง Code Group ที่มีอยู่ด้วยลิสต์ของแอป
+        // (ไม่ใช้ list="..." เพราะ Chromium จะเปิดลิสต์ของตัวเองซ้อนขึ้นมาด้วย)
+        '        <input type="text" id="masterCodeGroup" data-suggest="masterGroupOptions"' +
             ' placeholder="เช่น CUSTOMER_TYPE" autocomplete="off">',
         '        <datalist id="masterGroupOptions"></datalist>',
         '    </div>',

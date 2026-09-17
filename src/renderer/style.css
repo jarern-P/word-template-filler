@@ -26,6 +26,9 @@
     --line: #f6e0eb;
     --line-soft: #fbeaf2;
 
+    /* ขอบช่องกรอก: เข้มกว่า --line พอให้เห็นเส้นชัด แต่ยังเป็นชมพูอ่อน */
+    --line-input: #eabfd5;
+
     --ok: #2f9e6b;
     --ok-soft: #eefaf3;
     --warn: #c0822a;
@@ -433,7 +436,7 @@ input[type="file"]::file-selector-button:hover {
     font-size: 15px;
     color: var(--ink);
     background: var(--surface);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-input);
     border-radius: var(--radius);
     transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
@@ -521,7 +524,8 @@ input[type="checkbox"] {
 .template-meta select:hover,
 .lookup-toolbar select:hover {
     background-color: var(--pink-50);
-    border-color: var(--pink-300);
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c9427a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+    border-color: var(--pink-400);
 }
 
 /* รายการที่กางออก (Chromium ใช้สีจาก option) */
@@ -537,6 +541,20 @@ select option:checked {
 
 select option:disabled {
     color: var(--ink-faint);
+}
+
+/* ช่องที่มีรายการแนะนำ (Code Group): ใส่ลูกศรให้รู้ว่ามีลิสต์ให้เลือก
+   ลิสต์จริงวาดโดย selectMenu.js จึงเข้าธีมเดียวกับ dropdown อื่น */
+input[data-suggest] {
+    padding-right: 42px;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ef5f95' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 16px 16px;
+}
+
+input[data-suggest]:hover {
+    background-color: var(--pink-50);
 }
 
 /* ไอคอนปฏิทินของ <input type="date"> ให้ดูกดได้ */
@@ -560,11 +578,13 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     z-index: 200;
     max-width: calc(100vw - 24px);
     padding: 8px;
-    background: rgba(255, 255, 255, 0.94);
+
+    /* ทึบเหมือนแผงของ dropdown วันที่ — ถ้าโปร่งจะเห็นช่อง/ปุ่มด้านหลังทะลุขึ้นมา
+       แล้วดูเหมือนมีรายการอื่นซ้อนอยู่ในลิสต์ */
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     box-shadow: var(--glow-strong);
-    backdrop-filter: blur(10px);
     animation: select-menu-in 0.16s ease;
 }
 
@@ -588,7 +608,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 .select-menu-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     max-height: 56vh;
     margin: 0;
     padding: 0;
@@ -596,7 +616,9 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     list-style: none;
 }
 
-/* รายการแต่ละอัน: มนเป็นแคปซูล พื้นชมพูจาง ๆ */
+/* รายการแต่ละอัน: มุมมนแบบเดียวกับลิสต์รูปแบบวันที่
+   (เดิมเป็นแคปซูลปลายมนทั้งสองข้าง พอ hover แล้วเงาฟุ้งทับแถวข้าง ๆ
+   จึงดูเหมือนรายการซ้อนกันเป็นชั้น ๆ) */
 .select-item {
     display: flex;
     align-items: center;
@@ -611,7 +633,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     text-align: left;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius);
     box-shadow: none;
 }
 
@@ -619,7 +641,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     color: var(--pink-700);
     background: var(--pink-50);
     border-color: var(--pink-200);
-    box-shadow: var(--glow-soft);
+    box-shadow: none;
 }
 
 .select-item.selected {
@@ -627,7 +649,7 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     font-weight: 700;
     background: linear-gradient(135deg, var(--pink-100), var(--pink-200));
     border-color: var(--pink-300);
-    box-shadow: var(--glow-soft);
+    box-shadow: none;
 }
 
 /* เครื่องหมายถูกของรายการที่เลือกอยู่ */
@@ -650,6 +672,13 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     background: transparent;
     border-color: transparent;
     box-shadow: none;
+}
+
+/* ไม่มีรายการตรงกับที่พิมพ์ */
+.select-empty {
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--ink-faint);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -904,7 +933,7 @@ button.plain:hover {
     font-size: 14px;
     color: var(--ink);
     background: var(--surface);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-input);
     border-radius: var(--radius-pill);
     transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
@@ -971,7 +1000,7 @@ button.plain:hover {
     padding: 0;
     color: var(--pink-600);
     background: var(--surface-soft);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-input);
     border-radius: var(--radius);
     box-shadow: none;
 }
@@ -997,7 +1026,7 @@ button.plain:hover {
     font-size: 13px;
     color: var(--pink-700);
     background: var(--surface-soft);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-input);
     border-radius: var(--radius-pill);
     box-shadow: none;
 }
@@ -1107,7 +1136,7 @@ button.plain:hover {
     font-size: 15px;
     color: var(--ink);
     background: var(--surface-soft);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-input);
     border-radius: var(--radius);
 }
 
@@ -1275,7 +1304,7 @@ button.plain:hover {
     font-size: 14px;
     color: var(--ink);
     background: var(--surface-soft);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-input);
     border-radius: var(--radius);
 }
 
