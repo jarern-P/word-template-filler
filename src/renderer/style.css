@@ -46,6 +46,9 @@
 
     /* ฟอนต์: ตัวละตินจาก Segoe UI ตัวไทยจาก Leelawadee UI */
     --font: "Segoe UI", "Leelawadee UI", "Noto Sans Thai", "Sarabun", system-ui, sans-serif;
+
+    /* widget ของ OS (ลิสต์ select / ปฏิทิน / scrollbar) ให้เป็นโหมดสว่างเสมอ */
+    color-scheme: light;
 }
 
 *,
@@ -493,6 +496,160 @@ input[type="checkbox"] {
     width: auto;
     margin: 0;
     padding: 0;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   dropdown (select) — ลบหน้าตาเดิมของ OS แล้ววาดลูกศรชมพูเอง
+   ใช้ร่วมกันทั้ง select ในฟอร์ม / ช่องชื่อ template / popup Master Data
+   ────────────────────────────────────────────────────────────── */
+
+.field select,
+.template-meta select,
+.lookup-toolbar select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 42px;
+    cursor: pointer;
+    background-color: var(--surface);
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ef5f95' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 16px 16px;
+}
+
+.field select:hover,
+.template-meta select:hover,
+.lookup-toolbar select:hover {
+    background-color: var(--pink-50);
+    border-color: var(--pink-300);
+}
+
+/* รายการที่กางออก (Chromium ใช้สีจาก option) */
+select option {
+    color: var(--ink);
+    background: var(--surface);
+}
+
+select option:checked {
+    color: var(--pink-700);
+    font-weight: 600;
+}
+
+select option:disabled {
+    color: var(--ink-faint);
+}
+
+/* ไอคอนปฏิทินของ <input type="date"> ให้ดูกดได้ */
+input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.65;
+    transition: opacity 0.2s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ลิสต์ dropdown แบบกำหนดเอง (selectMenu.js)
+   popup ของ <select> เนทีฟสั่งความมน/เงาไม่ได้ จึงใช้ลิสต์นี้แทน
+   ────────────────────────────────────────────────────────────── */
+
+.select-menu {
+    position: fixed;
+    z-index: 200;
+    max-width: calc(100vw - 24px);
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+    backdrop-filter: blur(10px);
+    animation: select-menu-in 0.16s ease;
+}
+
+/* ลิสต์เด้งขึ้นเล็กน้อยเวลากาง */
+@keyframes select-menu-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.select-menu[hidden] {
+    display: none;
+}
+
+.select-menu-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 56vh;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+/* รายการแต่ละอัน: มนเป็นแคปซูล พื้นชมพูจาง ๆ */
+.select-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin: 0;
+    padding: 10px 14px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    box-shadow: none;
+}
+
+.select-item:hover {
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-color: var(--pink-200);
+    box-shadow: var(--glow-soft);
+}
+
+.select-item.selected {
+    color: var(--pink-700);
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--pink-100), var(--pink-200));
+    border-color: var(--pink-300);
+    box-shadow: var(--glow-soft);
+}
+
+/* เครื่องหมายถูกของรายการที่เลือกอยู่ */
+.select-item.selected::after {
+    content: "";
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c9427a' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E") no-repeat center / 14px 14px;
+}
+
+.select-item.disabled {
+    color: var(--ink-faint);
+    cursor: not-allowed;
+}
+
+.select-item.disabled:hover {
+    color: var(--ink-faint);
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -971,10 +1128,11 @@ button.plain:hover {
 }
 
 .date-format-item {
+    position: relative;
     display: block;
     width: 100%;
     margin: 0;
-    padding: 10px 12px;
+    padding: 10px 42px 10px 12px;
     font-family: inherit;
     text-align: left;
     background: var(--surface);
@@ -993,6 +1151,18 @@ button.plain:hover {
     background: var(--pink-50);
     border-color: var(--pink-400);
     box-shadow: inset 0 0 0 1px var(--pink-300);
+}
+
+/* เครื่องหมายถูกของรายการที่เลือกอยู่ */
+.date-format-item.selected::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 14px;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ef5f95' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E") no-repeat center / 16px 16px;
 }
 
 .date-format-example {
