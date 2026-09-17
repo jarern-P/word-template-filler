@@ -170,17 +170,11 @@ body {
     color: #0a7a3d;
 }
 
-/* ช่องวันที่ + ข้อความแสดงค่าที่จะใส่จริงในเอกสาร */
+/* กล่องห่อ control: ช่อง input + ปุ่มเสริม (ค้นหา / toggle / เลือกวันที่+รูปแบบ) */
 .field-control {
     display: flex;
     flex-direction: column;
     gap: 4px;
-}
-
-.field-preview {
-    font-size: 13px;
-    color: #0a7a3d;
-    min-height: 16px;
 }
 
 button {
@@ -422,6 +416,177 @@ button:disabled {
     color: #0a7a3d;
     background: #f2faf2;
     border-color: #b6dfb6;
+}
+
+/* ── ช่องวันที่: text input + ปุ่มเปิด dropdown เลือกวันและรูปแบบ (ไทย / สากล) ── */
+.date-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.date-field input {
+    flex: 1;
+    min-width: 0;
+}
+
+.date-format-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 42px;
+    height: 42px;
+    margin-top: 0;
+    padding: 0;
+    color: #555;
+    background: #fff;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.date-format-btn:hover {
+    color: #000;
+    background: #f0f6ff;
+    border-color: #bcd6ff;
+}
+
+/* ── dropdown เลือกวันที่ + รูปแบบการเขียน (ไทย/สากล) ── */
+.date-picker-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+}
+
+.date-picker-overlay.open {
+    display: block;
+}
+
+.date-picker-backdrop {
+    position: absolute;
+    inset: 0;
+}
+
+.date-picker-panel {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    width: 300px;
+    max-height: 70vh;
+    padding: 16px;
+    background: #fff;
+    border: 1px solid #d5d5d5;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}
+
+.date-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.date-picker-head h2 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.date-picker-close {
+    margin-top: 0;
+    padding: 2px 10px;
+    font-size: 14px;
+    background: transparent;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.date-picker-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
+    font-size: 13px;
+    color: #555;
+}
+
+.date-picker-field input {
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 15px;
+    font-family: inherit;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.date-format-list {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    overflow-y: auto;
+}
+
+.date-format-item {
+    display: block;
+    width: 100%;
+    margin: 0 0 6px;
+    padding: 8px 10px;
+    font-family: inherit;
+    text-align: left;
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 6px;
+}
+
+.date-format-item:hover {
+    background: #f0f6ff;
+    border-color: #bcd6ff;
+}
+
+.date-format-item.selected {
+    background: #f0f6ff;
+    border-color: #4a86e8;
+}
+
+.date-format-example {
+    display: block;
+    font-size: 15px;
+    color: #222;
+}
+
+.date-format-item.selected .date-format-example {
+    font-weight: bold;
+}
+
+.date-format-label {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: #777;
+}
+
+.date-picker-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.date-picker-actions button {
+    margin-top: 0;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    border: 1px solid #bbb;
+    border-radius: 6px;
+}
+
+.date-picker-actions .date-picker-ok {
+    color: #fff;
+    background: #4a86e8;
+    border-color: #4a86e8;
 }
 
 /* ── Popup เลือกข้อมูล Master Data ── */

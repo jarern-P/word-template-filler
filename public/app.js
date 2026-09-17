@@ -81,6 +81,14 @@
             scope.FieldTypes.resetCurrencyModes();
         }
 
+        // ล้างรูปแบบวันที่ที่เคยเลือกไว้ของช่อง date
+        if (
+            scope.FieldTypes &&
+            scope.FieldTypes.resetDateFormats
+        ) {
+            scope.FieldTypes.resetDateFormats();
+        }
+
         // ล้างสถานะ "ล็อกตำแหน่ง" ที่ติ๊กไว้ในหน้า Template Configuration
         const config =
             getComponent(CONFIG_PAGE);
@@ -468,15 +476,6 @@
                     );
             }
 
-            // อัปเดตข้อความกำกับ
-            // เช่น วันที่แบบไทย
-            const component =
-                getComponent(currentPage);
-
-            if (component.refreshPreviews) {
-                component.refreshPreviews();
-            }
-
             // ค่าเปลี่ยนแล้ว คำเตือนล็อกตำแหน่งเดิมอาจไม่จริงอีก
             clearReplaceWarnings();
 
@@ -569,13 +568,6 @@
 
         // โหมดเปลี่ยน = รูปที่จะเขียนลงเอกสารเปลี่ยน คำเตือนล็อกตำแหน่งเดิมอาจไม่จริงอีก
         clearReplaceWarnings();
-
-        const component =
-            getComponent(currentPage);
-
-        if (component.refreshPreviews) {
-            component.refreshPreviews();
-        }
     }
 
     // หาช่อง input ของ field currency ในฟอร์มปัจจุบัน

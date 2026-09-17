@@ -240,40 +240,15 @@
             : '';
     }
 
-    // '2013-08-11' -> '11 สิงหาคม 2556' (พ.ศ. = ค.ศ. + 543)
-    function formatThaiDate(isoText) {
-        const matches = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoText || '').trim());
-        if (!matches) return isoText || '';
-
-        const month = THAI_MONTHS[Number(matches[2]) - 1];
-        if (!month) return isoText;
-
-        return Number(matches[3]) + ' ' + month + ' ' + (Number(matches[1]) + 543);
-    }
-
     // แปลงค่าที่จะเขียนลงเอกสารตาม type
-    // - date: ISO -> วันที่ไทย
+    // - date: ช่องวันที่เป็นข้อความที่จัดรูปแบบไว้แล้ว (เลือกด้วย dropdown ข้างช่อง)
+    //         จึงใช้ค่าที่เห็นในช่องตรง ๆ (เห็นแบบไหน ลงเอกสารแบบนั้น)
     // - currency: modes = { <field>: 'number'|'text' } กำหนดว่า field ไหนเขียนเป็นตัวเลข/comma หรือตัวหนังสือ
     function formatValue(type, value, modes, field) {
-        if (type === 'date') return formatThaiDate(value);
         if (type === 'currency') {
             return formatCurrency(value, modes ? modes[field] : undefined);
         }
         return value;
-    }
-
-    // วันที่ต้องแสดงผลแบบไทยกำกับไว้ เพราะ <input type="date"> แสดงเป็น พ.ศ. ไม่ได้
-    function wrapWithPreview(input, field) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'field-control';
-
-        const preview = document.createElement('span');
-        preview.className = 'field-preview';
-        preview.dataset.previewFor = field;
-
-        wrapper.appendChild(input);
-        wrapper.appendChild(preview);
-        return wrapper;
     }
 
     // รูปแว่นขยายของปุ่มค้นหา (ใช้ inline SVG เพื่อไม่ต้องพึ่ง font/ไอคอนภายนอก)
@@ -328,14 +303,249 @@
         toggleBtn.setAttribute('aria-label', toggleBtn.title);
         toggleBtn.textContent = TOGGLE_LABELS[getCurrencyMode(field)];
 
-        // ข้อความกำกับใต้ช่อง แสดงรูปแบบอีกโหมดเพื่อเทียบค่าได้
-        // const preview = document.createElement('span');
-        // preview.className = 'field-preview';
-        // preview.dataset.previewFor = field;
-
         wrapper.appendChild(input);
         wrapper.appendChild(toggleBtn);
-        // wrapper.appendChild(preview);
+        return wrapper;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Date (วันที่)
+    //
+    // ช่องกรอกเป็นข้อความธรรมดา (ไม่ใช่ <input type="date">) เพื่อให้ใส่วันที่
+    // ได้ทั้งแบบไทย (พ.ศ.) และสากล (ค.ศ.) ส่วนรูปแบบที่จะเขียนลงเอกสารเลือกจาก
+    // dropdown ข้างช่อง (ปุ่มปฏิทิน) — เลือกวัน/เดือน/ปี + รูปแบบ แล้วกดตกลง
+    // ค่าที่จัดรูปแบบแล้วจะลงช่องให้เลย (แทน span preview ใต้ช่องแบบเดิม)
+    //
+    // ค่าที่เก็บในฟอร์ม = ข้อความที่เห็นในช่อง (เห็นแบบไหน ลงเอกสารแบบนั้น)
+    // ──────────────────────────────────────────────────────────────
+
+    const BE_OFFSET = 543;   // พ.ศ. = ค.ศ. + 543
+
+    // ชื่อเดือนแบบย่อ (ใช้กับรูปแบบ "31 ธ.ค. 2569")
+    const THAI_MONTHS_SHORT = [
+        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+    ];
+
+    // รูปแบบวันที่ที่เลือกได้ — pattern ใช้ token:
+    // D = วัน, M = เดือน (เลข), Y = ปี ค.ศ., YBE = ปี พ.ศ.,
+    // MM/DD = เติม 0 ข้างหน้า, MONTHFULL/MONTHSHORT = ชื่อเดือนไทย
+    const DATE_FORMATS = [
+        { value: 'thai-full', label: 'วันที่ไทย (เต็ม)', pattern: 'D MONTHFULL YBE' },
+        { value: 'thai-short', label: 'วันที่ไทย (ย่อ)', pattern: 'D MONTHSHORT YBE' },
+        { value: 'dmy-be', label: 'วัน/เดือน/ปี พ.ศ.', pattern: 'D/M/YBE' },
+        { value: 'dmy-ce', label: 'วัน/เดือน/ปี ค.ศ.', pattern: 'D/M/Y' },
+        { value: 'iso', label: 'สากล (ISO)', pattern: 'Y-MM-DD' },
+        { value: 'thai-full-ce', label: 'วันที่ไทย (ค.ศ.)', pattern: 'D MONTHFULL Y' }
+    ];
+
+    const DEFAULT_DATE_FORMAT = 'thai-full';
+
+    // รูปแบบที่เลือกไว้ของแต่ละ field (เก็บแยกจากค่า เพราะค่าเป็นข้อความพร้อมใช้)
+    const dateFormats = {};
+
+    function dateFormatOption(value) {
+        for (const format of DATE_FORMATS) {
+            if (format.value === value) return format;
+        }
+
+        return null;
+    }
+
+    function getDateFormat(field) {
+        return dateFormats[field] || DEFAULT_DATE_FORMAT;
+    }
+
+    function setDateFormat(field, value) {
+        dateFormats[field] = dateFormatOption(value) ? value : DEFAULT_DATE_FORMAT;
+    }
+
+    function resetDateFormats() {
+        Object.keys(dateFormats).forEach(function (field) {
+            delete dateFormats[field];
+        });
+    }
+
+    function pad2(number) {
+        return String(number).padStart(2, '0');
+    }
+
+    // วันที่ (ค.ศ.) -> ข้อความตาม pattern เช่น { y: 2026, m: 12, d: 31 } -> '31 ธันวาคม 2569'
+    function applyDatePattern(pattern, parts) {
+        const tokens = {
+            MONTHFULL: THAI_MONTHS[parts.m - 1],
+            MONTHSHORT: THAI_MONTHS_SHORT[parts.m - 1],
+            YBE: String(Number(parts.y) + BE_OFFSET),
+            YY: pad2(Number(parts.y) % 100),
+            Y: String(parts.y),
+            MM: pad2(parts.m),
+            DD: pad2(parts.d),
+            M: String(parts.m),
+            D: String(parts.d)
+        };
+
+        return String(pattern).replace(
+            /MONTHFULL|MONTHSHORT|YBE|YY|MM|DD|Y|M|D/g,
+            function (token) {
+                return tokens[token];
+            }
+        );
+    }
+
+    // วันที่ (ค.ศ.) -> ข้อความตามรูปแบบที่เลือกไว้ (ค่าเริ่มต้น = วันที่ไทยเต็ม พ.ศ.)
+    function formatDate(formatValue, parts) {
+        if (!parts) return '';
+
+        const format =
+            dateFormatOption(formatValue) ||
+            dateFormatOption(DEFAULT_DATE_FORMAT);
+
+        return applyDatePattern(format.pattern, parts);
+    }
+
+    function todayParts() {
+        const now = new Date();
+
+        return {
+            y: now.getFullYear(),
+            m: now.getMonth() + 1,
+            d: now.getDate()
+        };
+    }
+
+    // วัน/เดือน/ปี ต้องเป็นวันที่ที่มีจริง (31 ก.พ. ใช้ไม่ได้)
+    function makeDateParts(year, month, day) {
+        if (!year || !month || !day) return null;
+        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+        const candidate = new Date(year, month - 1, day);
+
+        if (
+            candidate.getFullYear() !== year ||
+            candidate.getMonth() !== month - 1 ||
+            candidate.getDate() !== day
+        ) {
+            return null;
+        }
+
+        return { y: year, m: month, d: day };
+    }
+
+    // ปีที่พิมพ์มาจะเป็น ค.ศ. หรือ พ.ศ. ก็ได้ — 2569 = 2026 (ค.ศ.), 69 = 2569 (พ.ศ.), 26 = 2026 (ค.ศ.)
+    function toChristianYear(year) {
+        const value = Number(year);
+
+        if (value > 2400) return value - BE_OFFSET;              // 4 หลัก พ.ศ. เช่น 2569
+        if (value >= 1000) return value;                         // 4 หลัก ค.ศ. เช่น 2026
+        if (value >= 40) return value + 2500 - BE_OFFSET;        // 2 หลัก พ.ศ. เช่น 69
+
+        return value + 2000;                                     // 2 หลัก ค.ศ. เช่น 26
+    }
+
+    // ชื่อเดือนไทย (เต็มหรือย่อ) -> เลขเดือน 1-12, คืน 0 ถ้าไม่รู้จัก
+    function monthFromName(text) {
+        const key = String(text || '').replace(/\./g, '').trim();
+        if (!key) return 0;
+
+        for (let index = 0; index < THAI_MONTHS.length; index++) {
+            if (
+                THAI_MONTHS[index].indexOf(key) === 0 ||
+                THAI_MONTHS_SHORT[index].replace(/\./g, '') === key
+            ) {
+                return index + 1;
+            }
+        }
+
+        return 0;
+    }
+
+    // อ่านวันที่ที่ผู้ใช้พิมพ์ (ไทย/สากล, พ.ศ./ค.ศ.) -> { y, m, d } ค.ศ. หรือ null
+    // รองรับ 2026-12-31, 31/12/2569, 31-12-26, 31 ธันวาคม 2569, 31 ธ.ค. 69
+    function parseDateInput(text) {
+        const raw = String(text == null ? '' : text).trim();
+        if (!raw) return null;
+
+        let matches = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
+
+        if (matches) {
+            return makeDateParts(toChristianYear(matches[1]), Number(matches[2]), Number(matches[3]));
+        }
+
+        matches = /^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})$/.exec(raw);
+
+        if (matches) {
+            return makeDateParts(toChristianYear(matches[3]), Number(matches[2]), Number(matches[1]));
+        }
+
+        matches = /^(\d{1,2})\s+([^\d\s]+)\s+(\d{2,4})$/.exec(raw);
+
+        if (matches) {
+            return makeDateParts(toChristianYear(matches[3]), monthFromName(matches[2]), Number(matches[1]));
+        }
+
+        return null;
+    }
+
+    // '{ y, m, d }' <-> 'YYYY-MM-DD' (รูปแบบที่ <input type="date"> ใช้)
+    function parseIsoDate(isoText) {
+        const matches = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoText || '').trim());
+        if (!matches) return null;
+
+        return makeDateParts(Number(matches[1]), Number(matches[2]), Number(matches[3]));
+    }
+
+    function partsToIso(parts) {
+        if (!parts) return '';
+
+        return parts.y + '-' + pad2(parts.m) + '-' + pad2(parts.d);
+    }
+
+    // ตัวเลือกของ dropdown พร้อมตัวอย่างที่คิดจากวันนี้ (ให้เห็นรูปแบบจริง)
+    function dateFormatOptions() {
+        const today = todayParts();
+
+        return DATE_FORMATS.map(function (format) {
+            return {
+                value: format.value,
+                label: format.label,
+                example: applyDatePattern(format.pattern, today)
+            };
+        });
+    }
+
+    // รูปปฏิทินของปุ่มเปิด dropdown (inline SVG เพื่อไม่ต้องพึ่ง font/ไอคอนภายนอก)
+    const CALENDAR_SVG = [
+        '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">',
+        '<rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"></rect>',
+        '<line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="2"></line>',
+        '<line x1="8" y1="3" x2="8" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>',
+        '<line x1="16" y1="3" x2="16" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>',
+        '</svg>'
+    ].join('');
+
+    // ช่องวันที่ = ช่องข้อความธรรมดา + ปุ่มเปิด dropdown เลือกวันและรูปแบบการเขียน
+    // (ปุ่มผูก event ด้วย delegation ที่ datePicker.js จึงทนต่อการวาดฟอร์มใหม่)
+    function createDateControl(field) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-control date-field';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.dataset.field = field;
+        input.dataset.dateInput = '1';
+        input.autocomplete = 'off';
+        input.placeholder = 'กรอก ' + field + ' (เช่น 31/12/2569)';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'date-format-btn';
+        button.dataset.dateFormatFor = field;
+        button.title = 'เลือกวันที่และรูปแบบการเขียน (ไทย / สากล)';
+        button.setAttribute('aria-label', button.title);
+        button.innerHTML = CALENDAR_SVG;
+
+        wrapper.appendChild(input);
+        wrapper.appendChild(button);
         return wrapper;
     }
 
@@ -347,6 +557,12 @@
 
         if (type.value === 'currency') {
             return createCurrencyControl(field);
+        }
+
+        // วันที่ใช้ช่องข้อความ + ปุ่มเลือกรูปแบบ ไม่ใช้ <input type="date">
+        // เพราะต้องเขียนวันที่ได้หลายรูปแบบทั้งไทย (พ.ศ.) และสากล (ค.ศ.)
+        if (type.value === 'date') {
+            return createDateControl(field);
         }
 
         if (type.input === 'textarea') {
@@ -362,10 +578,6 @@
         input.dataset.field = field;
         if (type.input !== 'checkbox') {
             input.placeholder = 'กรอก ' + field;
-        }
-
-        if (type.input === 'date') {
-            return wrapWithPreview(input, field);
         }
 
         if (type.input === 'text' && opts.lookup) {
@@ -386,8 +598,17 @@
         getCurrencyMode: getCurrencyMode,
         resetCurrencyModes: resetCurrencyModes,
         createFieldControl: createFieldControl,
-        formatThaiDate: formatThaiDate,
         formatValue: formatValue,
+        defaultDateFormat: DEFAULT_DATE_FORMAT,
+        dateFormatOptions: dateFormatOptions,
+        getDateFormat: getDateFormat,
+        setDateFormat: setDateFormat,
+        resetDateFormats: resetDateFormats,
+        formatDate: formatDate,
+        parseDateInput: parseDateInput,
+        parseIsoDate: parseIsoDate,
+        partsToIso: partsToIso,
+        todayParts: todayParts,
         formatCurrency: formatCurrency,
         formatCurrencyComma: formatCurrencyComma,
         thaiBahtText: thaiBahtText,

@@ -27,6 +27,22 @@
         control.value = value;
     }
 
+    // หา control ของ field ในฟอร์มปัจจุบัน (ฟอร์มถูกวาดใหม่ทุกครั้งที่เปลี่ยนหน้า)
+    function findControl(field) {
+        const form = getFormElement();
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll(FIELD_SELECTOR).forEach(function (control) {
+            if (control.dataset.field === field) {
+                found = control;
+            }
+        });
+
+        return found;
+    }
+
     // ค่าเริ่มต้น: ช่องข้อความธรรมดา
     function createTextField(field) {
         const input = document.createElement('input');
@@ -178,6 +194,7 @@
 
     scope.FormPage = {
         create: create,
+        findControl: findControl,
         readControlValue: readControlValue,
         writeControlValue: writeControlValue
     };

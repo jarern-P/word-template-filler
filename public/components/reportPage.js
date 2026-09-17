@@ -76,8 +76,10 @@
     };
 
     // ──────────────────────────────────────────────────────────────
-    // ค่าที่จะเขียนลงเอกสาร (วันที่ถูกแปลงเป็นรูปแบบไทย)
-    // เก็บค่าในฟอร์มเป็น ISO ไว้ก่อน เพื่อให้ <input type="date"> ยังใช้ได้
+    // ค่าที่จะเขียนลงเอกสาร
+    // - วันที่: ช่องเป็นข้อความที่จัดรูปแบบไว้แล้ว (เลือกจาก dropdown ข้างช่อง)
+    //   จึงใช้ค่าที่อ่านจากช่องตรง ๆ
+    // - currency: ค่า canonical (ตัวเลขล้วน) อยู่ที่ dataset ของช่อง
     // ──────────────────────────────────────────────────────────────
     const baseGetValues = page.getValues;
     const baseApplyValues = page.applyValues;
@@ -103,50 +105,6 @@
         return values;
     };
 
-    // แสดงวันที่แบบไทยกำกับใต้ช่องวันที่
-    page.refreshPreviews = function () {
-        const form = document.getElementById('form');
-        if (!form) return;
-
-        const types = getConfiguredTypes();
-        const previews = {};
-        const controls = {};
-
-        form.querySelectorAll('[data-preview-for]').forEach(function (preview) {
-            previews[preview.dataset.previewFor] = preview;
-        });
-
-        form.querySelectorAll('[data-field]').forEach(function (control) {
-            controls[control.dataset.field] = control;
-        });
-
-        Object.keys(previews).forEach(function (field) {
-            const control = controls[field];
-            const preview = previews[field];
-            if (!control) return;
-
-            const raw = scope.FormPage.readControlValue(control);
-
-            // currency มีปุ่ม toggle เป็นของตัวเอง — ค่า canonical อยู่ที่ dataset
-            // แล้วแสดงรูปแบบ "อีกโหมด" กำกับใต้ช่องเพื่อเทียบค่าได้
-            if (control.dataset.currencyInput === '1') {
-                const digits = control.dataset.currencyValue || '';
-
-                preview.textContent = digits === ''
-                    ? ''
-                    : scope.FieldTypes.currencyPreviewText(
-                        digits,
-                        scope.FieldTypes.getCurrencyMode(field)
-                    );
-                return;
-            }
-
-            preview.textContent = raw === ''
-                ? ''
-                : scope.FieldTypes.formatValue(types[field], raw);
-        });
-    };
-
     // ซิงก์ช่อง currency ให้แสดงรูปแบบตามโหมดปัจจุบัน (ใช้หลังเติมค่ากลับเข้าฟอร์ม)
     // ค่า canonical (ตัวเลขล้วน) เขียนลง dataset ก่อนแล้วช่องค่อยแสดงรูปแบบของโหมด
     page.syncCurrencyInputs = function (values) {
@@ -167,7 +125,6 @@
     page.applyValues = function (values) {
         baseApplyValues.call(page, values);
         page.syncCurrencyInputs(values);
-        page.refreshPreviews();
     };
 
     scope.ReportPage = page;
