@@ -1303,7 +1303,9 @@ button.plain:hover {
     font-family: inherit;
     font-size: 14px;
     color: var(--ink);
-    background: var(--surface-soft);
+    /* ใช้ background-color ไม่ใช่ shorthand background เพื่อไม่ลบ background-image
+       (ลูกศรชี้ลง) ที่ธีม dropdown วาดไว้ — ถ้าลบแล้วพอ hover ลูกศรจะถูกวาดซ้ำทั้งช่อง */
+    background-color: var(--surface-soft);
     border: 1px solid var(--line-input);
     border-radius: var(--radius);
 }
@@ -1317,6 +1319,8 @@ button.plain:hover {
 
 .lookup-toolbar select {
     flex: 0 0 40%;
+    /* คงที่วางลูกศรด้านขวาจากธีม dropdown (padding ด้านบนลบทิ้งไป) */
+    padding-right: 42px;
 }
 
 .lookup-toolbar input {
