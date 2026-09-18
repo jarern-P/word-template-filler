@@ -408,7 +408,7 @@ if ($SkipVite) {
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[4/5] packaging .exe (electron-builder --win portable)"
+Write-Host "[4/5] packaging .exe (electron-builder --win nsis)"
 
 $builderCmd = Join-Path $ProjectRoot "node_modules\.bin\electron-builder.cmd"
 
@@ -417,7 +417,7 @@ if (-not (Test-PathSafe -Path $builderCmd)) {
     exit 1
 }
 
-& $builderCmd --win portable "--config.directories.output=$OutputDir"
+& $builderCmd --win nsis "--config.directories.output=$OutputDir"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: electron-builder failed (exit $LASTEXITCODE)" -ForegroundColor Red
@@ -475,7 +475,7 @@ if (Test-PathSafe -Path $indexHtml) {
     }
 }
 
-$exe = Get-ChildItem -LiteralPath $outputFolder -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+$exe = Get-ChildItem -LiteralPath $outputFolder -Filter "*Setup*.exe" -File -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 

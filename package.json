@@ -12,7 +12,7 @@
     "electron": "electron .",
     "dev:electron": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\"",
     "build": "vite build",
-    "build:exe": "npm run build && electron-builder --win portable",
+    "build:exe": "npm run build && electron-builder --win nsis",
     "build:exe:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1"
   },
   "dependencies": {
@@ -30,6 +30,7 @@
   "build": {
     "appId": "com.wordtemplatefiller.app",
     "productName": "Word Template Filler",
+    "icon": "src/main/assets/icon-folder-pink.png",
     "directories": {
       "output": "release"
     },
@@ -45,12 +46,19 @@
     "win": {
       "target": [
         {
-          "target": "portable",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ]
-    }
+    },
+    "nsis": {
+  "oneClick": false,
+  "allowToChangeInstallationDirectory": true,
+  "createDesktopShortcut": true,
+  "createStartMenuShortcut": true,
+  "shortcutName": "Word Template Filler"
+}
   }
 }
