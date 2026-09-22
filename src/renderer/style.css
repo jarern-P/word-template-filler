@@ -1413,6 +1413,138 @@ button.danger:hover {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   Popup ตัวอย่างเอกสารก่อนดาวน์โหลด
+   ────────────────────────────────────────────────────────────── */
+
+.preview-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    align-items: center;
+    justify-content: center;
+}
+
+.preview-overlay.open {
+    display: flex;
+}
+
+.preview-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(75, 58, 68, 0.2);
+    backdrop-filter: blur(3px);
+}
+
+.preview-dialog {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 660px;
+    max-width: calc(100vw - 40px);
+    max-height: 85vh;
+    padding: 22px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+}
+
+.preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.preview-head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+/* กระดาษจำลอง: พื้นขาว ขอบจาง อ่านเหมือนเอกสาร */
+.preview-body {
+    flex: 1;
+    min-height: 120px;
+    margin-top: 14px;
+    padding: 22px 24px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+}
+
+.preview-para {
+    margin: 0 0 10px;
+    font-size: 15px;
+    line-height: 1.85;
+    color: var(--ink);
+    /* คงแท็บ/ช่องว่างที่อยู่ในเอกสารไว้ ไม่ให้เบราว์เซอร์ยุบรวม */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.preview-para:last-child {
+    margin-bottom: 0;
+}
+
+/* ย่อหน้าว่างในเอกสาร = เว้นบรรทัด */
+.preview-para.blank {
+    height: 10px;
+    margin: 0;
+}
+
+/* ค่าที่จะเขียนลงเอกสารจริง */
+.preview-value {
+    padding: 1px 4px;
+    color: var(--pink-700);
+    background: var(--pink-100);
+    border-radius: var(--radius-sm);
+}
+
+/* field ที่ยังไม่ได้กรอก — ต้องเห็นชัดว่าเอกสารยังไม่ครบ */
+.preview-missing {
+    padding: 1px 4px;
+    color: var(--warn);
+    background: var(--warn-soft);
+    border-radius: var(--radius-sm);
+}
+
+.preview-meta,
+.preview-foot {
+    margin: 10px 0 0;
+    font-size: 13px;
+    color: var(--ink-faint);
+}
+
+.preview-meta.warn {
+    color: var(--warn);
+}
+
+.preview-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.preview-note {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+.preview-note.warn {
+    color: var(--warn);
+}
+
+.preview-note.ok {
+    color: var(--ok);
+}
+
+/* ──────────────────────────────────────────────────────────────
    หน้าต่างแคบ: ย้าย sidebar ขึ้นด้านบน
    ────────────────────────────────────────────────────────────── */
 

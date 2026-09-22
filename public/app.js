@@ -226,6 +226,10 @@
             component.showEmptyState();
             component.hideButtons();
 
+            if (component.showPreviewButton) {
+                component.showPreviewButton(false);
+            }
+
             if (component.setSaveEnabled) {
                 component.setSaveEnabled(false);
             }
@@ -246,6 +250,11 @@
         );
 
         component.showClearButton(true);
+
+        // ปุ่มดูตัวอย่างมีเฉพาะหน้ารายงาน (declared ใน reportPage.js)
+        if (component.showPreviewButton) {
+            component.showPreviewButton(state.fields.length > 0);
+        }
 
         if (component.setSaveEnabled) {
             component.setSaveEnabled(true);
@@ -735,6 +744,13 @@
                 const id =
                     target.id;
 
+                // ดูตัวอย่างเอกสารก่อนดาวน์โหลด (หน้ารายงาน)
+                if (id === 'previewBtn') {
+
+                    onPreview();
+                    return;
+                }
+
                 if (id === 'downloadBtn') {
 
                     onDownload();
@@ -1054,6 +1070,94 @@
                 currentPage
             ).resetFileInput();
         }
+    }
+
+    // ดูตัวอย่างข้อความในเอกสารก่อนดาวน์โหลด
+    //
+    // ตัวอย่างสร้างจาก xml ต้นฉบับ (แทน {{field}} เองในหน้าตัวอย่าง) จึงรู้ว่าค่าไหน
+    // "ยังไม่ได้กรอก" ซึ่งเป็นสิ่งสำคัญที่สุดที่ต้องเห็นก่อนดาวน์โหลด
+    // แต่ยังประมวลผล Replace จริงหนึ่งรอบ เพื่อรายงานผล "ล็อกตำแหน่ง" ให้เห็นก่อนด้วย
+    function onPreview() {
+
+        if (
+            !state.loaded ||
+            !state.xml
+        ) {
+
+            alert(
+                'ยังไม่มีเอกสารให้ดูตัวอย่าง'
+            );
+
+            return;
+        }
+
+        const values =
+            getComponent(
+                currentPage
+            ).getValues();
+
+        const config =
+            getComponent(
+                CONFIG_PAGE
+            );
+
+        const locks =
+            config &&
+            config.getLocks
+                ? config.getLocks()
+                : null;
+
+        // รันจริงหนึ่งรอบ เพื่อให้ getWarnings/getApplied เป็นของค่าที่กรอกอยู่ตอนนี้
+        scope.Replace.replaceFields(
+            state.xml,
+            values,
+            locks
+        );
+
+        const notes = [];
+
+        const warnings =
+            scope.Replace.getWarnings
+                ? scope.Replace.getWarnings()
+                : [];
+
+        const applied =
+            scope.Replace.getApplied
+                ? scope.Replace.getApplied()
+                : [];
+
+        if (warnings.length > 0) {
+
+            notes.push({
+                kind: 'warn',
+                text:
+                    'ล็อกตำแหน่งไม่สมบูรณ์: ' +
+                    warnings.map(describeWarning).join(' · ')
+            });
+        }
+
+        if (applied.length > 0) {
+
+            notes.push({
+                kind: 'ok',
+                text:
+                    'ล็อกตำแหน่งแล้ว: ' +
+                    applied.map(describeApplied).join(' · ')
+            });
+        }
+
+        scope.PreviewDialog.open({
+            // ใช้ชื่อไฟล์เต็ม (มี .docx) เพราะหัวเรื่องนี้คือ "ไฟล์ที่จะดาวน์โหลด"
+            title:
+                'ตัวอย่างเอกสาร — ' +
+                (state.fileName || 'template.docx'),
+            xml:
+                state.xml,
+            values:
+                values,
+            notes:
+                notes
+        });
     }
 
     async function onDownload() {

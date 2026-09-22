@@ -6,6 +6,11 @@
     const FOOTER_HTML =
         '<p id="replaceWarning" class="replace-warning" style="display:none"></p>';
 
+    // ปุ่มดูตัวอย่างก่อนดาวน์โหลด (แสดงเฉพาะเมื่อโหลด template แล้ว — ดู showPreviewButton)
+    const ACTIONS_HTML =
+        '<button id="previewBtn" type="button" class="plain" style="display:none">' +
+        'ดูตัวอย่างก่อนดาวน์โหลด</button>';
+
     const META_HTML = [
         '<div class="template-meta">',
         '    <label for="templateSelect">Template ที่จะใช้</label>',
@@ -36,6 +41,7 @@
         title: 'Word Template Filler',
         showFileInput: false,
         metaHTML: META_HTML,
+        actionsHTML: ACTIONS_HTML,
         footerHTML: FOOTER_HTML,
         emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปเลือกไฟล์ที่หน้า Template Configuration ก่อน',
 
@@ -48,6 +54,13 @@
             );
         }
     });
+
+    // ปุ่มดูตัวอย่างไม่ใช้กลไกของ FormPage (ที่มีแต่ download/clear)
+    // app.js จึงเรียกเฉพาะเมื่อ component มีเมธอดนี้ (ดู fillForm)
+    page.showPreviewButton = function (show) {
+        const btn = document.getElementById('previewBtn');
+        if (btn) btn.style.display = show ? 'block' : 'none';
+    };
 
     // ──────────────────────────────────────────────────────────────
     // รายการ template ที่บันทึกไว้
