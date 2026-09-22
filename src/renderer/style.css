@@ -913,6 +913,29 @@ button.danger:hover {
     color: var(--pink-700);
 }
 
+/* ──────────────────────────────────────────────────────────────
+   นำเข้า / ส่งออก Excel (หน้า Master Data)
+   ────────────────────────────────────────────────────────────── */
+
+.master-excel {
+    margin-top: 28px;
+    padding: 22px 24px;
+    background: linear-gradient(180deg, #fffafc, var(--pink-50));
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+}
+
+.master-excel h2 {
+    margin: 0 0 10px;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+.master-excel .hint {
+    margin: 0 0 4px;
+}
+
 .form-actions {
     display: flex;
     flex-wrap: wrap;

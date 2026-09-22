@@ -7,6 +7,11 @@
     const CONFIG_PAGE = 'template-config';
     const MASTER_PAGE = 'master-data';
 
+    // หัวคอลัมน์ที่ยอมรับในไฟล์ Excel ของหน้า Master Data
+    // เทียบหลังตัดช่องว่าง/ขีด/ขีดล่าง และแปลงเป็นตัวพิมพ์เล็กแล้ว
+    const MASTER_CODE_HEADERS = ['codegroup', 'กลุ่ม', 'กลุ่มรหัส', 'รหัสกลุ่ม'];
+    const MASTER_NAME_HEADERS = ['name', 'ชื่อ', 'ชื่อข้อมูล'];
+
     // ชื่อหน้า -> ชื่อ component บน window (ลำดับโหลดอยู่ใน index.html)
     const PAGE_COMPONENTS = {
         'report': 'ReportPage',
@@ -633,6 +638,16 @@
                     return;
                 }
 
+                // นำเข้า Excel ของหน้า Master Data
+                if (
+                    target &&
+                    target.id === 'masterImportInput'
+                ) {
+
+                    onImportMasterExcel(event);
+                    return;
+                }
+
                 if (
                     target &&
                     target.id === 'templateSelect'
@@ -767,6 +782,26 @@
                 if (id === 'masterCancelBtn') {
 
                     onCancelMasterEdit();
+                    return;
+                }
+
+                // ดาวน์โหลดข้อมูล master เป็นไฟล์ Excel
+                if (id === 'masterExportBtn') {
+
+                    onExportMasterExcel();
+                    return;
+                }
+
+                // เปิดกล่องเลือกไฟล์ Excel เพื่อนำเข้าข้อมูล master
+                if (id === 'masterImportBtn') {
+
+                    const importInput =
+                        document.getElementById('masterImportInput');
+
+                    if (importInput) {
+                        importInput.click();
+                    }
+
                     return;
                 }
 
@@ -1665,6 +1700,295 @@
                 'โหลดรายการไม่สำเร็จ: ' +
                 error.message
             );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Master Data: นำเข้า / ส่งออก Excel
+    // ──────────────────────────────────────────────────────────────
+
+    function pad2(value) {
+        return String(value).padStart(2, '0');
+    }
+
+    // ต่อท้ายชื่อไฟล์ด้วยวันที่ เพื่อไม่ให้ไฟล์ที่ดาวน์โหลดทับกันงง ๆ
+    function dateStamp() {
+
+        const now = new Date();
+
+        return [
+            now.getFullYear(),
+            pad2(now.getMonth() + 1),
+            pad2(now.getDate())
+        ].join('-');
+    }
+
+    function normalizeHeaderCell(text) {
+
+        return String(text === null || text === undefined ? '' : text)
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_\-]+/g, '');
+    }
+
+    function indexOfLabel(labels, accepted) {
+
+        for (let i = 0; i < labels.length; i++) {
+            if (accepted.indexOf(labels[i]) !== -1) return i;
+        }
+
+        return -1;
+    }
+
+    // แปลงแถวจากไฟล์ Excel เป็นรายการ master
+    // - เจอหัวตารางใน 5 แถวแรก = ใช้ตำแหน่งคอลัมน์ตามหัวตารางนั้น
+    // - ไม่เจอหัวตาราง = ใช้คอลัมน์ A = Code Group, B = Name
+    function parseMasterRows(rows) {
+
+        const list =
+            Array.isArray(rows) ? rows : [];
+
+        let codeIndex = 0;
+        let nameIndex = 1;
+        let start = 0;
+
+        for (
+            let i = 0;
+            i < Math.min(list.length, 5);
+            i++
+        ) {
+
+            const labels =
+                (list[i] || []).map(normalizeHeaderCell);
+
+            const codeAt =
+                indexOfLabel(labels, MASTER_CODE_HEADERS);
+
+            const nameAt =
+                indexOfLabel(labels, MASTER_NAME_HEADERS);
+
+            // เจออย่างน้อยหนึ่งคอลัมน์ที่รู้จัก = ถือว่าแถวนี้เป็นหัวตาราง
+            if (codeAt === -1 && nameAt === -1) continue;
+
+            if (codeAt !== -1) codeIndex = codeAt;
+            if (nameAt !== -1) nameIndex = nameAt;
+
+            start = i + 1;
+            break;
+        }
+
+        const records = [];
+
+        for (let i = start; i < list.length; i++) {
+
+            const row = list[i] || [];
+
+            const codeGroup =
+                String(row[codeIndex] === undefined ? '' : row[codeIndex]).trim();
+
+            const name =
+                String(row[nameIndex] === undefined ? '' : row[nameIndex]).trim();
+
+            // แถวว่างข้ามเงียบ ๆ ไม่ต้องนับเป็นรายการที่ผิดพลาด
+            if (!codeGroup && !name) continue;
+
+            records.push({
+                codeGroup: codeGroup,
+                name: name
+            });
+        }
+
+        return records;
+    }
+
+    // สรุปผลนำเข้า: เพิ่มเท่าไร ข้ามเท่าไร เพราะอะไร
+    function describeImportResult(result) {
+
+        const parts = [
+            'เพิ่ม ' + result.inserted + ' รายการ'
+        ];
+
+        if (result.skippedExisting > 0) {
+            parts.push('มีอยู่ในระบบแล้ว ' + result.skippedExisting);
+        }
+
+        if (result.skippedDuplicate > 0) {
+            parts.push('ซ้ำกันเองในไฟล์ ' + result.skippedDuplicate);
+        }
+
+        if (result.skippedInvalid > 0) {
+            parts.push('ไม่ครบ Code Group/Name ' + result.skippedInvalid);
+        }
+
+        return 'นำเข้าสำเร็จ: ' + parts.join(' · ');
+    }
+
+    // ดาวน์โหลดข้อมูล master ทั้งหมดเป็น .xlsx
+    // ตั้งใจให้ไฟล์ที่ได้นำกลับมาอัปโหลดได้เลย (มีหัวตาราง Code Group / Name)
+    async function onExportMasterExcel() {
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        master.setExcelBusy(true);
+        master.setExcelStatus('กำลังสร้างไฟล์ Excel...');
+
+        try {
+
+            await ensureDb();
+
+            // อ่านจากฐานข้อมูลตรง ๆ = ได้ข้อมูลทั้งหมด ล่าสุด
+            // (ไม่ขึ้นกับคำค้นที่กรองอยู่ในรายการด้านล่าง)
+            const list =
+                await scope.Db.masterList();
+
+            masterRecords = list;
+
+            const rows = [
+                ['Code Group', 'Name']
+            ];
+
+            list.forEach(function (record) {
+                rows.push([
+                    record.code_group || '',
+                    record.name || ''
+                ]);
+            });
+
+            const blob =
+                await scope.Xlsx.createBlob(rows, 'Master Data');
+
+            const fileName =
+                'master-data-' + dateStamp() + '.xlsx';
+
+            const result =
+                await downloadBlob(blob, fileName);
+
+            if (result && result.ok === false) {
+
+                throw new Error(
+                    result.error ||
+                    'บันทึกไฟล์ไม่สำเร็จ'
+                );
+            }
+
+            // Electron เท่านั้น: ผู้ใช้อาจกด Cancel ในกล่องบันทึกไฟล์
+            if (result && result.canceled) {
+
+                master.setExcelStatus('ยกเลิกการดาวน์โหลด');
+                return;
+            }
+
+            master.setExcelStatus(
+                'ดาวน์โหลด Excel แล้ว: ' + fileName +
+                ' (' + list.length + ' รายการ)',
+                'ok'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setExcelStatus(
+                'ดาวน์โหลดไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+        } finally {
+
+            master.setExcelBusy(false);
+        }
+    }
+
+    // นำเข้าข้อมูล master จากไฟล์ .xlsx
+    // ระบบเพิ่มเฉพาะรายการที่ยังไม่มี ส่วนที่ซ้ำจะถูกข้าม (ดู handleMasterImport)
+    async function onImportMasterExcel(event) {
+
+        const input =
+            event.target;
+
+        const file =
+            input.files &&
+            input.files[0];
+
+        // ล้างค่า input ทันที เพื่อให้เลือกไฟล์เดิมซ้ำได้
+        input.value = '';
+
+        if (!file) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        master.setExcelBusy(true);
+        master.setExcelStatus(
+            'กำลังอ่านไฟล์ ' + (file.name || '') + '...'
+        );
+
+        try {
+
+            const bytes =
+                new Uint8Array(
+                    await file.arrayBuffer()
+                );
+
+            const rows =
+                await scope.Xlsx.readRows(bytes);
+
+            const list =
+                parseMasterRows(rows);
+
+            if (list.length === 0) {
+
+                master.setExcelStatus(
+                    'ไม่พบข้อมูลในไฟล์ — ต้องมีคอลัมน์ Code Group และ Name',
+                    'error'
+                );
+
+                return;
+            }
+
+            if (!window.confirm(
+                'พบ ' + list.length + ' แถวในไฟล์ "' +
+                (file.name || '') + '"\n\n' +
+                'ระบบจะเพิ่มเฉพาะรายการที่ยังไม่มี ' +
+                'และข้ามรายการที่มีอยู่ในระบบแล้วหรือซ้ำกันในไฟล์\n' +
+                'ต้องการนำเข้าหรือไม่?'
+            )) {
+
+                master.setExcelStatus('ยกเลิกการนำเข้า');
+                return;
+            }
+
+            master.setExcelStatus('กำลังนำเข้า...');
+
+            await ensureDb();
+
+            const result =
+                await scope.Db.masterImport({
+                    rows: list
+                });
+
+            await refreshMasterList();
+
+            master.setExcelStatus(
+                describeImportResult(result),
+                result.inserted > 0 ? 'ok' : 'warn'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setExcelStatus(
+                'นำเข้าไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+        } finally {
+
+            master.setExcelBusy(false);
         }
     }
 

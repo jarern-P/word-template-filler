@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld(
         dbMasterDelete: (id) =>
             ipcRenderer.invoke("db:master-delete", id),
 
+        // นำเข้าข้อมูล master หลายรายการพร้อมกัน (จากไฟล์ Excel)
+        dbMasterImport: (payload) =>
+            ipcRenderer.invoke("db:master-import", payload),
+
         // ─────────────────────────────
         // File
         // ─────────────────────────────

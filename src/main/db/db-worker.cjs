@@ -885,6 +885,172 @@ function handleMasterDelete(message) {
 }
 
 // ============================================================
+// Master Import (จากไฟล์ Excel)
+// ============================================================
+
+// ใช้เป็น key เดี่ยวของรายการ master โดยไม่ต้องพึ่งคอลัมน์ใหม่
+// \u0000 เป็นอักขระที่ไม่มีทางเกิดใน code_group/name ที่ผู้ใช้กรอก
+function masterKey(codeGroup, name) {
+    return String(codeGroup) + "\u0000" + String(name);
+}
+
+
+// เพิ่มข้อมูล master ทีละหลายรายการ (นำเข้าจาก Excel)
+// กติกา:
+//   - รายการที่มีอยู่แล้วในฐานข้อมูล (code_group + name ตรงกัน) = ข้าม
+//   - รายการที่ซ้ำกันเองในไฟล์ = ใส่ตัวแรกไว้ ตัวหลังข้าม
+//   - รายการที่ไม่ครบทั้ง code_group และ name = ข้าม
+function handleMasterImport(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+
+        const rows =
+            Array.isArray(payload.rows)
+                ? payload.rows
+                : [];
+
+
+        // key ของรายการที่มีอยู่แล้ว (อ่านครั้งเดียวก่อนเริ่ม)
+        const existing = new Set();
+
+        db.prepare(`
+            SELECT
+                code_group,
+                name
+            FROM master
+        `).all().forEach(row => {
+            existing.add(
+                masterKey(row.code_group, row.name)
+            );
+        });
+
+
+        const insert =
+            db.prepare(`
+                INSERT INTO master (
+                    code_group,
+                    name,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    @code_group,
+                    @name,
+                    @created_at,
+                    @updated_at
+                )
+            `);
+
+
+        const now =
+            new Date().toISOString();
+
+
+        let inserted = 0;
+        let skippedExisting = 0;
+        let skippedDuplicate = 0;
+        let skippedInvalid = 0;
+
+
+        // key ที่"เพิ่มไปแล้ว"ระหว่างรอบนี้ ใช้ตัดตัวซ้ำในไฟล์เดียวกัน
+        const imported = new Set();
+
+
+        // ทำทั้งหมดใน transaction เดียว: ไฟล์หลักร้อยแถวเร็วขึ้นมาก
+        // และถ้าพังกลางทางจะไม่เหลือข้อมูลค้างครึ่ง ๆ กลาง ๆ
+        const run =
+            db.transaction(() => {
+
+                rows.forEach(raw => {
+
+                    // ตัดช่องว่างหัวท้ายเหมือนตอนเพิ่มทีละรายการ
+                    const codeGroup = String(
+                        (raw && raw.codeGroup) || ""
+                    ).trim();
+
+                    const name = String(
+                        (raw && raw.name) || ""
+                    ).trim();
+
+
+                    if (!codeGroup || !name) {
+                        skippedInvalid++;
+                        return;
+                    }
+
+
+                    const key =
+                        masterKey(codeGroup, name);
+
+
+                    if (existing.has(key)) {
+                        skippedExisting++;
+                        return;
+                    }
+
+
+                    if (imported.has(key)) {
+                        skippedDuplicate++;
+                        return;
+                    }
+
+
+                    imported.add(key);
+
+
+                    insert.run({
+                        code_group: codeGroup,
+                        name: name,
+                        created_at: now,
+                        updated_at: now
+                    });
+
+
+                    inserted++;
+                });
+            });
+
+
+        run();
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                inserted: inserted,
+                skippedExisting: skippedExisting,
+                skippedDuplicate: skippedDuplicate,
+                skippedInvalid: skippedInvalid,
+                total: rows.length
+            }
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "handleMasterImport error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
 // Check Schema
 // ============================================================
 
@@ -1072,6 +1238,16 @@ parentPort.on("message", (message) => {
                 
                 handleMasterDelete(message);
                 
+                break;
+
+            // ------------------------------------------------
+            // Master Import (Excel)
+            // ------------------------------------------------
+
+            case "master-import":
+
+                handleMasterImport(message);
+
                 break;
 
 

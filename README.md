@@ -107,6 +107,7 @@ word-template-filler/
 │   ├── extract.js
 │   ├── fieldTypes.js
 │   ├── replace.js
+│   ├── xlsx.js            # สร้าง/อ่าน .xlsx ด้วย JSZip (นำเข้า-ส่งออก Master Data)
 │   └── components/
 │
 ├── data/                  # SQLite (ตอน development)

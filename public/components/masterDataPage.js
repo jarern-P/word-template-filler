@@ -36,6 +36,27 @@
         '    <p id="masterFormStatus" class="db-status"></p>',
         '</section>',
 
+        // นำเข้า/ส่งออก Excel: ทำชุดข้อมูลทีเดียวแล้วอัปโหลดครั้งเดียว
+        '<section class="master-excel">',
+        '    <h2>นำเข้า / ส่งออก Excel</h2>',
+        '    <p class="hint">ไฟล์ .xlsx ใช้ 2 คอลัมน์: Code Group และ Name ' +
+            '(แถวแรกเป็นหัวตารางได้)</p>',
+        '    <p class="hint">ตอนนำเข้า ระบบจะเพิ่มเฉพาะรายการที่ยังไม่มี — ' +
+            'รายการที่มีอยู่แล้วหรือซ้ำกันในไฟล์จะถูกข้าม</p>',
+
+        '    <div class="form-actions">',
+        '        <button id="masterExportBtn" type="button" class="plain">' +
+            'ดาวน์โหลด Excel</button>',
+        '        <button id="masterImportBtn" type="button" class="plain">' +
+            'อัปโหลด Excel</button>',
+        '    </div>',
+
+        // input ถูกซ่อน เพราะเปิดผ่านปุ่มเพื่อให้เข้าชุดกับปุ่มอื่น
+        '    <input type="file" id="masterImportInput" accept=".xlsx" hidden>',
+
+        '    <p id="masterExcelStatus" class="db-status"></p>',
+        '</section>',
+
         '<section class="saved-templates">',
         '    <h2>รายการ Master Data</h2>',
 
@@ -250,6 +271,20 @@
 
         setDbStatus: function (text, kind) {
             setStatus('masterDbStatus', text, kind);
+        },
+
+        // ── นำเข้า / ส่งออก Excel ──
+
+        setExcelStatus: function (text, kind) {
+            setStatus('masterExcelStatus', text, kind);
+        },
+
+        // ปิดปุ่มระหว่างอ่าน/เขียนไฟล์ กันกดซ้ำระหว่างกำลังทำงาน
+        setExcelBusy: function (busy) {
+            ['masterExportBtn', 'masterImportBtn'].forEach(function (id) {
+                const btn = el(id);
+                if (btn) btn.disabled = !!busy;
+            });
         },
 
         // ── รายการ master ──

@@ -84,7 +84,34 @@
 
                 }
 
-                return fn(...args);
+                // IPC handler ถูกลงทะเบียนตอน main process เปิด
+                // ถ้าแก้ main.cjs แล้วไม่ได้ปิดแอป จะเจอ "No handler registered"
+                // ซึ่งอ่านแล้วไม่รู้ว่าต้องทำอะไร จึงบอกวิธีแก้ให้ตรงจุด
+                return fn(...args)
+
+                    .catch(function (error) {
+
+                        const message =
+                            error && error.message
+                                ? error.message
+                                : String(error);
+
+                        if (
+                            /No handler registered/i.test(
+                                message
+                            )
+                        ) {
+
+                            throw new Error(
+                                'แอปที่เปิดอยู่นี้เป็นเวอร์ชันก่อนอัปเดต ' +
+                                `(ไม่พบคำสั่ง "${method}") — ` +
+                                'กรุณาปิดหน้าต่างแอปให้หมดแล้วเปิดใหม่'
+                            );
+
+                        }
+
+                        throw error;
+                    });
 
             })
 
@@ -170,6 +197,17 @@
             return dbRequest(
                 'dbMasterDelete',
                 id
+            );
+
+        },
+
+        // นำเข้าข้อมูล master หลายรายการพร้อมกัน (จากไฟล์ Excel)
+        // payload = { rows: [{ codeGroup, name }, ...] }
+        masterImport: function (payload) {
+
+            return dbRequest(
+                'dbMasterImport',
+                payload
             );
 
         },

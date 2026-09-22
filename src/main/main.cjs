@@ -803,6 +803,49 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB Master Import
+// ============================================================
+
+ipcMain.handle(
+    "db:master-import",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "master-import",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 
