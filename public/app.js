@@ -623,6 +623,16 @@
                     return;
                 }
 
+                // อัปโหลดไฟล์ .docx ใหม่ทับไฟล์ template เดิม (หน้า Template Configuration)
+                if (
+                    target &&
+                    target.id === 'replaceFileInput'
+                ) {
+
+                    onReplaceTemplateFile(event);
+                    return;
+                }
+
                 if (
                     target &&
                     target.id === 'templateSelect'
@@ -713,6 +723,26 @@
                 if (id === 'downloadBtn') {
 
                     onDownload();
+                    return;
+                }
+
+                // ดาวน์โหลดไฟล์ .docx ต้นฉบับของ template (หน้า Template Configuration)
+                if (id === 'downloadTemplateBtn') {
+
+                    onDownloadTemplate();
+                    return;
+                }
+
+                // เปิดกล่องเลือกไฟล์เพื่ออัปโหลดทับไฟล์เดิม
+                if (id === 'replaceTemplateBtn') {
+
+                    const replaceInput =
+                        document.getElementById('replaceFileInput');
+
+                    if (replaceInput) {
+                        replaceInput.click();
+                    }
+
                     return;
                 }
 
@@ -1077,6 +1107,217 @@
         }
     }
 
+    // ดาวน์โหลดไฟล์ .docx ต้นฉบับของ template (ไฟล์ที่เก็บไว้ ยังไม่ถูกแทนค่า)
+    async function onDownloadTemplate() {
+
+        if (
+            !state.loaded ||
+            !state.docxBytes
+        ) {
+
+            alert(
+                'ยังไม่มีไฟล์ template ให้ดาวน์โหลด'
+            );
+
+            return;
+        }
+
+        const fileName =
+            state.fileName || 'template.docx';
+
+        setDbStatus('กำลังดาวน์โหลด: ' + fileName);
+
+        try {
+
+            const blob =
+                new Blob(
+                    [state.docxBytes],
+                    {
+                        // MIME ของ Office Open XML (.docx)
+                        type:
+                            'application/vnd.openxmlformats-officedocument' +
+                            '.wordprocessingml.document'
+                    }
+                );
+
+            const result =
+                await downloadBlob(blob, fileName);
+
+            // Electron เท่านั้น: ผู้ใช้อาจกด Cancel ในกล่องบันทึกไฟล์
+            if (result && result.ok === false) {
+
+                throw new Error(
+                    result.error ||
+                    'บันทึกไฟล์ไม่สำเร็จ'
+                );
+            }
+
+            if (result && result.canceled) {
+
+                setDbStatus('ยกเลิกการดาวน์โหลด');
+                return;
+            }
+
+            setDbStatus('ดาวน์โหลดไฟล์ต้นฉบับแล้ว: ' + fileName);
+
+        } catch (error) {
+
+            console.error(error);
+
+            setDbStatus(
+                'ดาวน์โหลดไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+            alert(
+                'ดาวน์โหลดไม่สำเร็จ: ' + error.message
+            );
+        }
+    }
+
+    // อัปโหลดไฟล์ .docx ที่แก้ไขแล้วมาทับไฟล์ template เดิม
+    // - ถ้าโหลด template จากฐานข้อมูลอยู่ = ทับไฟล์เดิมในฐานข้อมูลทันที
+    // - ถ้ายังไม่เคยบันทึก = แค่เปลี่ยนไฟล์ในหน่วยความจำ แล้วให้กด Save Template
+    // field ที่มีอยู่ทั้งไฟล์เดิมและไฟล์ใหม่จะเก็บค่า type / "ล็อกตำแหน่ง" ไว้
+    async function onReplaceTemplateFile(event) {
+
+        const input =
+            event.target;
+
+        const file =
+            input.files &&
+            input.files[0];
+
+        // ล้างค่า input ทันที เพื่อให้เลือกไฟล์เดิมซ้ำได้ (และเมื่อกด Cancel ในกล่องยืนยัน)
+        input.value = '';
+
+        if (!file) {
+            return;
+        }
+
+        const meta =
+            getPageMeta(CONFIG_PAGE);
+
+        const templateName =
+            String(
+                meta.templateName || ''
+            ).trim() ||
+            defaultTemplateName(
+                state.fileName
+            );
+
+        const target =
+            state.templateId
+                ? 'template "' + templateName + '"'
+                : 'ไฟล์ที่กำลังตั้งค่าอยู่';
+
+        if (!window.confirm(
+            'ยืนยันการแทนที่ไฟล์?\n\n' +
+            'ไฟล์ต้นฉบับของ ' + target + ' จะถูกทับด้วย "' +
+            (file.name || 'ไฟล์ใหม่') + '" ทันที\n' +
+            'ค่า type และ "ล็อกตำแหน่ง" ของ field ที่มีอยู่ทั้งสองไฟล์จะถูกเก็บไว้\n' +
+            'ต้องการดำเนินการต่อหรือไม่?'
+        )) {
+            return;
+        }
+
+        try {
+
+            const bytes =
+                new Uint8Array(
+                    await file.arrayBuffer()
+                );
+
+            const xml =
+                await readDocumentXml(
+                    bytes
+                );
+
+            const fields =
+                scope.Extract.extractFields(
+                    xml
+                );
+
+            const present = {};
+
+            fields.forEach(function (field) {
+                present[field] = true;
+            });
+
+            state.docxBytes = bytes;
+            state.xml = xml;
+            state.fileName =
+                file.name ||
+                state.fileName ||
+                'document.docx';
+            state.fields = fields;
+            state.loaded = true;
+
+            // ทิ้งค่า type ของ field ที่ไม่มีอยู่ในไฟล์ใหม่แล้ว
+            const configValues =
+                getPageValues(CONFIG_PAGE);
+
+            Object.keys(configValues).forEach(function (field) {
+                if (!present[field]) {
+                    delete configValues[field];
+                }
+            });
+
+            // ทิ้งค่าล็อกตำแหน่งของ field ที่หายไปเช่นกัน
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            const locks =
+                config.getLocks
+                    ? config.getLocks()
+                    : {};
+
+            const keptLocks = {};
+
+            Object.keys(locks).forEach(function (field) {
+                if (present[field]) {
+                    keptLocks[field] = true;
+                }
+            });
+
+            config.setLocks(keptLocks);
+
+            fillForm(CONFIG_PAGE);
+
+            if (state.templateId) {
+
+                // บันทึกทับ record เดิม (onSaveTemplate อัปเดต state.templateId ให้)
+                const saved =
+                    await onSaveTemplate();
+
+                // ถ้าบันทึกไม่สำเร็จ ไฟล์ในหน่วยความจำถูกแทนที่แล้ว
+                // จึงบอกให้กด Save Template ซ้ำ (ไม่ทับข้อความ error ที่ onSaveTemplate แจ้งไว้)
+                if (saved) {
+
+                    setDbStatus(
+                        'แทนที่ไฟล์ต้นฉบับแล้ว: ' + templateName
+                    );
+                }
+
+            } else {
+
+                setDbStatus(
+                    'แทนที่ไฟล์ที่กำลังตั้งค่าแล้ว — กด Save Template เพื่อบันทึก'
+                );
+            }
+
+        } catch (error) {
+
+            console.error(error);
+
+            alert(
+                error && error.expected
+                    ? error.message
+                    : 'ไม่สามารถอ่านไฟล์ DOCX ได้'
+            );
+        }
+    }
+
     async function onSaveTemplate() {
 
         if (
@@ -1088,7 +1329,7 @@
                 'ยังไม่ได้เลือกไฟล์ template'
             );
 
-            return;
+            return false;
         }
 
         const config =
@@ -1163,6 +1404,8 @@
 
             await refreshTemplateList();
 
+            return true;
+
         } catch (error) {
 
             console.error(error);
@@ -1177,6 +1420,8 @@
                 'บันทึกไม่สำเร็จ: ' +
                 error.message
             );
+
+            return false;
 
         } finally {
 

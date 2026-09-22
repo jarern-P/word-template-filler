@@ -10,8 +10,20 @@
         '</div>'
     ].join('\n');
 
-    const ACTIONS_HTML =
-        '<button id="saveBtn" type="button" disabled>Save Template</button>';
+    // ปุ่มจัดการไฟล์ .docx ของ template
+    // - ดาวน์โหลด: ได้ไฟล์ต้นฉบับที่เก็บไว้ (ยังไม่ถูกแทนค่า)
+    // - อัปโหลดทับ: เอาไฟล์ที่แก้ไขนอกแอปมาทับไฟล์เดิม (มี confirm ก่อนทับใน app.js)
+    // - input file ถูกซ่อน เพราะเปิดผ่านปุ่มเพื่อให้เข้าชุดกับปุ่มอื่น
+    const ACTIONS_HTML = [
+        '<div class="form-actions">',
+        '    <button id="downloadTemplateBtn" type="button" class="plain" disabled>' +
+            'ดาวน์โหลด Template ต้นฉบับ</button>',
+        '    <button id="replaceTemplateBtn" type="button" class="danger" disabled>' +
+            'อัปโหลดไฟล์ใหม่ทับไฟล์เดิม</button>',
+        '</div>',
+        '<input type="file" id="replaceFileInput" accept=".docx" hidden>',
+        '<button id="saveBtn" type="button" disabled>Save Template</button>'
+    ].join('\n');
 
     const FOOTER_HTML = [
         '<section class="saved-templates">',
@@ -190,6 +202,12 @@
     page.setSaveEnabled = function (enabled) {
         const btn = document.getElementById('saveBtn');
         if (btn) btn.disabled = !enabled;
+
+        // ปุ่มที่ต้องมีไฟล์ template อยู่ในมือก่อน (ดาวน์โหลดต้นฉบับ / อัปโหลดทับ)
+        ['downloadTemplateBtn', 'replaceTemplateBtn'].forEach(function (id) {
+            const actionBtn = document.getElementById(id);
+            if (actionBtn) actionBtn.disabled = !enabled;
+        });
     };
 
     page.setDbStatus = function (text, kind) {

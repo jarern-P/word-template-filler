@@ -753,6 +753,19 @@ button.plain:hover {
     border-color: var(--pink-200);
 }
 
+/* ปุ่มที่ไม่สามารถย้อนกลับได้ (เช่น อัปโหลดทับไฟล์เดิม) */
+button.danger {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: #fbd6e2;
+}
+
+button.danger:hover {
+    color: var(--danger);
+    background: #ffe6ee;
+    border-color: #f6c2d4;
+}
+
 /* ──────────────────────────────────────────────────────────────
    กล่องเลือก / บันทึก template
    ────────────────────────────────────────────────────────────── */
