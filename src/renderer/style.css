@@ -470,11 +470,24 @@ input[type="checkbox"] {
     resize: vertical;
 }
 
+/* กลุ่ม control ของ field (หน้า Template Configuration)
+   = แถวเลือก type + ล็อกตำแหน่ง, ต่อด้วยช่อง placeholder */
+.field-config {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 /* แถวเลือก type + checkbox "ล็อกตำแหน่ง" (หน้า Template Configuration) */
 .field-type-row {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+/* ช่อง placeholder ของ field — ข้อความตัวอย่างที่จะไปโผล่ในหน้ารายงาน */
+.field .field-placeholder {
+    font-size: 14px;
 }
 
 .field-type-row select {

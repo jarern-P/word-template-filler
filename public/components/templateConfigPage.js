@@ -33,8 +33,28 @@
         '</section>'
     ].join('\n');
 
-    // select เลือก type + checkbox "ล็อกตำแหน่ง" ของ field นั้น
+    // ช่องใส่ placeholder (ข้อความตัวอย่าง) ของ field นั้น
+    // ข้อความนี้ถูกนำไปแสดงในช่องกรอกของหน้ารายงานเป็น "กรอก <field> เช่น <placeholder>"
+    function createPlaceholderInput(field) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'field-placeholder';
+        // ใช้ data-placeholder-field (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
+        input.dataset.placeholderField = field;
+        input.autocomplete = 'off';
+        input.placeholder =
+            'Placeholder เช่น หนึ่งร้อยบาทถ้วน — เว้นว่าง = ใช้ค่าเริ่มต้น';
+        input.title =
+            'ข้อความตัวอย่างของช่องนี้ในหน้ารายงาน ' +
+            '(แสดงเป็น "กรอก ' + field + ' เช่น …")';
+        return input;
+    }
+
+    // select เลือก type + ช่อง placeholder + checkbox "ล็อกตำแหน่ง" ของ field นั้น
     function createTypeSelect(field) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-config';
+
         const row = document.createElement('div');
         row.className = 'field-type-row';
 
@@ -76,7 +96,10 @@
 
         row.appendChild(select);
         row.appendChild(lockLabel);
-        return row;
+
+        wrapper.appendChild(row);
+        wrapper.appendChild(createPlaceholderInput(field));
+        return wrapper;
     }
 
     function parseJson(text, fallback) {
@@ -157,6 +180,9 @@
     // field ที่ถูกล็อกตำแหน่ง (เก็บแยกจากค่าของ type)
     let lockState = {};
 
+    // placeholder (ข้อความตัวอย่าง) ของแต่ละ field (เก็บแยกจากค่าของ type)
+    let placeholderState = {};
+
     // เติมสถานะติ๊กกลับเข้า checkbox หลังฟอร์มถูกวาดใหม่
     function renderLockState() {
         const form = document.getElementById('form');
@@ -167,11 +193,27 @@
         });
     }
 
+    // เติม placeholder ที่ตั้งไว้กลับเข้าช่อง หลังฟอร์มถูกวาดใหม่
+    function renderPlaceholderState() {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        form.querySelectorAll('[data-placeholder-field]').forEach(function (input) {
+            const field = input.dataset.placeholderField;
+
+            input.value =
+                Object.prototype.hasOwnProperty.call(placeholderState, field)
+                    ? placeholderState[field]
+                    : '';
+        });
+    }
+
     const baseRenderForm = page.renderForm;
 
     page.renderForm = function (fields) {
         baseRenderForm.call(page, fields);
         renderLockState();
+        renderPlaceholderState();
     };
 
     page.setLock = function (field, locked) {
@@ -197,6 +239,36 @@
         }
 
         renderLockState();
+    };
+
+    // เก็บ placeholder ของ field — ว่าง = ลบออก (กลับไปใช้ค่าเริ่มต้นในหน้ารายงาน)
+    page.setPlaceholder = function (field, value) {
+        const text = String(value == null ? '' : value);
+
+        if (text.trim() === '') {
+            delete placeholderState[field];
+        } else {
+            placeholderState[field] = text;
+        }
+    };
+
+    page.getPlaceholders = function () {
+        return Object.assign({}, placeholderState);
+    };
+
+    // คืนค่าที่บันทึกไว้กลับมา (ตอนโหลด template) — null/{} = ไม่มี placeholder
+    page.setPlaceholders = function (placeholders) {
+        placeholderState = {};
+
+        if (placeholders && typeof placeholders === 'object') {
+            Object.keys(placeholders).forEach(function (field) {
+                const value = String(placeholders[field] == null ? '' : placeholders[field]);
+
+                if (value.trim() !== '') placeholderState[field] = value;
+            });
+        }
+
+        renderPlaceholderState();
     };
 
     page.setSaveEnabled = function (enabled) {

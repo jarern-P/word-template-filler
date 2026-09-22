@@ -94,7 +94,7 @@
             scope.FieldTypes.resetDateFormats();
         }
 
-        // ล้างสถานะ "ล็อกตำแหน่ง" ที่ติ๊กไว้ในหน้า Template Configuration
+        // ล้างสถานะ "ล็อกตำแหน่ง" และ placeholder ที่ตั้งไว้ในหน้า Template Configuration
         const config =
             getComponent(CONFIG_PAGE);
 
@@ -103,6 +103,13 @@
             config.setLocks
         ) {
             config.setLocks(null);
+        }
+
+        if (
+            config &&
+            config.setPlaceholders
+        ) {
+            config.setPlaceholders(null);
         }
     }
 
@@ -461,6 +468,23 @@
                 config.setLock(
                     target.dataset.lockField,
                     target.checked
+                );
+            }
+
+            return;
+        }
+
+        // ช่อง placeholder ของ field (หน้า Template Configuration)
+        if (target.dataset.placeholderField) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setPlaceholder) {
+
+                config.setPlaceholder(
+                    target.dataset.placeholderField,
+                    target.value
                 );
             }
 
@@ -1421,6 +1445,23 @@
 
             config.setLocks(keptLocks);
 
+            // ทิ้ง placeholder ของ field ที่หายไปเช่นกัน
+            if (config.getPlaceholders && config.setPlaceholders) {
+
+                const placeholders =
+                    config.getPlaceholders();
+
+                const keptPlaceholders = {};
+
+                Object.keys(placeholders).forEach(function (field) {
+                    if (present[field]) {
+                        keptPlaceholders[field] = placeholders[field];
+                    }
+                });
+
+                config.setPlaceholders(keptPlaceholders);
+            }
+
             fillForm(CONFIG_PAGE);
 
             if (state.templateId) {
@@ -1522,7 +1563,10 @@
                         config.getValues(),
 
                     locks:
-                        config.getLocks()
+                        config.getLocks(),
+
+                    placeholders:
+                        config.getPlaceholders()
 
                 });
 
@@ -1679,6 +1723,13 @@
             config.setLocks(
                 record.locks
             );
+
+            // คืน placeholder ที่บันทึกไว้ใน template
+            if (config.setPlaceholders) {
+                config.setPlaceholders(
+                    record.placeholders
+                );
+            }
 
             applyMeta(
                 currentPage
@@ -2347,6 +2398,25 @@
                         CONFIG_PAGE
                     )
                 );
+            },
+
+        // placeholder (ข้อความตัวอย่าง) ของแต่ละ field
+        // ที่ตั้งไว้ในหน้า Template Configuration
+        // หน้ารายงานนำไปใช้เป็นข้อความในช่องเปล่า
+        getFieldPlaceholders:
+            function () {
+
+                const config =
+                    getComponent(
+                        CONFIG_PAGE
+                    );
+
+                return (
+                    config &&
+                    config.getPlaceholders
+                )
+                    ? config.getPlaceholders()
+                    : {};
             }
     };
 

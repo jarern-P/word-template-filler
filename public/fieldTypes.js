@@ -282,8 +282,28 @@
     TOGGLE_LABELS[CURRENCY_MODES.NUMBER] = 'เปลี่ยนเป็นตัวอักษร';
     TOGGLE_LABELS[CURRENCY_MODES.TEXT] = 'เปลี่ยนเป็นตัวเลข';
 
+    // ──────────────────────────────────────────────────────────────
+    // Placeholder ของช่องกรอก
+    //
+    // ข้อความตัวอย่างตั้งไว้ต่อ field ที่หน้า Template Configuration
+    // แสดงเป็น "กรอก <field> เช่น <placeholder>" — เว้นว่าง = ใช้ข้อความเริ่มต้น
+    // ของชนิดช่องนั้น (เช่น currency ต่อท้ายด้วย "(ตัวเลข)")
+    // ──────────────────────────────────────────────────────────────
+    function placeholderText(field, options, defaultHint) {
+        const custom =
+            options && options.placeholder != null
+                ? String(options.placeholder).trim()
+                : '';
+
+        if (custom) {
+            return 'กรอก ' + field + ' เช่น ' + custom;
+        }
+
+        return 'กรอก ' + field + (defaultHint || '');
+    }
+
     // currency = ช่องตัวเลข + ปุ่ม toggle ตัวเลข/ตัวหนังสือ (ไม่มีปุ่ม lookup Master Data)
-    function createCurrencyControl(field) {
+    function createCurrencyControl(field, options) {
         const wrapper = document.createElement('div');
         wrapper.className = 'field-control currency-field';
 
@@ -292,7 +312,7 @@
         input.inputMode = 'decimal';
         input.dataset.field = field;
         input.dataset.currencyInput = '1';
-        input.placeholder = 'กรอก ' + field + ' (ตัวเลข)';
+        input.placeholder = placeholderText(field, options, ' (ตัวเลข)');
 
         // ปุ่มสลับโหมด: label ตามโหมด "ที่จะสลับไป" (เหมือน preview ของ toggle)
         const toggleBtn = document.createElement('button');
@@ -525,7 +545,7 @@
 
     // ช่องวันที่ = ช่องข้อความธรรมดา + ปุ่มเปิด dropdown เลือกวันและรูปแบบการเขียน
     // (ปุ่มผูก event ด้วย delegation ที่ datePicker.js จึงทนต่อการวาดฟอร์มใหม่)
-    function createDateControl(field) {
+    function createDateControl(field, options) {
         const wrapper = document.createElement('div');
         wrapper.className = 'field-control date-field';
 
@@ -534,7 +554,7 @@
         input.dataset.field = field;
         input.dataset.dateInput = '1';
         input.autocomplete = 'off';
-        input.placeholder = 'กรอก ' + field + ' (เช่น 31/12/2569)';
+        input.placeholder = placeholderText(field, options, ' (เช่น 31/12/2569)');
 
         const button = document.createElement('button');
         button.type = 'button';
@@ -556,20 +576,20 @@
         const opts = options || {};
 
         if (type.value === 'currency') {
-            return createCurrencyControl(field);
+            return createCurrencyControl(field, opts);
         }
 
         // วันที่ใช้ช่องข้อความ + ปุ่มเลือกรูปแบบ ไม่ใช้ <input type="date">
         // เพราะต้องเขียนวันที่ได้หลายรูปแบบทั้งไทย (พ.ศ.) และสากล (ค.ศ.)
         if (type.value === 'date') {
-            return createDateControl(field);
+            return createDateControl(field, opts);
         }
 
         if (type.input === 'textarea') {
             const textarea = document.createElement('textarea');
             textarea.rows = 3;
             textarea.dataset.field = field;
-            textarea.placeholder = 'กรอก ' + field;
+            textarea.placeholder = placeholderText(field, opts, '');
             return textarea;
         }
 
@@ -577,7 +597,7 @@
         input.type = type.input;
         input.dataset.field = field;
         if (type.input !== 'checkbox') {
-            input.placeholder = 'กรอก ' + field;
+            input.placeholder = placeholderText(field, opts, '');
         }
 
         if (type.input === 'text' && opts.lookup) {
@@ -614,6 +634,7 @@
         thaiBahtText: thaiBahtText,
         currencyPreviewText: currencyPreviewText,
         refreshCurrencyInputDisplay: refreshCurrencyInputDisplay,
-        parseCurrencyInput: parseCurrencyInput
+        parseCurrencyInput: parseCurrencyInput,
+        placeholderText: placeholderText
     };
 })(window);

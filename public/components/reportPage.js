@@ -25,6 +25,11 @@
         return (scope.App && scope.App.getFieldTypes) ? scope.App.getFieldTypes() : {};
     }
 
+    // placeholder (ข้อความตัวอย่าง) ของแต่ละ field — ตั้งไว้ที่หน้า Template Configuration
+    function getConfiguredPlaceholders() {
+        return (scope.App && scope.App.getFieldPlaceholders) ? scope.App.getFieldPlaceholders() : {};
+    }
+
     // โหมด "ตัวเลข/ตัวหนังสือ" ปัจจุบันของช่อง currency ทุกช่อง (เก็บไว้ที่ FieldTypes)
     function getCurrencyModes() {
         const modes = {};
@@ -50,7 +55,11 @@
             return scope.FieldTypes.createFieldControl(
                 getConfiguredTypes()[field],
                 field,
-                { lookup: true }
+                {
+                    lookup: true,
+                    // ข้อความตัวอย่างที่ตั้งไว้ในหน้า config (ถ้ามี)
+                    placeholder: getConfiguredPlaceholders()[field]
+                }
             );
         }
     });
