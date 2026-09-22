@@ -94,6 +94,212 @@ function vendoredJszipPlugin() {
 
 
 // ============================================================
+// Thai Dictionary
+// ============================================================
+
+// พจนานุกรม .dic/.aff เก็บที่ <project>/dictionary (ไม่ใช่ public/)
+// เพราะเป็นไฟล์ต้นทาง ไม่ต้องคัดลอกดิบ ๆ ทั้งสองไฟล์เข้า dist
+//
+// ตอน dev/build จะถูกแปลงเป็น JS ที่กำหนด window.ThaiDictionary แล้วโหลดด้วย
+// <script> ธรรมดา — จำเป็นเพราะ .exe เปิดหน้าด้วย file:// ซึ่ง fetch/XHR
+// อ่านไฟล์ในเครื่องจะถูก Chromium บล็อก
+const DICT_DIR = path.resolve(
+    __dirname,
+    "dictionary"
+);
+
+const DICT_DIC = path.join(DICT_DIR, "th_TH.dic");
+const DICT_AFF = path.join(DICT_DIR, "th_TH.aff");
+
+const DICT_URL = "/dictionary/th_TH.js";
+const DICT_TARGET = "dist/dictionary/th_TH.js";
+
+
+// อ่าน .aff เฉพาะส่วนที่ใช้จริงตอนแนะนำคำ
+// (ไม่ใช้กฎ affix PFX/SFX เพราะไฟล์นี้เป็นรายการคำล้วน)
+function parseAff(text) {
+
+    const aff = {
+        try: "",
+        rep: [],
+        key: [],
+        iconv: [],
+        break: []
+    };
+
+    for (const rawLine of String(text).split(/\r?\n/)) {
+
+        const line = rawLine.trim();
+
+        if (!line || line.startsWith("#")) continue;
+
+        const space = line.indexOf(" ");
+
+        if (space === -1) continue;
+
+        const name = line.slice(0, space).toUpperCase();
+        const rest = line.slice(space + 1).trim();
+
+        // บรรทัดจำนวน (เช่น "REP 9") ไม่มีข้อมูล จึงถูกข้ามด้วยเงื่อนไขด้านล่าง
+        if (name === "TRY") {
+            aff.try += rest;
+        } else if (name === "REP") {
+            const parts = rest.split(/\s+/);
+            if (parts.length >= 2) {
+                aff.rep.push([
+                    parts[0],
+                    parts[1].replace(/_/g, " ")
+                ]);
+            }
+        } else if (name === "KEY") {
+            // รูปแบบ: "ก/หด|ข/จช" (- = ตัวอักษรที่อยู่ข้างกันในคีย์บอร์ด)
+            for (const group of rest.split("|")) {
+                const slash = group.indexOf("/");
+                if (slash <= 0) continue;
+
+                const from = group.slice(0, slash);
+                const to = group.slice(slash + 1).replace(/_/g, " ");
+
+                if (from && to) aff.key.push([from, to]);
+            }
+        } else if (name === "ICONV") {
+            const parts = rest.split(/\s+/);
+            if (parts.length >= 2) {
+                aff.iconv.push([parts[0], parts[1]]);
+            }
+        } else if (name === "BREAK") {
+            for (const char of rest) aff.break.push(char);
+        }
+    }
+
+    return aff;
+}
+
+
+// บรรทัดของ .dic = คำ (อาจมี /flags ต่อท้าย) — ข้ามบรรทัดจำนวน/คอมเมนต์
+function parseDicWords(text) {
+
+    return String(text)
+        .replace(/^\uFEFF/, "")
+        .split(/\r?\n/)
+        .map(line => {
+
+            const trimmed = line.trim();
+
+            // flags ใช้กับกฎ affix ซึ่งไฟล์นี้ไม่มี จึงตัดทิ้งได้
+            const slash = trimmed.indexOf("/");
+
+            return (slash === -1 ? trimmed : trimmed.slice(0, slash)).trim();
+        })
+        .filter(word => word && !word.startsWith("#") && !/^\d+$/.test(word));
+}
+
+
+let dictCache = null;
+
+function getDictionaryJs() {
+
+    const mtime = Math.max(
+        fs.statSync(DICT_DIC).mtimeMs,
+        fs.statSync(DICT_AFF).mtimeMs
+    );
+
+    // แก้ไฟล์ .dic/.aff แล้วไม่ต้องรีสตาร์ท dev server
+    if (dictCache && dictCache.mtime === mtime) {
+        return dictCache.js;
+    }
+
+    const words = parseDicWords(
+        fs.readFileSync(DICT_DIC, "utf8")
+    );
+
+    const aff = parseAff(
+        fs.readFileSync(DICT_AFF, "utf8")
+    );
+
+    // คำเก็บเป็นสตริงคั่นด้วย \n (ไฟล์เล็กลงกว่าอาเรย์ literal มาก)
+    const js =
+        "window.ThaiDictionary = " +
+        JSON.stringify({
+            words: words.join("\n"),
+            aff
+        }) +
+        ";\n";
+
+    dictCache = { mtime, js };
+
+    return js;
+}
+
+
+function dictionaryPlugin() {
+
+    return {
+
+        name: "thai-dictionary",
+
+        // dev: เสิร์ฟ JS ที่แปลงเสร็จแล้ว
+        configureServer(server) {
+
+            server.middlewares.use(
+                (req, res, next) => {
+
+                    const url =
+                        (req.url || "")
+                            .split("?")[0];
+
+                    if (url !== DICT_URL) {
+                        return next();
+                    }
+
+                    try {
+
+                        res.setHeader(
+                            "Content-Type",
+                            "text/javascript; charset=utf-8"
+                        );
+
+                        res.end(
+                            getDictionaryJs()
+                        );
+
+                    } catch (error) {
+
+                        next(error);
+                    }
+                }
+            );
+        },
+
+        // build: เขียนไฟล์จริงลง dist
+        closeBundle() {
+
+            const target = path.resolve(
+                __dirname,
+                DICT_TARGET
+            );
+
+            fs.mkdirSync(
+                path.dirname(target),
+                {
+                    recursive: true
+                }
+            );
+
+            fs.writeFileSync(
+                target,
+                getDictionaryJs()
+            );
+
+            console.log(
+                "Copied dictionary -> " + DICT_TARGET
+            );
+        }
+    };
+}
+
+
+// ============================================================
 // Public Dir Reload
 // ============================================================
 
@@ -187,6 +393,7 @@ export default defineConfig(({ command }) => ({
 
     plugins: [
         vendoredJszipPlugin(),
+        dictionaryPlugin(),
         publicDirReloadPlugin(
             path.resolve(
                 __dirname,

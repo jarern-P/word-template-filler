@@ -738,7 +738,8 @@ button:disabled {
 /* ปุ่มหลักของแต่ละหน้า (ดาวน์โหลด / บันทึก / เพิ่ม) */
 #downloadBtn,
 #saveBtn,
-#masterSaveBtn {
+#masterSaveBtn,
+#wordAddBtn {
     color: #fff;
     background: linear-gradient(135deg, var(--pink-400), var(--pink-600));
     border-color: transparent;
@@ -747,7 +748,8 @@ button:disabled {
 
 #downloadBtn:hover,
 #saveBtn:hover,
-#masterSaveBtn:hover {
+#masterSaveBtn:hover,
+#wordAddBtn:hover {
     color: #fff;
     background: linear-gradient(135deg, var(--pink-500), var(--pink-700));
 }
@@ -877,6 +879,14 @@ button.danger:hover {
 .saved-item .meta {
     font-size: 12px;
     color: var(--ink-faint);
+}
+
+/* ตัวอย่างค่าที่กรอกของแต่ละรายการ (หน้า "ประวัติ")
+   ยาวได้แต่ต้องไม่ดันปุ่มใช้ซ้ำ/ลบตกขอบ */
+.saved-item .info .history-values {
+    font-size: 12px;
+    color: var(--ink-soft);
+    word-break: break-word;
 }
 
 .saved-item .actions {
@@ -1555,6 +1565,195 @@ button.danger:hover {
 
 .preview-note.ok {
     color: var(--ok);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   popup แนะนำคำ (เดาคำตอนพิมพ์)
+   โครงเดียวกับ .select-menu เพื่อให้หน้าตาเข้าชุดกัน
+   ────────────────────────────────────────────────────────────── */
+
+.suggest-menu {
+    position: fixed;
+    z-index: 210;
+    max-width: calc(100vw - 24px);
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+    animation: select-menu-in 0.16s ease;
+}
+
+.suggest-menu[hidden] {
+    display: none;
+}
+
+.suggest-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 40vh;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.suggest-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    margin: 0;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    box-shadow: none;
+}
+
+.suggest-item:hover {
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-color: var(--pink-200);
+    box-shadow: none;
+}
+
+.suggest-item.selected {
+    color: var(--pink-700);
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--pink-100), var(--pink-200));
+    border-color: var(--pink-300);
+    box-shadow: none;
+}
+
+/* คำที่ยังไม่มีในพจนานุกรม — รายการ "เพิ่มคำนี้" */
+.suggest-item.add {
+    color: var(--ok);
+    border-style: dashed;
+    border-color: #cdeadd;
+}
+
+.suggest-word {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.suggest-tag {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+}
+
+.suggest-item.add .suggest-tag {
+    color: var(--ok);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   หน้าคำแนะนำ (หมวด Master)
+   ────────────────────────────────────────────────────────────── */
+
+.suggest-settings {
+    margin: 0 0 28px;
+    padding: 18px 20px;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+}
+
+/* สวิตช์เปิด/ปิด — checkbox จริงยังอยู่ (แอปจึงอ่าน .checked ได้เหมือนเดิม)
+   แต่ซ่อนไว้แล้ววาดกล่องสวิตช์เอง เพราะสวิตช์ของ OS ปรับสีไม่ได้ */
+.switch-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.switch-toggle input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.switch-box {
+    position: relative;
+    flex-shrink: 0;
+    width: 46px;
+    height: 26px;
+    background: var(--line-input);
+    border-radius: var(--radius-pill);
+    transition: background 0.2s ease;
+}
+
+.switch-box::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    background: var(--surface);
+    border-radius: 50%;
+    box-shadow: var(--glow-soft);
+    transition: transform 0.2s ease;
+}
+
+.switch-toggle input:checked + .switch-box {
+    background: linear-gradient(135deg, var(--pink-400), var(--pink-600));
+}
+
+.switch-toggle input:checked + .switch-box::after {
+    transform: translateX(20px);
+}
+
+.switch-toggle input:focus-visible + .switch-box {
+    box-shadow: var(--focus-ring);
+}
+
+.switch-toggle .switch-text {
+    user-select: none;
+}
+
+/* ปุ่มคีย์บอร์ดที่ใช้กับ popup แนะนำคำ */
+.suggest-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+.suggest-keys kbd {
+    display: inline-block;
+    min-width: 26px;
+    margin-right: 4px;
+    padding: 3px 7px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--pink-700);
+    text-align: center;
+    background: var(--surface);
+    border: 1px solid var(--line-input);
+    border-bottom-width: 2px;
+    border-radius: var(--radius-sm);
 }
 
 /* ──────────────────────────────────────────────────────────────

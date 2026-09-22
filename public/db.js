@@ -212,6 +212,83 @@
 
         },
 
+        // ── คำที่เพิ่มเอง (ใช้แนะนำคำตอนพิมพ์) ──
+
+        // payload = { id, word } — id = 0 คือเพิ่มใหม่
+        wordSave: function (payload) {
+
+            return dbRequest(
+                'dbWordSave',
+                payload
+            );
+
+        },
+
+        wordList: function () {
+
+            return dbRequest(
+                'dbWordList'
+            );
+
+        },
+
+        wordDelete: function (id) {
+
+            return dbRequest(
+                'dbWordDelete',
+                id
+            );
+
+        },
+
+        // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
+
+        // payload = { templateId, templateName, values, modes, retentionDays }
+        historyAdd: function (payload) {
+
+            return dbRequest(
+                'dbHistoryAdd',
+                payload
+            );
+
+        },
+
+        // payload = { retentionDays } — อ่านแล้วลบรายการที่เก่ากว่ากำหนดให้ด้วย
+        historyList: function (payload) {
+
+            return dbRequest(
+                'dbHistoryList',
+                payload
+            );
+
+        },
+
+        historyPrune: function (payload) {
+
+            return dbRequest(
+                'dbHistoryPrune',
+                payload
+            );
+
+        },
+
+        historyDelete: function (id) {
+
+            return dbRequest(
+                'dbHistoryDelete',
+                id
+            );
+
+        },
+
+        historyClear: function () {
+
+            return dbRequest(
+                'dbHistoryClear'
+            );
+
+        },
+
     };
 
 })(window);

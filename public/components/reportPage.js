@@ -127,6 +127,26 @@
         return values;
     };
 
+    // ค่าดิบของฟอร์ม ใช้บันทึกเป็นประวัติ (หน้าประวัติการกรอก)
+    // ต่างจาก getValues ตรงที่ currency เก็บ "ตัวเลขล้วน" จาก dataset ไม่จัดรูปแบบ
+    // เพราะค่าที่จัดรูปแบบแล้ว (1,000 หรือ หนึ่งพันบาทถ้วน) เอากลับมาเติมในช่องไม่ได้
+    page.getRawValues = function () {
+        const values = baseGetValues.call(page);
+        const form = document.getElementById('form');
+
+        if (form) {
+            form.querySelectorAll('[data-currency-input]').forEach(function (input) {
+                values[input.dataset.field] = input.dataset.currencyValue || '';
+            });
+        }
+
+        return values;
+    };
+
+    // โหมด "ตัวเลข/ตัวหนังสือ" ของช่อง currency ที่แสดงอยู่ตอนนี้
+    // เก็บไปกับประวัติด้วย เพื่อให้กดใช้ซ้ำแล้วได้รูปแบบเดิม
+    page.getCurrencyModes = getCurrencyModes;
+
     // ซิงก์ช่อง currency ให้แสดงรูปแบบตามโหมดปัจจุบัน (ใช้หลังเติมค่ากลับเข้าฟอร์ม)
     // ค่า canonical (ตัวเลขล้วน) เขียนลง dataset ก่อนแล้วช่องค่อยแสดงรูปแบบของโหมด
     page.syncCurrencyInputs = function (values) {

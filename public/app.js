@@ -6,6 +6,17 @@
     const DEFAULT_PAGE = 'report';
     const CONFIG_PAGE = 'template-config';
     const MASTER_PAGE = 'master-data';
+    const WORDS_PAGE = 'word-suggest';
+    const HISTORY_PAGE = 'history';
+
+    // สวิตช์เปิด/ปิดการแนะนำคำเป็นค่าติดตั้งของเครื่องนี้ ไม่ใช่ข้อมูลของ template
+    // จึงเก็บใน localStorage ไม่ต้องเพิ่มตารางในฐานข้อมูล
+    const SUGGEST_ENABLED_KEY = 'word-template-filler.suggest-enabled';
+
+    // อายุการเก็บประวัติการกรอก (วัน) — ค่าติดตั้งของเครื่องนี้ เก็บใน localStorage
+    // 0 = ไม่จำกัดอายุ (ตัวเลือกที่เลือกได้อยู่ใน historyPage.js)
+    const HISTORY_RETENTION_KEY = 'word-template-filler.history-retention-days';
+    const DEFAULT_HISTORY_RETENTION_DAYS = 15;
 
     // หัวคอลัมน์ที่ยอมรับในไฟล์ Excel ของหน้า Master Data
     // เทียบหลังตัดช่องว่าง/ขีด/ขีดล่าง และแปลงเป็นตัวพิมพ์เล็กแล้ว
@@ -16,7 +27,9 @@
     const PAGE_COMPONENTS = {
         'report': 'ReportPage',
         'template-config': 'TemplateConfigPage',
-        'master-data': 'MasterDataPage'
+        'master-data': 'MasterDataPage',
+        'word-suggest': 'WordSuggestPage',
+        'history': 'HistoryPage'
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -40,6 +53,8 @@
     let textMeasurer = null;   // ตัววัดความกว้างจริง ใช้ตอนล็อกตำแหน่ง
     let templateRecords = null;   // cache รายการ template ล่าสุดจากฐานข้อมูล
     let masterRecords = null;     // cache รายการ master data ล่าสุดจากฐานข้อมูล
+    let wordRecords = null;       // cache คำที่เพิ่มเองล่าสุดจากฐานข้อมูล
+    let historyRecords = null;    // cache ประวัติการกรอกล่าสุดจากฐานข้อมูล
 
     // ──────────────────────────────────────────────────────────────
     // Helpers
@@ -681,6 +696,32 @@
                     return;
                 }
 
+                // สวิตช์เปิด/ปิดการแนะนำคำ (หน้า "คำแนะนำ")
+                if (
+                    target &&
+                    target.id === 'wordSuggestToggle'
+                ) {
+
+                    onToggleSuggest(
+                        target.checked
+                    );
+
+                    return;
+                }
+
+                // อายุการเก็บประวัติการกรอก (หน้า "ประวัติ")
+                if (
+                    target &&
+                    target.id === 'historyRetention'
+                ) {
+
+                    onRetentionChange(
+                        target.value
+                    );
+
+                    return;
+                }
+
                 if (
                     target &&
                     target.id === 'templateSelect'
@@ -703,6 +744,21 @@
 
                 const target =
                     event.target;
+
+                // ช่องค้นหาของหน้า "ประวัติ" กรองรายการทันที
+                if (
+                    target &&
+                    target.id === 'historySearch'
+                ) {
+
+                    getComponent(
+                        HISTORY_PAGE
+                    ).setSearch(
+                        target.value
+                    );
+
+                    return;
+                }
 
                 // ช่องค้นหาของหน้า Master Data กรองรายการทันที
                 if (
@@ -813,6 +869,18 @@
                     return;
                 }
 
+                if (id === 'wordAddBtn') {
+
+                    onSaveWord();
+                    return;
+                }
+
+                if (id === 'wordCancelBtn') {
+
+                    onCancelWordEdit();
+                    return;
+                }
+
                 if (id === 'masterSaveBtn') {
 
                     onSaveMaster();
@@ -822,6 +890,18 @@
                 if (id === 'masterCancelBtn') {
 
                     onCancelMasterEdit();
+                    return;
+                }
+
+                if (id === 'historyPruneBtn') {
+
+                    onPruneHistory();
+                    return;
+                }
+
+                if (id === 'historyClearBtn') {
+
+                    onClearHistory();
                     return;
                 }
 
@@ -866,6 +946,34 @@
                 ) {
 
                     onDeleteMaster(
+                        recordId
+                    );
+
+                } else if (action === 'word-edit') {
+
+                    onEditWord(
+                        recordId
+                    );
+
+                } else if (
+                    action === 'word-delete'
+                ) {
+
+                    onDeleteWord(
+                        recordId
+                    );
+
+                } else if (action === 'history-reuse') {
+
+                    onReuseHistory(
+                        recordId
+                    );
+
+                } else if (
+                    action === 'history-delete'
+                ) {
+
+                    onDeleteHistory(
                         recordId
                     );
 
@@ -915,8 +1023,14 @@
 
         renderPage(page);
 
+        applySuggestEnabled(
+            readSuggestEnabled()
+        );
+
         refreshTemplateList();
         refreshMasterList();
+        refreshWordList();
+        refreshHistory();
     }    // ──────────────────────────────────────────────────────────────
     // File / Template handlers
     // ──────────────────────────────────────────────────────────────
@@ -1259,6 +1373,9 @@
                     state.fileName
                 ) + '-filled.docx'
             );
+
+            // เก็บชุดค่าที่เพิ่งสร้างเอกสารไว้ให้กดใช้ซ้ำ (หน้า "ประวัติ")
+            recordHistory();
 
         } catch (error) {
 
@@ -1859,6 +1976,740 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // คำแนะนำการเดาคำ (หน้า "คำแนะนำ" ในหมวด Master)
+    // ──────────────────────────────────────────────────────────────
+
+    // สวิตช์เปิด/ปิดการแนะนำคำ — ค่าติดตั้งของเครื่องนี้ (localStorage)
+    function readSuggestEnabled() {
+
+        try {
+
+            const stored =
+                window.localStorage.getItem(
+                    SUGGEST_ENABLED_KEY
+                );
+
+            // ยังไม่เคยตั้งค่า = เปิดไว้ก่อน
+            return stored === null ? true : stored === '1';
+
+        } catch (error) {
+
+            return true;
+        }
+    }
+
+    function writeSuggestEnabled(enabled) {
+
+        try {
+
+            window.localStorage.setItem(
+                SUGGEST_ENABLED_KEY,
+                enabled ? '1' : '0'
+            );
+
+        } catch (error) {
+
+            // เขียนไม่ได้ (เช่น โหมดส่วนตัว) ก็ใช้ค่าที่ตั้งไว้ในหน่วยความจำต่อ
+        }
+    }
+
+    function applySuggestEnabled(enabled) {
+
+        if (scope.WordSuggest) {
+            scope.WordSuggest.setEnabled(enabled);
+        }
+
+        const page =
+            getComponent(WORDS_PAGE);
+
+        if (page && page.setSuggestEnabled) {
+            page.setSuggestEnabled(enabled);
+        }
+    }
+
+    function onToggleSuggest(enabled) {
+
+        writeSuggestEnabled(enabled);
+        applySuggestEnabled(enabled);
+    }
+
+    // โหลดคำที่เพิ่มเองจากฐานข้อมูล ให้ทั้งหน้า "คำแนะนำ" และ engine ที่แนะนำคำ
+    // (เรียกตอนเริ่มแอปด้วย เพื่อให้หน้ารายงานใช้คำของเราได้ทันที)
+    async function refreshWordList() {
+
+        const page =
+            getComponent(WORDS_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            wordRecords =
+                await scope.Db.wordList();
+
+            if (scope.WordSuggest) {
+
+                scope.WordSuggest.setCustomWords(
+                    wordRecords.map(function (record) {
+                        return record.word;
+                    })
+                );
+            }
+
+            if (page.renderWordList) {
+                page.renderWordList(wordRecords);
+            }
+
+            if (page.setStats && scope.WordSuggest) {
+
+                page.setStats({
+                    dictionary: scope.WordSuggest.dictionarySize(),
+                    custom: wordRecords.length
+                });
+            }
+
+        } catch (error) {
+
+            console.error(error);
+
+            if (page.renderWordList) {
+
+                page.renderWordList(
+                    [],
+                    'โหลดรายการไม่สำเร็จ: ' + error.message
+                );
+            }
+        }
+    }
+
+    async function onSaveWord() {
+
+        const page =
+            getComponent(WORDS_PAGE);
+
+        const form =
+            page.readForm();
+
+        if (!form.word) {
+
+            page.setFormStatus(
+                'กรุณาระบุคำ',
+                'error'
+            );
+
+            return;
+        }
+
+        page.setSaveEnabled(false);
+        page.setFormStatus('กำลังบันทึก...');
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.wordSave({
+                id: form.id,
+                word: form.word
+            });
+
+            page.resetForm();
+
+            page.setFormStatus(
+                (form.id ? 'แก้ไขคำแล้ว: ' : 'เพิ่มคำแล้ว: ') + form.word,
+                'ok'
+            );
+
+            await refreshWordList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setFormStatus(
+                'บันทึกไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+        } finally {
+
+            page.setSaveEnabled(true);
+        }
+    }
+
+    function onEditWord(recordId) {
+
+        const record =
+            (wordRecords || []).find(function (item) {
+                return item.id === recordId;
+            });
+
+        if (!record) {
+            return;
+        }
+
+        getComponent(WORDS_PAGE).loadIntoForm(record);
+    }
+
+    function onCancelWordEdit() {
+
+        const page =
+            getComponent(WORDS_PAGE);
+
+        page.resetForm();
+        page.setFormStatus('');
+    }
+
+    async function onDeleteWord(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        if (
+            !window.confirm(
+                'ต้องการลบคำนี้ใช่ไหม?'
+            )
+        ) {
+            return;
+        }
+
+        const page =
+            getComponent(WORDS_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.wordDelete(
+                recordId
+            );
+
+            page.setFormStatus('ลบคำแล้ว', 'ok');
+
+            await refreshWordList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setFormStatus(
+                'ลบไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    // เพิ่มคำจาก popup แนะนำคำ (รายการ "เพิ่มคำนี้")
+    // เรียกจาก suggestMenu.js — ไม่แก้ข้อความที่พิมพ์อยู่ จำนวนคำที่บันทึกต่างหาก
+    async function addSuggestWord(word) {
+
+        const text =
+            String(word || '').trim();
+
+        if (!text) {
+            return;
+        }
+
+        const page =
+            getComponent(WORDS_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.wordSave({
+                id: 0,
+                word: text
+            });
+
+            page.setFormStatus(
+                'เพิ่มคำแล้ว: ' + text,
+                'ok'
+            );
+
+            await refreshWordList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setFormStatus(
+                'เพิ่มไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────
+    // ประวัติการกรอก (หน้า "ประวัติ" ในหมวด Master)
+    //
+    // ทุกครั้งที่กด Download ในหน้ารายงาน ชุดค่าที่กรอกจะถูกเก็บไว้ที่นี่
+    // เพื่อกด "ใช้ซ้ำ" แล้วเติมทั้งฟอร์มกลับมา (แก้เฉพาะช่องที่เปลี่ยน)
+    // เก็บในฐานข้อมูล SQLite เพราะเป็นข้อมูลที่ต้องอยู่ข้ามการเปิด/ปิดแอป
+    // ──────────────────────────────────────────────────────────────
+
+    // อายุการเก็บ (วัน) เป็นค่าติดตั้งของเครื่องนี้ จึงเก็บใน localStorage
+    // 0 = ไม่จำกัดอายุ
+    function readHistoryRetention() {
+
+        try {
+
+            const stored =
+                window.localStorage.getItem(
+                    HISTORY_RETENTION_KEY
+                );
+
+            if (stored === null) {
+                return DEFAULT_HISTORY_RETENTION_DAYS;
+            }
+
+            const days = Number(stored);
+
+            return Number.isFinite(days) && days >= 0
+                ? days
+                : DEFAULT_HISTORY_RETENTION_DAYS;
+
+        } catch (error) {
+
+            return DEFAULT_HISTORY_RETENTION_DAYS;
+        }
+    }
+
+    function writeHistoryRetention(days) {
+
+        try {
+
+            window.localStorage.setItem(
+                HISTORY_RETENTION_KEY,
+                String(days)
+            );
+
+        } catch (error) {
+
+            // เขียนไม่ได้ (เช่น โหมดส่วนตัว) ก็ใช้ค่าที่ตั้งไว้ในหน่วยความจำต่อ
+        }
+    }
+
+    function describeRetention(days) {
+
+        return days > 0
+            ? 'เก็บไว้ ' + days + ' วัน'
+            : 'ไม่จำกัดอายุ';
+    }
+
+    // โหลดประวัติมาแสดง — ให้ db-worker ลบรายการที่เก่ากว่ากำหนดไปด้วยในคำสั่งเดียว
+    async function refreshHistory() {
+
+        // ข้ามการโหลดฐานข้อมูลถ้าหน้าปัจจุบันไม่มีที่แสดงรายการ
+        if (!document.getElementById('historyList')) {
+            return;
+        }
+
+        const page =
+            getComponent(HISTORY_PAGE);
+
+        const days =
+            readHistoryRetention();
+
+        page.setRetention(days);
+
+        try {
+
+            await ensureDb();
+
+            historyRecords =
+                await scope.Db.historyList({
+                    retentionDays: days
+                });
+
+            page.renderList(historyRecords);
+
+            page.setStats(
+                'เก็บประวัติ ' + describeRetention(days) +
+                ' · ' + historyRecords.length + ' รายการ'
+            );
+
+            page.setDbStatus(
+                'ฐานข้อมูล: SQLite — บันทึกถาวร'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.renderList(
+                [],
+                'โหลดประวัติไม่สำเร็จ: ' + error.message
+            );
+        }
+    }
+
+    // ล้างประวัติที่หมดอายุตั้งแต่เปิดแอป (ไม่ต้องรอให้ผู้ใช้เปิดหน้าประวัติ)
+    async function pruneHistory() {
+
+        const days =
+            readHistoryRetention();
+
+        if (!days) {
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.historyPrune({
+                retentionDays: days
+            });
+
+        } catch (error) {
+
+            console.error(error);
+        }
+    }
+
+    // เก็บชุดค่าที่เพิ่งกด Download (เงียบ ๆ — ไม่รบกวนการดาวน์โหลด)
+    // template ที่ยังไม่ถูกบันทึกไม่เก็บ เพราะเปิดกลับมาเติมค่าให้ไม่ได้
+    async function recordHistory() {
+
+        if (
+            currentPage !== DEFAULT_PAGE ||
+            !state.templateId
+        ) {
+            return;
+        }
+
+        const report =
+            getComponent(DEFAULT_PAGE);
+
+        if (!report || !report.getRawValues) {
+            return;
+        }
+
+        // currency เก็บเป็นตัวเลขล้วน (getRawValues อ่านจาก dataset) จึงนำกลับมาเติมได้
+        // ช่องที่เว้นว่างไม่ต้องเก็บ
+        const raw =
+            report.getRawValues();
+
+        const values = {};
+
+        Object.keys(raw).forEach(function (field) {
+
+            const text =
+                raw[field] === null ||
+                raw[field] === undefined
+                    ? ''
+                    : String(raw[field]);
+
+            if (text.trim() !== '') {
+                values[field] = text;
+            }
+        });
+
+        if (Object.keys(values).length === 0) {
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.historyAdd({
+
+                templateId:
+                    state.templateId,
+
+                templateName:
+                    getPageMeta(CONFIG_PAGE).templateName ||
+                    state.fileName ||
+                    '',
+
+                values:
+                    values,
+
+                modes:
+                    report.getCurrencyModes
+                        ? report.getCurrencyModes()
+                        : {},
+
+                retentionDays:
+                    readHistoryRetention()
+
+            });
+
+        } catch (error) {
+
+            // เก็บประวัติไม่สำเร็จต้องไม่ทำให้การดาวน์โหลดล้มเหลว
+            console.error(error);
+        }
+    }
+
+    function onRetentionChange(value) {
+
+        const days =
+            Number(value) || 0;
+
+        writeHistoryRetention(days);
+
+        getComponent(HISTORY_PAGE).setRetention(days);
+
+        refreshHistory();
+    }
+
+    // แจ้งผลบนหน้ารายงาน (ใช้พื้นที่เดียวกับคำเตือนล็อกตำแหน่ง)
+    function showReportNotice(text) {
+
+        const el =
+            document.getElementById(
+                'replaceWarning'
+            );
+
+        if (!el) {
+            return;
+        }
+
+        el.className = 'replace-warning ok';
+        el.textContent = text;
+        el.style.display = 'block';
+    }
+
+    // เติมค่าจากประวัติกลับเข้าฟอร์มทั้งชุด
+    // ลำดับสำคัญ: โหลด template (ได้ field + type ที่ถูกต้อง) → ตั้งโหมด currency
+    // → ใส่ค่าลง pageValues ของหน้ารายงาน → สลับไปหน้ารายงานเพื่อวาดฟอร์ม
+    async function onReuseHistory(recordId) {
+
+        const record =
+            (historyRecords || []).find(function (item) {
+                return item.id === recordId;
+            });
+
+        if (!record) {
+            return;
+        }
+
+        const page =
+            getComponent(HISTORY_PAGE);
+
+        if (!record.template_id) {
+
+            page.setStatus(
+                'รายการนี้ไม่ผูกกับ template ที่บันทึกไว้ จึงใช้ซ้ำไม่ได้',
+                'error'
+            );
+
+            return;
+        }
+
+        page.setStatus('กำลังโหลด template...');
+
+        try {
+
+            await onLoadTemplate(
+                record.template_id
+            );
+
+            // onLoadTemplate แจ้งเตือนเองแล้วถ้าโหลดไม่ได้
+            if (
+                Number(state.templateId) !==
+                Number(record.template_id)
+            ) {
+
+                page.setStatus(
+                    'โหลด template ของรายการนี้ไม่สำเร็จ',
+                    'error'
+                );
+
+                return;
+            }
+
+            // ตั้งโหมดของช่อง currency ก่อน จะได้แสดงผลแบบเดียวกับตอนบันทึก
+            const modes =
+                record.modes || {};
+
+            Object.keys(modes).forEach(function (field) {
+
+                scope.FieldTypes.setCurrencyMode(
+                    field,
+                    modes[field]
+                );
+            });
+
+            // เขียนทับค่าชุดเดิมของหน้ารายงาน (ไม่ใช่ต่อท้าย)
+            const values =
+                getPageValues(DEFAULT_PAGE);
+
+            Object.keys(values).forEach(function (field) {
+                delete values[field];
+            });
+
+            Object.assign(
+                values,
+                record.values || {}
+            );
+
+            showPage(DEFAULT_PAGE);
+
+            // ให้ช่อง currency แสดงรูปแบบตามโหมดที่ตั้งไว้ (ค่าอยู่ใน dataset แล้ว)
+            const report =
+                getComponent(DEFAULT_PAGE);
+
+            if (report.applyValues) {
+                report.applyValues(values);
+            }
+
+            showReportNotice(
+                'ใช้ซ้ำจากประวัติแล้ว: ' +
+                (record.template_name || 'template') +
+                ' — แก้ช่องที่เปลี่ยนแล้วกด Download ได้เลย'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setStatus(
+                'ใช้ซ้ำไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onDeleteHistory(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        if (
+            !window.confirm(
+                'ต้องการลบรายการนี้ใช่ไหม?'
+            )
+        ) {
+            return;
+        }
+
+        const page =
+            getComponent(HISTORY_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.historyDelete(
+                recordId
+            );
+
+            page.setStatus('ลบรายการแล้ว', 'ok');
+
+            await refreshHistory();
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setStatus(
+                'ลบไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    // ลบรายการที่เก่ากว่าอายุที่ตั้งไว้ด้วยมือ (นอกเหนือจากการลบอัตโนมัติ)
+    async function onPruneHistory() {
+
+        const page =
+            getComponent(HISTORY_PAGE);
+
+        const days =
+            readHistoryRetention();
+
+        page.setBusy(true);
+
+        try {
+
+            await ensureDb();
+
+            const result =
+                await scope.Db.historyPrune({
+                    retentionDays: days
+                });
+
+            await refreshHistory();
+
+            page.setStatus(
+                days > 0
+                    ? 'ลบรายการที่เก่ากว่า ' + days + ' วันแล้ว ' +
+                        (result && result.deleted
+                            ? result.deleted
+                            : 0) + ' รายการ'
+                    : 'ตั้งอายุการเก็บเป็น "ไม่จำกัดอายุ" อยู่ จึงไม่มีรายการที่หมดอายุ',
+                'ok'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setStatus(
+                'ลบไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+        } finally {
+
+            page.setBusy(false);
+        }
+    }
+
+    async function onClearHistory() {
+
+        const page =
+            getComponent(HISTORY_PAGE);
+
+        if (
+            !window.confirm(
+                'ต้องการล้างประวัติการกรอกทั้งหมดใช่ไหม?'
+            )
+        ) {
+            return;
+        }
+
+        page.setBusy(true);
+
+        try {
+
+            await ensureDb();
+
+            const result =
+                await scope.Db.historyClear();
+
+            await refreshHistory();
+
+            page.setStatus(
+                'ล้างประวัติแล้ว ' +
+                (result && result.deleted
+                    ? result.deleted
+                    : 0) + ' รายการ',
+                'ok'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            page.setStatus(
+                'ล้างประวัติไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+        } finally {
+
+            page.setBusy(false);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // Master Data: นำเข้า / ส่งออก Excel
     // ──────────────────────────────────────────────────────────────
 
@@ -2358,11 +3209,24 @@
             DEFAULT_PAGE
         );
 
+        // โหลดพจนานุกรมเข้าหน่วยความจำครั้งเดียว แล้วเปิด/ปิดตามค่าที่เคยตั้งไว้
+        scope.WordSuggest.init();
+
+        applySuggestEnabled(
+            readSuggestEnabled()
+        );
+
         renderPage(
             DEFAULT_PAGE
         );
 
         refreshTemplateList();
+
+        // คำที่เพิ่มเองต้องพร้อมก่อนผู้ใช้เริ่มพิมพ์ในหน้ารายงาน
+        refreshWordList();
+
+        // ล้างประวัติที่เก่ากว่ากำหนดตั้งแต่เปิดแอป (ไม่ต้องรอเปิดหน้าประวัติ)
+        pruneHistory();
     }
 
     if (
@@ -2417,7 +3281,12 @@
                 )
                     ? config.getPlaceholders()
                     : {};
-            }
+            },
+
+        // บันทึกคำที่ผู้ใช้เลือกจาก popup แนะนำคำ (รายการ "เพิ่มคำนี้")
+        // suggestMenu.js เรียกเมื่อไม่มีคำในพจนานุกรมที่ตรงกับที่พิมพ์
+        addSuggestWord:
+            addSuggestWord
     };
 
 })(window);

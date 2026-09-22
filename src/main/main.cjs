@@ -846,6 +846,134 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB Word Save
+// ============================================================
+
+ipcMain.handle(
+    "db:word-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "word-save",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Word List
+// ============================================================
+
+ipcMain.handle(
+    "db:word-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "word-list",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Word Delete
+// ============================================================
+
+ipcMain.handle(
+    "db:word-delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "word-delete",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 
@@ -934,6 +1062,220 @@ ipcMain.handle(
                     "บันทึกไฟล์ไม่สำเร็จ"
             };
         }
+    }
+);
+
+
+// ============================================================
+// DB History Add
+// ============================================================
+
+ipcMain.handle(
+    "db:history-add",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "history-add",
+                    payload || {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB History List
+// ============================================================
+
+ipcMain.handle(
+    "db:history-list",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "history-list",
+                    payload || {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB History Prune (ลบรายการที่เก่ากว่ากำหนด)
+// ============================================================
+
+ipcMain.handle(
+    "db:history-prune",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "history-prune",
+                    payload || {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB History Delete
+// ============================================================
+
+ipcMain.handle(
+    "db:history-delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "history-delete",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB History Clear (ล้างประวัติทั้งหมด)
+// ============================================================
+
+ipcMain.handle(
+    "db:history-clear",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "history-clear",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
     }
 );
 

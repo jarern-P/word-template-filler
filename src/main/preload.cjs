@@ -42,6 +42,33 @@ contextBridge.exposeInMainWorld(
         dbMasterImport: (payload) =>
             ipcRenderer.invoke("db:master-import", payload),
 
+        // คำที่เพิ่มเองสำหรับการแนะนำคำ
+        dbWordSave: (payload) =>
+            ipcRenderer.invoke("db:word-save", payload),
+
+        dbWordList: () =>
+            ipcRenderer.invoke("db:word-list"),
+
+        dbWordDelete: (id) =>
+            ipcRenderer.invoke("db:word-delete", id),
+
+        // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
+        dbHistoryAdd: (payload) =>
+            ipcRenderer.invoke("db:history-add", payload),
+
+        // payload = { retentionDays } — ลบรายการที่เก่ากว่ากำหนดไปด้วยตอนอ่าน
+        dbHistoryList: (payload) =>
+            ipcRenderer.invoke("db:history-list", payload),
+
+        dbHistoryPrune: (payload) =>
+            ipcRenderer.invoke("db:history-prune", payload),
+
+        dbHistoryDelete: (id) =>
+            ipcRenderer.invoke("db:history-delete", id),
+
+        dbHistoryClear: () =>
+            ipcRenderer.invoke("db:history-clear"),
+
         // ─────────────────────────────
         // File
         // ─────────────────────────────

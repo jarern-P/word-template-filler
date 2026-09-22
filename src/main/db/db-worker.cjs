@@ -2,6 +2,7 @@ const { parentPort, workerData } = require("worker_threads");
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
 // ============================================================
 // Database Path
@@ -33,6 +34,22 @@ const dbPath = path.join(dbDir, "templates.db");
 // ============================================================
 
 const SCHEMA = `
+    -- ประวัติการกรอก ใช้กดใช้ซ้ำในหน้ารายงาน
+    CREATE TABLE IF NOT EXISTS history (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id   INTEGER NOT NULL DEFAULT 0,
+        template_name TEXT NOT NULL DEFAULT '',
+        field_values  TEXT NOT NULL DEFAULT '{}',
+        modes         TEXT NOT NULL DEFAULT '{}',
+        signature     TEXT NOT NULL UNIQUE,
+        hits          INTEGER NOT NULL DEFAULT 1,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_history_updated
+        ON history(updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS templates (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         name       TEXT NOT NULL UNIQUE,
@@ -50,6 +67,14 @@ const SCHEMA = `
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         code_group TEXT NOT NULL,
         name       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    -- คำที่ผู้ใช้เพิ่มเอง ใช้รวมกับพจนานุกรมกลางตอนแนะนำคำ
+    CREATE TABLE IF NOT EXISTS words (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        word       TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
@@ -603,6 +628,14 @@ function handleDelete(message) {
             .run(id);
 
 
+        // ประวัติของ template นี้กดใช้ซ้ำไม่ได้อีก (เปิด template เดิมกลับมาไม่ได้)
+        db.prepare(`
+            DELETE FROM history
+            WHERE template_id = ?
+        `)
+        .run(id);
+
+
         send({
             id: message.id,
             ok: true,
@@ -1101,6 +1134,661 @@ function handleMasterImport(message) {
 
 
 // ============================================================
+// Word Save
+// ============================================================
+
+// คำที่ผู้ใช้เพิ่มเองสำหรับการแนะนำคำ
+//   - id > 0 = แก้คำเดิม
+//   - id = 0 = เพิ่มคำใหม่
+// คำห้ามซ้ำกับรายการที่มีอยู่
+function handleWordSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+
+        const id =
+            Number(payload.id) || 0;
+
+        const word =
+            String(payload.word || "").trim();
+
+
+        if (!word) {
+            throw new Error("กรุณาระบุคำ");
+        }
+
+
+        const duplicate =
+            db.prepare(`
+                SELECT
+                    id
+                FROM words
+                WHERE word = ?
+                AND id <> ?
+            `)
+            .get(word, id);
+
+
+        if (duplicate) {
+            throw new Error(`คำ "${word}" มีอยู่แล้ว`);
+        }
+
+
+        const now =
+            new Date().toISOString();
+
+
+        let resultId;
+
+
+        if (id > 0) {
+
+            const result =
+                db.prepare(`
+                    UPDATE words
+                    SET
+                        word = @word,
+                        updated_at = @updated_at
+                    WHERE id = @id
+                `)
+                .run({
+                    id: id,
+                    word: word,
+                    updated_at: now
+                });
+
+
+            if (result.changes === 0) {
+                throw new Error(`ไม่พบคำ id=${id}`);
+            }
+
+
+            resultId = id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO words (
+                        word,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        @word,
+                        @created_at,
+                        @updated_at
+                    )
+                `)
+                .run({
+                    word: word,
+                    created_at: now,
+                    updated_at: now
+                });
+
+
+            resultId =
+                Number(result.lastInsertRowid);
+        }
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "handleWordSave error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Word List
+// ============================================================
+
+function handleWordList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    word,
+                    created_at,
+                    updated_at
+                FROM words
+                ORDER BY word ASC
+            `)
+            .all();
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Word Delete
+// ============================================================
+
+function handleWordDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+
+        const result =
+            db.prepare(`
+                DELETE FROM words
+                WHERE id = ?
+            `)
+            .run(id);
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted:
+                    result.changes > 0
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Check Schema
+// ============================================================
+
+// ============================================================
+// History (ประวัติการกรอก)
+// ============================================================
+
+// เก็บชุดค่าที่เคยกรอกและกด Download ไว้ให้กดใช้ซ้ำในครั้งถัดไป
+//   - ชุดค่าเดิม (template + ค่า + โหมด) ไม่เพิ่มแถวใหม่ แต่นับจำนวนครั้งและเลื่อนขึ้นบนสุด
+//   - ลบรายการที่เก่ากว่าจำนวนวันที่กำหนด (retentionDays) ทุกครั้งที่บันทึก/อ่านรายการ
+//   - กันฐานข้อมูลโตเกินด้วยการเก็บแถวล่าสุดไว้ไม่เกิน HISTORY_MAX_ROWS แถว
+
+const HISTORY_MAX_ROWS = 300;
+const HISTORY_DAY_MS = 24 * 60 * 60 * 1000;
+
+
+// เรียงคีย์ก่อนทำ signature ชุดค่าเดียวกันจึงได้รหัสเดิมเสมอ
+function sortObjectKeys(object) {
+
+    const source =
+        object && typeof object === "object" ? object : {};
+
+    const sorted = {};
+
+    Object.keys(source).sort().forEach(key => {
+        sorted[key] = source[key];
+    });
+
+    return sorted;
+}
+
+
+function historySignature(templateId, values, modes) {
+
+    const canonical =
+        JSON.stringify({
+            template: Number(templateId) || 0,
+            values: sortObjectKeys(values),
+            modes: sortObjectKeys(modes)
+        });
+
+    return crypto
+        .createHash("sha1")
+        .update(canonical)
+        .digest("hex");
+}
+
+
+// 0 = ไม่จำกัดอายุ
+function retentionDaysOf(payload) {
+
+    const days =
+        Number(payload && payload.retentionDays);
+
+    if (!Number.isFinite(days) || days <= 0) {
+        return 0;
+    }
+
+    return Math.floor(days);
+}
+
+
+function pruneHistory(days) {
+
+    let deleted = 0;
+
+
+    if (days > 0) {
+
+        const cutoff =
+            new Date(
+                Date.now() - days * HISTORY_DAY_MS
+            ).toISOString();
+
+        deleted =
+            db.prepare(`
+                DELETE FROM history
+                WHERE updated_at < ?
+            `)
+            .run(cutoff)
+            .changes;
+    }
+
+
+    // เผื่อไว้: ถ้ามีชุดค่าที่ไม่ซ้ำกันเยอะมาก ให้เหลือเฉพาะแถวล่าสุด
+    db.prepare(`
+        DELETE FROM history
+        WHERE id NOT IN (
+            SELECT
+                id
+            FROM history
+            ORDER BY updated_at DESC
+            LIMIT ?
+        )
+    `)
+    .run(HISTORY_MAX_ROWS);
+
+
+    return deleted;
+}
+
+
+function historyRowToRecord(row) {
+
+    return {
+        id: row.id,
+        template_id: row.template_id,
+        template_name: row.template_name,
+        values: JSON.parse(row.field_values || "{}"),
+        modes: JSON.parse(row.modes || "{}"),
+        hits: row.hits,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+    };
+}
+
+
+// ============================================================
+// History Add
+// ============================================================
+
+function handleHistoryAdd(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload =
+            message.payload || {};
+
+        const templateId =
+            Number(payload.templateId) || 0;
+
+
+        // template ที่ยังไม่ถูกบันทึก = เปิดกลับมาเติมค่าให้ไม่ได้ จึงไม่เก็บ
+        if (!templateId) {
+            throw new Error(
+                "ไม่พบ template ของรายการนี้ จึงเก็บประวัติไม่ได้"
+            );
+        }
+
+
+        const values =
+            sortObjectKeys(payload.values);
+
+        const modes =
+            sortObjectKeys(payload.modes);
+
+        const templateName =
+            String(payload.templateName || "").trim();
+
+        const now =
+            new Date().toISOString();
+
+        const signature =
+            historySignature(
+                templateId,
+                values,
+                modes
+            );
+
+
+        db.prepare(`
+            INSERT INTO history (
+                template_id,
+                template_name,
+                field_values,
+                modes,
+                signature,
+                hits,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                @template_id,
+                @template_name,
+                @field_values,
+                @modes,
+                @signature,
+                1,
+                @created_at,
+                @updated_at
+            )
+            ON CONFLICT(signature) DO UPDATE SET
+                template_name = excluded.template_name,
+                hits = history.hits + 1,
+                updated_at = excluded.updated_at
+        `)
+        .run({
+            template_id: templateId,
+            template_name: templateName,
+            field_values: JSON.stringify(values),
+            modes: JSON.stringify(modes),
+            signature: signature,
+            created_at: now,
+            updated_at: now
+        });
+
+
+        pruneHistory(
+            retentionDaysOf(payload)
+        );
+
+
+        const row =
+            db.prepare(`
+                SELECT
+                    id,
+                    hits
+                FROM history
+                WHERE signature = ?
+            `)
+            .get(signature);
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: row ? row.id : 0,
+                hits: row ? row.hits : 0
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "handleHistoryAdd error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// History List
+// ============================================================
+
+function handleHistoryList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        // อ่านรายการ = โอกาสลบของเก่าที่หมดอายุด้วย
+        pruneHistory(
+            retentionDaysOf(message.payload)
+        );
+
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    template_id,
+                    template_name,
+                    field_values,
+                    modes,
+                    hits,
+                    created_at,
+                    updated_at
+                FROM history
+                ORDER BY updated_at DESC
+            `)
+            .all();
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows.map(historyRowToRecord)
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// History Prune
+// ============================================================
+
+function handleHistoryPrune(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        const deleted =
+            pruneHistory(
+                retentionDaysOf(message.payload)
+            );
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// History Delete
+// ============================================================
+
+function handleHistoryDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+
+        const result =
+            db.prepare(`
+                DELETE FROM history
+                WHERE id = ?
+            `)
+            .run(id);
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes > 0
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// History Clear
+// ============================================================
+
+function handleHistoryClear(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        const result =
+            db.prepare(`
+                DELETE FROM history
+            `)
+            .run();
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
 // Check Schema
 // ============================================================
 
@@ -1291,12 +1979,79 @@ parentPort.on("message", (message) => {
                 break;
 
             // ------------------------------------------------
-            // Master Import (Excel)
-            // ------------------------------------------------
-
+            // Master Import (Excel)            // ------------------------------------------------
             case "master-import":
 
                 handleMasterImport(message);
+
+                break;
+
+            // ------------------------------------------------
+            // Words (คำแนะนำ)
+            // ------------------------------------------------
+
+            case "word-save":
+
+                handleWordSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "word-list":
+
+                handleWordList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "word-delete":
+
+                handleWordDelete(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // History (ประวัติการกรอก)
+            // ------------------------------------------------
+
+            case "history-add":
+
+                handleHistoryAdd(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "history-list":
+
+                handleHistoryList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "history-prune":
+
+                handleHistoryPrune(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "history-delete":
+
+                handleHistoryDelete(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "history-clear":
+
+                handleHistoryClear(message);
 
                 break;
 

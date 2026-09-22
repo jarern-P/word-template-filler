@@ -105,6 +105,30 @@
                         </svg>
                         <span class="menu-text">Master Data</span>
                     </div>
+
+                    <div
+                        class="menu-item"
+                        data-page="word-suggest"
+                    >
+                        <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M9.5 18.5h5M10.5 21.5h3"></path>
+                            <path d="M12 2.5a6.5 6.5 0 0 1 4 11.6c-.6.5-1 1.2-1 2v.4h-6v-.4c0-.8-.4-1.5-1-2a6.5 6.5 0 0 1 4-11.6z"></path>
+                        </svg>
+                        <span class="menu-text">คำแนะนำ</span>
+                    </div>
+
+                    <div
+                        class="menu-item"
+                        data-page="history"
+                    >
+                        <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="8.5"></circle>
+                            <path d="M12 7.5V12l3.2 2"></path>
+                        </svg>
+                        <span class="menu-text">ประวัติ</span>
+                    </div>
                 </div>
             </div>
         </nav>
@@ -124,6 +148,12 @@
     <!-- jszip ถูก vendor ไว้ในโปรเจกต์ ไม่ต้องพึ่ง CDN -->
     <script src="./vendor/jszip.min.js"></script>
 
+    <!--
+        พจนานุกรมไทย (.dic/.aff ที่ dictionary/) ถูกแปลงเป็น JS ตอน dev/build
+        ใช้ <script> เพราะ .exe เปิดหน้าด้วย file:// แล้ว fetch ไฟล์ในเครื่องไม่ได้
+    -->
+    <script src="./dictionary/th_TH.js"></script>
+
     <!-- xlsx.js ใช้ JSZip ประกอบ/อ่านไฟล์ .xlsx จึงต้องโหลดหลัง jszip -->
     <script src="./xlsx.js"></script>
 
@@ -131,16 +161,20 @@
     <script src="./replace.js"></script>
     <script src="./textMeasure.js"></script>
     <script src="./fieldTypes.js"></script>
+    <script src="./wordSuggest.js"></script>
 
     <script src="./components/formPage.js"></script>
     <script src="./components/sidebar.js"></script>
     <script src="./components/reportPage.js"></script>
     <script src="./components/templateConfigPage.js"></script>
     <script src="./components/masterDataPage.js"></script>
+    <script src="./components/wordSuggestPage.js"></script>
+    <script src="./components/historyPage.js"></script>
     <script src="./components/masterLookup.js"></script>
     <script src="./components/previewDialog.js"></script>
     <script src="./components/datePicker.js"></script>
     <script src="./components/selectMenu.js"></script>
+    <script src="./components/suggestMenu.js"></script>
 
     <script src="./db.js"></script>
     <script src="./app.js"></script>
