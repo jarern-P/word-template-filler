@@ -6,10 +6,10 @@
     'use strict';
 
     const HTML = [
-        '<h1>Master Data</h1>',
+        '<h1>ขัอมูลหลัก</h1>',
 
         '<section class="master-form">',
-        '    <h2 id="masterFormTitle">เพิ่มข้อมูล Master</h2>',
+        '    <h2 id="masterFormTitle">เพิ่มข้อมูลหลัก</h2>',
 
         '    <div class="field">',
         '        <label for="masterCodeGroup">Code Group</label>',
@@ -58,7 +58,7 @@
         '</section>',
 
         '<section class="saved-templates">',
-        '    <h2>รายการ Master Data</h2>',
+        '    <h2>รายการข้อมูลหลัก</h2>',
 
         '    <div class="master-toolbar">',
         '        <label for="masterSearch">ค้นหา</label>',

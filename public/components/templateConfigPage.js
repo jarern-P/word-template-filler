@@ -4,7 +4,7 @@
 
     const META_HTML = [
         '<div class="template-meta">',
-        '    <label for="templateName">ชื่อ Template</label>',
+        '    <label for="templateName">ชื่อ แม่แบบ</label>',
         '    <input type="text" id="templateName" data-persist="templateName"' +
             ' placeholder="เว้นว่าง = ใช้ชื่อไฟล์ .docx">',
         '</div>'
@@ -17,7 +17,7 @@
     const ACTIONS_HTML = [
         '<div class="form-actions">',
         '    <button id="downloadTemplateBtn" type="button" class="plain" disabled>' +
-            'ดาวน์โหลด Template ต้นฉบับ</button>',
+            'ดาวน์โหลด แม่แบบ ต้นฉบับ</button>',
         '    <button id="replaceTemplateBtn" type="button" class="danger" disabled>' +
             'อัปโหลดไฟล์ใหม่ทับไฟล์เดิม</button>',
         '</div>',
@@ -27,7 +27,7 @@
 
     const FOOTER_HTML = [
         '<section class="saved-templates">',
-        '    <h2>Template ที่บันทึกไว้</h2>',
+        '    <h2>แม่แบบ ที่บันทึกไว้</h2>',
         '    <p id="dbStatus" class="db-status"></p>',
         '    <ul id="savedList" class="saved-list"></ul>',
         '</section>'
@@ -253,7 +253,7 @@
     }
 
     const page = scope.FormPage.create({
-        title: 'Template Configuration',
+        title: 'ตั้งค่าแม่แบบ',
         formTitle: 'ตั้งค่า Type ของแต่ละ Field',
         showDownload: false,   // หน้านี้มีแต่ค่า type ไม่ใช่ค่าที่จะใส่เอกสาร
         renderControl: createTypeSelect,

@@ -14,7 +14,7 @@
         '<div class="lookup-backdrop"></div>',
         '<div class="lookup-dialog" role="dialog" aria-modal="true" aria-labelledby="lookupTitle">',
         '    <div class="lookup-head">',
-        '        <h2 id="lookupTitle">เลือกข้อมูล Master Data</h2>',
+        '        <h2 id="lookupTitle">เลือกข้อมูลหลัก</h2>',
         '        <button type="button" class="lookup-close" aria-label="ปิด">&times;</button>',
         '    </div>',
         '    <div class="lookup-toolbar">',
