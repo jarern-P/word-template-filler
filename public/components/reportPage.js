@@ -109,8 +109,9 @@
     // ฟอร์มถูกวาดใหม่ทุกครั้งที่สลับหน้า จึงต้องมีที่เก็บที่อยู่ข้ามการวาดฟอร์ม
     // โครงตาราง (จำนวนคอลัมน์ / ชื่อหัวคอลัมน์) มาจาก FieldTypes
     // ──────────────────────────────────────────────────────────────
-    const tableRows = {};      // field -> [ [cell, ...], ... ]
-    const tableSpans = {};     // field -> [ [span ของแต่ละกลุ่มช่อง], ... ]
+    const tableRows = {};          // field -> [ [cell, ...], ... ]
+    const tableSpans = {};         // field -> [ [span ของแต่ละกลุ่มช่อง], ... ]
+    const tableCellStyles = {};    // field -> [ [ {align, bold, italic}, ... ], ... ]
 
     function tableSchema(field) {
         return scope.FieldTypes.getTableSchema(field);
@@ -139,8 +140,22 @@
 
         tableRows[field] = rows;
         normalizeSpans(field, rows);
+        normalizeCellStyles(field, rows);
 
         return rows;
+    }
+
+    // รูปแบบของทุกช่อง ต้องยาวเท่าจำนวนคอลัมน์และจำนวนแถวปัจจุบันเสมอ
+    // (เพิ่ม/ลดคอลัมน์หรือแถวแล้ว รูปแบบเดิมต้องไม่เพี้ยน)
+    function normalizeCellStyles(field, rows) {
+        const columns = tableSchema(field).columns.length;
+        const stored = Array.isArray(tableCellStyles[field]) ? tableCellStyles[field] : [];
+
+        tableCellStyles[field] = rows.map(function (_, index) {
+            return scope.FieldTypes.normalizeCellStyleRow(stored[index], columns);
+        });
+
+        return tableCellStyles[field];
     }
 
     // ขนาดกลุ่มช่องของแต่ละแถว (ผสาน/แยก)
@@ -159,10 +174,12 @@
     function createTable(field) {
         const schema = tableSchema(field);
 
+        // normalizeRows จะซิงก์รูปแบบของทุกช่องให้ตรงกับแถว/คอลัมน์ปัจจุบันให้เอง
         return scope.FieldTypes.createTableControl(field, {
             schema: schema,
             rows: normalizeRows(field),
-            spans: tableSpans[field]
+            spans: tableSpans[field],
+            styles: tableCellStyles[field]
         });
     }
 
@@ -185,7 +202,128 @@
         if (!current || !current.parentNode) return;
 
         current.parentNode.replaceChild(createTable(field), current);
+
+        // แถบจัดรูปแบบถูกสร้างใหม่ (ปุ่ม disabled) — ซิงก์กับช่องที่เลือกอยู่อีกครั้ง
+        updateFormatBar(field);
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // จัดรูปแบบช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง)
+    //
+    // เครื่องมือจัดรูปแบบทำกับ "ช่องที่เลือกอยู่" (ช่องที่เพิ่งโฟกัสล่าสุด)
+    // เพราะช่องเป็น input ข้อความ จึงจัดรูปแบบได้ทั้งช่อง (ไม่ใช่บางคำ)
+    // ──────────────────────────────────────────────────────────────
+
+    // ช่องที่เลือกอยู่ตอนนี้ ({ field, row, col }) — null = ยังไม่ได้เลือก
+    let activeCell = null;
+
+    function getCellStyle(field, row, col) {
+        const rows = tableCellStyles[field];
+        const styleRow = rows ? rows[Number(row)] : null;
+
+        return scope.FieldTypes.normalizeCellStyle(
+            styleRow ? styleRow[Number(col)] : null
+        );
+    }
+
+    function findTableCellInput(field, row, col) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-table-input]').forEach(function (input) {
+            if (
+                input.dataset.tableInput === field &&
+                Number(input.dataset.tableRow) === Number(row) &&
+                Number(input.dataset.tableCol) === Number(col)
+            ) {
+                found = input;
+            }
+        });
+
+        return found;
+    }
+
+    function findFormatBar(field) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-table-format-bar]').forEach(function (bar) {
+            if (bar.dataset.tableFormatBar === field) found = bar;
+        });
+
+        return found;
+    }
+
+    // ปุ่มของแถบจัดรูปแบบสะท้อนรูปแบบของช่องที่เลือกอยู่
+    // (ปุ่ม disabled จนกว่าจะเลือกช่อง เพื่อไม่ให้สับสนว่าจะแก้ช่องไหน)
+    function updateFormatBar(field) {
+        const bar = findFormatBar(field);
+        if (!bar) return;
+
+        const active = !!(activeCell && activeCell.field === field);
+        const style = active ? getCellStyle(field, activeCell.row, activeCell.col) : null;
+
+        bar.querySelectorAll('[data-table-format]').forEach(function (button) {
+            button.disabled = !active;
+
+            const action = button.dataset.tableFormat;
+            const on = active && (
+                action === 'bold' ? style.bold :
+                action === 'italic' ? style.italic :
+                style.align === action
+            );
+
+            button.classList.toggle('active', !!on);
+            button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+
+    // เรียกว่าตอนโฟกัสช่องในตาราง (จาก app.js)
+    page.setActiveTableCell = function (field, row, col) {
+        activeCell = {
+            field: field,
+            row: Number(row),
+            col: Number(col)
+        };
+
+        updateFormatBar(field);
+    };
+
+    // เรียกว่าตอนกดปุ่มจัดรูปแบบ (จาก app.js) — action = left/center/right/bold/italic
+    page.applyTableFormat = function (field, action) {
+        if (!activeCell || activeCell.field !== field) return;
+
+        const row = activeCell.row;
+        const col = activeCell.col;
+        const style = getCellStyle(field, row, col);
+
+        if (action === 'bold') {
+            style.bold = !style.bold;
+        } else if (action === 'italic') {
+            style.italic = !style.italic;
+        } else if (action === 'left' || action === 'center' || action === 'right') {
+            style.align = action;
+        } else {
+            return;
+        }
+
+        const rows = tableCellStyles[field];
+
+        if (!rows || !rows[row]) return;
+        rows[row][col] = style;
+
+        // อัปเดตช่องที่แสดงอยู่ทันที ไม่วาดตารางใหม่ (จะได้ไม่เสียโฟกัสระหว่างพิมพ์)
+        scope.FieldTypes.applyCellStyleToInput(
+            findTableCellInput(field, row, col),
+            style
+        );
+
+        updateFormatBar(field);
+    };
 
     page.setTableCell = function (field, rowIndex, colIndex, value) {
         const rows = normalizeRows(field);
@@ -197,10 +335,15 @@
     };
 
     page.addTableRow = function (field) {
+        const schema = tableSchema(field);
         const rows = normalizeRows(field);
 
-        rows.push(emptyRow(tableSchema(field)));
+        rows.push(emptyRow(schema));
         normalizeSpans(field, rows);
+
+        // เพิ่มแถวรูปแบบว่าง (ท้ายสุด) ให้ตรงกับแถวข้อมูลใหม่
+        if (Array.isArray(tableCellStyles[field])) tableCellStyles[field].push([]);
+        normalizeCellStyles(field, rows);
 
         renderTable(field);
     };
@@ -220,6 +363,13 @@
         }
 
         normalizeSpans(field, rows);
+
+        // ย้ายแถวรูปแบบตามแถวข้อมูลที่ถูกลบ
+        if (Array.isArray(tableCellStyles[field])) tableCellStyles[field].splice(index, 1);
+        normalizeCellStyles(field, rows);
+
+        if (activeCell && activeCell.field === field) activeCell = null;
+
         renderTable(field);
     };
 
@@ -260,6 +410,13 @@
         merged.splice(group + 1, 1);
 
         spans[index] = merged;
+
+        // ช่องที่ถูกผสานหายไป — ล้างรูปแบบของช่องนั้น (ใช้รูปแบบของช่องแรกของกลุ่ม)
+        const mergeStyles = tableCellStyles[field] && tableCellStyles[field][index];
+        if (mergeStyles) mergeStyles[nextStart] = scope.FieldTypes.normalizeCellStyle(null);
+
+        if (activeCell && activeCell.field === field) activeCell = null;
+
         renderTable(field);
     };
 
@@ -292,6 +449,16 @@
             .slice(0, group)
             .concat(separated, list.slice(group + 1));
 
+        // ช่องที่เพิ่งแยกออกกลับไปเป็นรูปแบบตั้งต้น (ช่องแรกคงรูปแบบเดิมไว้)
+        const unmergeStyles = tableCellStyles[field] && tableCellStyles[field][index];
+        if (unmergeStyles) {
+            for (let i = 1; i < count; i++) {
+                unmergeStyles[start + i] = scope.FieldTypes.normalizeCellStyle(null);
+            }
+        }
+
+        if (activeCell && activeCell.field === field) activeCell = null;
+
         renderTable(field);
     };
 
@@ -311,6 +478,12 @@
                 // ขนาดกลุ่มช่องของแต่ละแถว (1 = ไม่ผสาน)
                 rowSpans: (tableSpans[field] || []).map(function (list) {
                     return list.slice();
+                }),
+                // รูปแบบของแต่ละช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง)
+                cellStyles: (tableCellStyles[field] || []).map(function (styleRow) {
+                    return styleRow.map(function (style) {
+                        return scope.FieldTypes.normalizeCellStyle(style);
+                    });
                 })
             };
         });
@@ -327,6 +500,12 @@
         Object.keys(tableSpans).forEach(function (field) {
             delete tableSpans[field];
         });
+
+        Object.keys(tableCellStyles).forEach(function (field) {
+            delete tableCellStyles[field];
+        });
+
+        activeCell = null;
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -429,6 +608,12 @@
 
             tableSpans[field] = rows.map(function (_, index) {
                 return scope.FieldTypes.normalizeRowSpans(storedSpans[index], schema.columns.length);
+            });
+
+            const storedStyles = Array.isArray(spec.cellStyles) ? spec.cellStyles : [];
+
+            tableCellStyles[field] = rows.map(function (_, index) {
+                return scope.FieldTypes.normalizeCellStyleRow(storedStyles[index], schema.columns.length);
             });
 
             renderTable(field);

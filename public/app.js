@@ -990,6 +990,28 @@
                     return;
                 }
 
+                // ปุ่มจัดรูปแบบช่องของตาราง (หน้ารายงาน)
+                const formatBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-table-format]')
+                        : null;
+
+                if (formatBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.applyTableFormat) {
+
+                        report.applyTableFormat(
+                            formatBtn.dataset.tableFormatField,
+                            formatBtn.dataset.tableFormat
+                        );
+                    }
+
+                    return;
+                }
+
                 const target =
                     event.target;
 
@@ -1165,6 +1187,79 @@
 
                     onDeleteTemplate(
                         recordId
+                    );
+                }
+            }
+        );
+
+        // โฟกัสช่องในตาราง = เลือกช่องนั้นให้แถบจัดรูปแบบทำงานด้วย
+        mainEl.addEventListener(
+            'focusin',
+            function (event) {
+
+                const target =
+                    event.target;
+
+                if (
+                    !target ||
+                    !target.dataset ||
+                    target.dataset.tableInput === undefined
+                ) {
+                    return;
+                }
+
+                const report =
+                    getComponent(DEFAULT_PAGE);
+
+                if (report.setActiveTableCell) {
+
+                    report.setActiveTableCell(
+                        target.dataset.tableInput,
+                        Number(target.dataset.tableRow),
+                        Number(target.dataset.tableCol)
+                    );
+                }
+            }
+        );
+
+        // ลัดคีย์จัดรูปแบบช่องในตาราง: Ctrl+B = ตัวหนา, Ctrl+I = ตัวเอียง
+        mainEl.addEventListener(
+            'keydown',
+            function (event) {
+
+                const target =
+                    event.target;
+
+                if (
+                    !target ||
+                    !target.dataset ||
+                    target.dataset.tableInput === undefined
+                ) {
+                    return;
+                }
+
+                const key =
+                    String(
+                        event.key || ''
+                    ).toLowerCase();
+
+                if (
+                    !(event.ctrlKey || event.metaKey) ||
+                    (key !== 'b' && key !== 'i')
+                ) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                const report =
+                    getComponent(DEFAULT_PAGE);
+
+                if (report.applyTableFormat) {
+
+                    report.applyTableFormat(
+                        target.dataset.tableInput,
+                        key === 'b' ? 'bold' : 'italic'
                     );
                 }
             }

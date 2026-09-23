@@ -659,9 +659,47 @@
         });
     }
 
+    // ── รูปแบบข้อความในช่องตาราง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง) ──
+    //
+    // ค่าตั้งต้น = ชิดซ้าย ไม่หนา ไม่เอียง
+    // เก็บรูปแบบแยกจากข้อความ (ดูเจาะจงที่ช่อง = แถว + คอลัมน์)
+    // ข้อความยังเป็น string เหมือนเดิม เพื่อให้การแทนค่า/ประวัติทำงานเหมือนเก่า
+    function normalizeCellStyle(style) {
+        const raw = style && typeof style === 'object' ? style : {};
+
+        return {
+            align: raw.align === 'center' || raw.align === 'right' ? raw.align : 'left',
+            bold: raw.bold === true,
+            italic: raw.italic === true
+        };
+    }
+
+    // แถวของรูปแบบ — คืนความยาวเท่าจำนวนคอลัมน์เสมอ (คอลัมน์ที่ไม่มีค่า = รูปแบบตั้งต้น)
+    function normalizeCellStyleRow(styleRow, columnCount) {
+        const list = Array.isArray(styleRow) ? styleRow : [];
+        const styles = [];
+
+        for (let i = 0; i < columnCount; i++) {
+            styles.push(normalizeCellStyle(list[i]));
+        }
+
+        return styles;
+    }
+
+    // แสดงรูปแบบบนช่องกรอกทันที (ไม่ต้องวาดตารางใหม่ จะได้ไม่เสียโฟกัสระหว่างพิมพ์)
+    function applyCellStyleToInput(input, style) {
+        if (!input) return;
+
+        const cellStyle = normalizeCellStyle(style);
+
+        input.style.textAlign = cellStyle.align;
+        input.style.fontWeight = cellStyle.bold ? '700' : '';
+        input.style.fontStyle = cellStyle.italic ? 'italic' : '';
+    }
+
     // input ของหนึ่งช่องในตาราง
     // ใช้ data-table-input ไม่ใช่ data-field เพื่อไม่ให้ปนกับค่าของ type
-    function createTableCellInput(field, rowIndex, colIndex, value, placeholder) {
+    function createTableCellInput(field, rowIndex, colIndex, value, placeholder, style) {
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'table-cell-input';
@@ -671,6 +709,7 @@
         input.autocomplete = 'off';
         input.placeholder = placeholder || '';
         input.value = value == null ? '' : String(value);
+        applyCellStyleToInput(input, style);
         return input;
     }
 
@@ -734,10 +773,12 @@
     }
 
     // แถวข้อมูล 1 แถว (แยกเป็นกลุ่มช่องตาม spans)
-    function createTableDataRow(field, schema, row, rowIndex, spans) {
+    // styleRow = รูปแบบของแต่ละช่องในแถวนี้ (จัดตำแหน่ง / ตัวหนา / ตัวเอียง)
+    function createTableDataRow(field, schema, row, rowIndex, spans, styleRow) {
         const tr = document.createElement('tr');
 
         const groups = normalizeRowSpans(spans, schema.columns.length);
+        const styles = normalizeCellStyleRow(styleRow, schema.columns.length);
 
         let columnIndex = 0;
 
@@ -757,7 +798,8 @@
                     rowIndex,
                     columnIndex,
                     row[columnIndex],
-                    schema.columns[columnIndex]
+                    schema.columns[columnIndex],
+                    styles[columnIndex]
                 )
             );
 
@@ -830,8 +872,58 @@
         return tr;
     }
 
+    // ── แถบจัดรูปแบบช่องของตาราง (หน้ารายงาน) ──
+    //
+    // ทำงานกับ "ช่องที่เลือกอยู่" (ช่องที่เพิ่งโฟกัสล่าสุด) — กดปุ่มแล้วแก้ช่องนั้น
+    // ปุ่ม disabled จนกว่าจะเลือกช่อง เพื่อไม่ให้สับสนว่าจะแก้ช่องไหน
+    // ใช้ data-table-format-field (ไม่ใช่ data-table-field) เพื่อไม่ให้ปนกับตัวตาราง
+    function createTableFormatBar(field) {
+        const bar = document.createElement('div');
+        bar.className = 'table-formatbar';
+        bar.dataset.tableFormatBar = field;
+
+        const label = document.createElement('span');
+        label.className = 'table-formatbar-label';
+        label.textContent = 'จัดรูปแบบช่องที่เลือก:';
+        bar.appendChild(label);
+
+        const alignGroup = document.createElement('div');
+        alignGroup.className = 'table-format-group';
+
+        const styleGroup = document.createElement('div');
+        styleGroup.className = 'table-format-group';
+
+        const buttons = [
+            { group: alignGroup, action: 'left', text: 'ชิดซ้าย', title: 'จัดข้อความชิดซ้าย', className: '' },
+            { group: alignGroup, action: 'center', text: 'กึ่งกลาง', title: 'จัดข้อความกึ่งกลาง', className: '' },
+            { group: alignGroup, action: 'right', text: 'ชิดขวา', title: 'จัดข้อความชิดขวา', className: '' },
+            { group: styleGroup, action: 'bold', text: 'B', title: 'ตัวหนา (Ctrl+B)', className: 'table-format-bold' },
+            { group: styleGroup, action: 'italic', text: 'I', title: 'ตัวเอียง (Ctrl+I)', className: 'table-format-italic' }
+        ];
+
+        buttons.forEach(function (item) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className =
+                'table-format-btn' + (item.className ? ' ' + item.className : '');
+            button.dataset.tableFormat = item.action;
+            button.dataset.tableFormatField = field;
+            button.textContent = item.text;
+            button.title = item.title;
+            button.setAttribute('aria-label', item.title);
+            button.setAttribute('aria-pressed', 'false');
+            button.disabled = true;
+            item.group.appendChild(button);
+        });
+
+        bar.appendChild(alignGroup);
+        bar.appendChild(styleGroup);
+        return bar;
+    }
+
     // สร้างตารางของหน้ารายงาน ตามโครงที่ตั้งไว้ในหน้า Template Configuration
     // rows = แถวข้อมูล, spans = ขนาดกลุ่มช่องของแต่ละแถว
+    // styles = รูปแบบของแต่ละช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง)
     // (แถวรวมยอดทำได้ด้วยการผสานช่องในแถวข้อมูลแล้วพิมพ์ข้อความเอง)
     function createTableControl(field, options) {
         const opts = options || {};
@@ -843,6 +935,7 @@
                 : [emptyTableRow(schema)];
 
         const spans = Array.isArray(opts.spans) ? opts.spans : [];
+        const styleRows = Array.isArray(opts.styles) ? opts.styles : [];
 
         const wrapper = document.createElement('div');
         wrapper.className = 'field-control table-field';
@@ -862,13 +955,14 @@
 
         rows.forEach(function (row, rowIndex) {
             tbody.appendChild(
-                createTableDataRow(field, schema, row, rowIndex, spans[rowIndex])
+                createTableDataRow(field, schema, row, rowIndex, spans[rowIndex], styleRows[rowIndex])
             );
         });
 
         table.appendChild(tbody);
 
         scroller.appendChild(table);
+        wrapper.appendChild(createTableFormatBar(field));
         wrapper.appendChild(scroller);
 
         const actions = document.createElement('div');
@@ -946,6 +1040,10 @@
         resetTableSchemas: resetTableSchemas,
         emptyTableRow: emptyTableRow,
         normalizeRowSpans: normalizeRowSpans,
+        normalizeCellStyle: normalizeCellStyle,
+        normalizeCellStyleRow: normalizeCellStyleRow,
+        applyCellStyleToInput: applyCellStyleToInput,
+        createTableFormatBar: createTableFormatBar,
         startColumnOf: startColumnOf,
         createTableControl: createTableControl,
         createFieldControl: createFieldControl,

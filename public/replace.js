@@ -641,8 +641,37 @@
         return props;
     }
 
+    // รูปแบบข้อความในช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง) — ค่าตั้งต้นชิดซ้าย ไม่หนา ไม่เอียง
+    function normalizeCellStyle(style) {
+        const raw = style && typeof style === 'object' ? style : {};
+
+        return {
+            align: raw.align === 'center' || raw.align === 'right' ? raw.align : 'left',
+            bold: raw.bold === true,
+            italic: raw.italic === true
+        };
+    }
+
+    // เติมตัวหนา/ตัวเอียงลง rPr ตามลำดับที่ schema กำหนด
+    function styledRunProps(doc, runProps, style) {
+        if (!style || (!style.bold && !style.italic)) return runProps;
+
+        const props = runProps ? runProps.cloneNode(true) : el(doc, 'rPr');
+
+        if (style.bold && props.getElementsByTagNameNS(W_NS, 'b').length === 0) {
+            insertRunProp(props, el(doc, 'b'));
+        }
+
+        if (style.italic && props.getElementsByTagNameNS(W_NS, 'i').length === 0) {
+            insertRunProp(props, el(doc, 'i'));
+        }
+
+        return props;
+    }
+
     // ย่อหน้าในเซลล์ — ไม่เว้นระยะก่อน/หลัง เพื่อให้ตารางกระชับ
-    function buildCellParagraph(doc, text, runProps) {
+    // style = การจัดตำแหน่ง / ตัวหนา / ตัวเอียง ของช่องนั้น
+    function buildCellParagraph(doc, text, runProps, style) {
         const paragraph = el(doc, 'p');
         const paragraphProps = el(doc, 'pPr');
 
@@ -651,16 +680,27 @@
         setVal(spacing, 'after', 0);
         paragraphProps.appendChild(spacing);
 
-        if (runProps) {
-            paragraphProps.appendChild(runProps.cloneNode(true));
+        const cellStyle = normalizeCellStyle(style);
+
+        // w:jc อยู่หลัง spacing และก่อน rPr ตามลำดับของ pPr ใน schema
+        if (cellStyle.align === 'center' || cellStyle.align === 'right') {
+            const jc = el(doc, 'jc');
+            setVal(jc, 'val', cellStyle.align);
+            paragraphProps.appendChild(jc);
+        }
+
+        const styled = styledRunProps(doc, runProps, cellStyle);
+
+        if (styled) {
+            paragraphProps.appendChild(styled.cloneNode(true));
         }
 
         paragraph.appendChild(paragraphProps);
 
         const run = el(doc, 'r');
 
-        if (runProps) {
-            run.appendChild(runProps.cloneNode(true));
+        if (styled) {
+            run.appendChild(styled.cloneNode(true));
         }
 
         const textNode = el(doc, 't');
@@ -672,7 +712,8 @@
     }
 
     // เซลล์ 1 ช่อง (gridSpan > 1 = รวมช่องกับช่องติดกัน)
-    function buildCell(doc, text, runProps, width, gridSpan) {
+    // style = จัดตำแหน่ง/ตัวหนา/ตัวเอียง ของช่องนั้น
+    function buildCell(doc, text, runProps, width, gridSpan, style) {
         const cell = el(doc, 'tc');
         const props = el(doc, 'tcPr');
 
@@ -689,7 +730,7 @@
         }
 
         cell.appendChild(props);
-        cell.appendChild(buildCellParagraph(doc, text, runProps));
+        cell.appendChild(buildCellParagraph(doc, text, runProps, style));
 
         return cell;
     }
@@ -787,20 +828,28 @@
         const headerProps = boldRunProps(doc, runProps);
 
         columns.forEach(function (name) {
-            header.appendChild(buildCell(doc, name, headerProps, width, 1));
+            // หัวตารางใช้ฟอนต์/ขนาดของ {{field}} และตัวหนา (ไม่ใช้รูปแบบรายช่อง)
+        header.appendChild(buildCell(doc, name, headerProps, width, 1, null));
         });
 
         table.appendChild(header);
 
         // ── แถวข้อมูล (ช่องที่ผสานกันจะกลายเป็นช่องเดียวตาม w:gridSpan) ──
+        const cellStyles = Array.isArray(spec.cellStyles) ? spec.cellStyles : [];
+
         rows.forEach(function (row, rowIndex) {
             const tr = el(doc, 'tr');
+            const styleRow = cellStyles[rowIndex];
 
             let columnIndex = 0;
 
             normalizeRowSpans(rowSpans[rowIndex], columns.length).forEach(function (span) {
+                const style = normalizeCellStyle(
+                    Array.isArray(styleRow) ? styleRow[columnIndex] : null
+                );
+
                 tr.appendChild(
-                    buildCell(doc, row[columnIndex], runProps, width, span)
+                    buildCell(doc, row[columnIndex], runProps, width, span, style)
                 );
 
                 columnIndex += span;

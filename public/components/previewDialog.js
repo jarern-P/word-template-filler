@@ -229,6 +229,17 @@
         return list.length > 0 && sum === columnCount ? list : separated;
     }
 
+    // รูปแบบข้อความในช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง) — ค่าตั้งต้นชิดซ้าย
+    function normalizeCellStyle(style) {
+        const raw = style && typeof style === 'object' ? style : {};
+
+        return {
+            align: raw.align === 'center' || raw.align === 'right' ? raw.align : 'left',
+            bold: raw.bold === true,
+            italic: raw.italic === true
+        };
+    }
+
     // วาดตารางแบบง่าย: หัวคอลัมน์ + แถวข้อมูล (ช่องที่ผสานแสดงเป็นช่องเดียว)
     function renderTable(spec) {
         const table = document.createElement('table');
@@ -251,9 +262,11 @@
 
         const tbody = document.createElement('tbody');
         const rowSpans = Array.isArray(spec.rowSpans) ? spec.rowSpans : [];
+        const cellStyles = Array.isArray(spec.cellStyles) ? spec.cellStyles : [];
 
         rows.forEach(function (row, rowIndex) {
             const tr = document.createElement('tr');
+            const styleRow = Array.isArray(cellStyles[rowIndex]) ? cellStyles[rowIndex] : [];
 
             let columnIndex = 0;
 
@@ -262,6 +275,15 @@
                 td.colSpan = span;
                 td.textContent =
                     row && row[columnIndex] != null ? String(row[columnIndex]) : '';
+
+                const style = normalizeCellStyle(styleRow[columnIndex]);
+
+                if (style.align === 'center' || style.align === 'right') {
+                    td.style.textAlign = style.align;
+                }
+
+                if (style.bold) td.style.fontWeight = '700';
+                if (style.italic) td.style.fontStyle = 'italic';
 
                 tr.appendChild(td);
                 columnIndex += span;
