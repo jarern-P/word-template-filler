@@ -1,7 +1,8 @@
 // Suggest Menu - popup เดาคำภาษาไทยขณะพิมพ์ (กด Tab หรือ Enter เพื่อใช้คำที่เลือก)
 //
-// ทำงานกับช่องกรอกข้อความของหน้ารายงาน ([data-field]) และช่อง placeholder
-// ของหน้า Template Configuration ([data-placeholder-field])
+// ทำงานกับช่องกรอกข้อความของหน้ารายงาน ([data-field]), ช่อง input ในตาราง
+// ([data-table-input]) และช่อง placeholder ของหน้า Template Configuration
+// ([data-placeholder-field])
 //
 // คีย์บอร์ด
 //   Tab          = ใช้คำที่เลือก (ถ้าเปิด popup อยู่) — popup จะกิน Tab ไว้
@@ -47,7 +48,16 @@
         if (input.dataset.currencyInput === '1') return false;
         if (input.dataset.dateInput === '1') return false;
 
-        if (!input.dataset.field && !input.dataset.placeholderField) return false;
+        // ช่อง input ในตารางของหน้ารายงานก็แนะนำคำได้เหมือนช่องอื่น
+        const isTableCell = input.dataset.tableInput !== undefined;
+
+        if (
+            !isTableCell &&
+            !input.dataset.field &&
+            !input.dataset.placeholderField
+        ) {
+            return false;
+        }
 
         return isTextLike(input);
     }

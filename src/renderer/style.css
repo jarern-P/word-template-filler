@@ -1805,6 +1805,78 @@ button.danger:hover {
     gap: 8px;
 }
 
+/* ช่องสัดส่วนความกว้าง — แคบกว่าช่องชื่อคอลัมน์ */
+.table-cols.table-widths {
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+}
+
+.field .table-col-width {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 14px;
+}
+
+/* ── ตัวอย่างสัดส่วน: ลากขอบระหว่างคอลัมน์เพื่อปรับความกว้าง ── */
+
+.table-ratio-preview {
+    display: flex;
+    align-items: stretch;
+    height: 44px;
+    padding: 4px;
+    background: var(--surface);
+    border: 1px solid var(--line-input);
+    border-radius: var(--radius-sm);
+}
+
+.table-ratio-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-radius: var(--radius-sm);
+    transition: background 0.15s ease;
+}
+
+/* คอลัมน์ถัดจากที่จับต้องติดกันพอดี — ลบมุมโค้งด้านซ้ายของ cell ที่ตามหลัง handle */
+.table-ratio-cell + .table-ratio-handle + .table-ratio-cell {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.table-ratio-handle {
+    flex: 0 0 8px;
+    cursor: col-resize;
+    touch-action: none;
+    background: var(--pink-200);
+    transition: background 0.15s ease;
+}
+
+.table-ratio-handle:hover,
+.table-ratio-handle:focus-visible {
+    background: var(--pink-500);
+    outline: none;
+}
+
+.table-ratio-handle:focus-visible {
+    box-shadow: var(--focus-ring);
+}
+
+/* ลากอยู่: เคอร์เซอร์ col-resize ทั้งหน้า + กันไฮไลต์ข้อความ */
+body.table-ratio-dragging {
+    cursor: col-resize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+body.table-ratio-dragging .table-ratio-handle {
+    background: var(--pink-500);
+}
+
 .table-config .hint {
     margin: 0;
 }
@@ -1859,7 +1931,10 @@ button.danger:hover {
     font-weight: 700;
     color: var(--pink-700);
     background: var(--pink-50);
-    white-space: nowrap;
+    /* หัวคอลัมน์ข้อความยาวขึ้นบรรทัดใหม่ได้ (wrap) — ไม่บังคับบรรทัดเดียว */
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .field-table tbody tr:last-child td {
@@ -2054,6 +2129,9 @@ button.danger:hover {
     font-weight: 700;
     color: var(--pink-700);
     background: var(--pink-50);
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 /* ──────────────────────────────────────────────────────────────

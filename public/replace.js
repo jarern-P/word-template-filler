@@ -775,7 +775,35 @@
 
         const rowSpans = Array.isArray(spec.rowSpans) ? spec.rowSpans : [];
 
-        const width = contentWidth / columns.length;
+        // สัดส่วนความกว้างของแต่ละคอลัมน์ (ตั้งไว้ที่หน้า Template Configuration)
+        // ค่าไม่ถูกต้อง/ไม่มี = ใช้สัดส่วน 1 (แบ่งเท่ากัน)
+        const ratios = columns.map(function (_, index) {
+            const value = Number(
+                Array.isArray(spec.widths) ? spec.widths[index] : null
+            );
+
+            return isFinite(value) && value > 0 ? value : 1;
+        });
+
+        const ratioSum = ratios.reduce(function (all, value) {
+            return all + value;
+        }, 0) || columns.length;
+
+        // แบ่งความกว้างเนื้อหาตามสัดส่วน แล้วปัดเศษให้รวมเท่าความกว้างเดิมพอดี
+        // (คอลัมน์สุดท้ายรับเศษที่เหลือ กันความกว้างรวมเพี้ยนจากการปัด)
+        const columnWidths = [];
+        let used = 0;
+
+        ratios.forEach(function (ratio, index) {
+            const isLast = index === ratios.length - 1;
+
+            const columnWidth = isLast
+                ? contentWidth - used
+                : Math.round(contentWidth * ratio / ratioSum);
+
+            columnWidths.push(Math.max(columnWidth, 1));
+            used += columnWidths[index];
+        });
 
         const table = el(doc, 'tbl');
 
@@ -812,12 +840,12 @@
 
         table.appendChild(tableProps);
 
-        // ── tblGrid (ความกว้างเท่ากันทุกคอลัมน์) ──
+        // ── tblGrid (ความกว้างตามสัดส่วนที่ตั้งไว้) ──
         const grid = el(doc, 'tblGrid');
 
-        columns.forEach(function () {
+        columns.forEach(function (_, index) {
             const column = el(doc, 'gridCol');
-            setVal(column, 'w', Math.round(width));
+            setVal(column, 'w', columnWidths[index]);
             grid.appendChild(column);
         });
 
@@ -827,9 +855,9 @@
         const header = el(doc, 'tr');
         const headerProps = boldRunProps(doc, runProps);
 
-        columns.forEach(function (name) {
+        columns.forEach(function (name, index) {
             // หัวตารางใช้ฟอนต์/ขนาดของ {{field}} และตัวหนา (ไม่ใช้รูปแบบรายช่อง)
-        header.appendChild(buildCell(doc, name, headerProps, width, 1, null));
+        header.appendChild(buildCell(doc, name, headerProps, columnWidths[index], 1, null));
         });
 
         table.appendChild(header);
@@ -848,8 +876,15 @@
                     Array.isArray(styleRow) ? styleRow[columnIndex] : null
                 );
 
+                // ช่องที่ผสานกว้างเท่าผลรวมความกว้างของคอลัมน์ที่รวมกัน
+                const spanWidth = columnWidths
+                    .slice(columnIndex, columnIndex + span)
+                    .reduce(function (all, value) {
+                        return all + value;
+                    }, 0);
+
                 tr.appendChild(
-                    buildCell(doc, row[columnIndex], runProps, width, span, style)
+                    buildCell(doc, row[columnIndex], runProps, spanWidth, span, style)
                 );
 
                 columnIndex += span;

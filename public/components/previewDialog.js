@@ -241,6 +241,7 @@
     }
 
     // วาดตารางแบบง่าย: หัวคอลัมน์ + แถวข้อมูล (ช่องที่ผสานแสดงเป็นช่องเดียว)
+    // ความกว้างคอลัมน์ใช้สัดส่วน (ratio) ที่ตั้งไว้ที่หน้า Template Configuration
     function renderTable(spec) {
         const table = document.createElement('table');
         table.className = 'preview-table';
@@ -248,12 +249,36 @@
         const columns = Array.isArray(spec.columns) ? spec.columns : [];
         const rows = Array.isArray(spec.rows) ? spec.rows : [];
 
+        // colgroup กว้างตามสัดส่วน (ค่าไม่ถูกต้อง = 1 = แบ่งเท่ากัน)
+        const colGroup = document.createElement('colgroup');
+        const ratios = columns.map(function (_, index) {
+            const value = Number(
+                Array.isArray(spec.widths) ? spec.widths[index] : null
+            );
+
+            return isFinite(value) && value > 0 ? value : 1;
+        });
+        const ratioTotal = ratios.reduce(function (all, value) {
+            return all + value;
+        }, 0) || ratios.length;
+
+        ratios.forEach(function (ratio) {
+            const col = document.createElement('col');
+
+            col.style.width = (ratio / ratioTotal * 100) + '%';
+            colGroup.appendChild(col);
+        });
+
+        table.appendChild(colGroup);
+
         const thead = document.createElement('thead');
         const headRow = document.createElement('tr');
 
         columns.forEach(function (name, index) {
             const th = document.createElement('th');
             th.textContent = name || ('คอลัมน์ ' + (index + 1));
+            // หัวคอลัมน์ข้อความยาวขึ้นบรรทัดใหม่ได้ (wrap)
+            th.style.whiteSpace = 'normal';
             headRow.appendChild(th);
         });
 

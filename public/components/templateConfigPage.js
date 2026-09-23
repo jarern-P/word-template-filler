@@ -55,6 +55,7 @@
     //
     // - จำนวนคอลัมน์
     // - ชื่อหัวคอลัมน์ (1 ช่องต่อ 1 คอลัมน์)
+    // - สัดส่วนความกว้าง (1 ช่องต่อ 1 คอลัมน์ — เช่น 2 กับ 1 = กว้างเป็นสองเท่า)
     // (แถวรวมยอดให้ผสานช่องในหน้ารายงานแทน — เขียนเป็น w:gridSpan ในเอกสาร)
     //
     // โครงตารางเก็บไว้ที่ FieldTypes เพราะหน้ารายงานและตอนสร้างเอกสารใช้ด้วย
@@ -90,6 +91,25 @@
         cols.className = 'table-cols';
         cols.dataset.tableCols = field;
 
+        const widthsLabel = document.createElement('span');
+        widthsLabel.className = 'table-config-label';
+        widthsLabel.textContent =
+            'สัดส่วนความกว้างของคอลัมน์ (เช่น 2 กับ 1 = กว้างเป็นสองเท่า — เว้นว่าง = เท่ากันทุกคอลัมน์)';
+
+        const widths = document.createElement('div');
+        widths.className = 'table-cols table-widths';
+        widths.dataset.tableWidths = field;
+
+        // ตัวอย่างสัดส่วน — ลากขอบระหว่างคอลัมน์เพื่อปรับความกว้างได้เลย
+        const preview = document.createElement('div');
+        preview.className = 'table-ratio-preview';
+        preview.dataset.tablePreview = field;
+
+        const previewHint = document.createElement('p');
+        previewHint.className = 'hint';
+        previewHint.textContent =
+            'ตัวอย่างสัดส่วน — ลากขอบระหว่างคอลัมน์เพื่อปรับ หรือคลิกขอบแล้วกด ← / → ทีละ 0.1';
+
         const hint = document.createElement('p');
         hint.className = 'hint';
         hint.textContent =
@@ -107,6 +127,10 @@
         box.appendChild(countRow);
         box.appendChild(colsLabel);
         box.appendChild(cols);
+        box.appendChild(widthsLabel);
+        box.appendChild(widths);
+        box.appendChild(preview);
+        box.appendChild(previewHint);
         box.appendChild(hint);
         box.appendChild(usage);
 
@@ -251,13 +275,16 @@
         if (!form) return found;
 
         form.querySelectorAll(
-            '[data-table-config], [data-table-count], [data-table-cols]'
+            '[data-table-config], [data-table-count], [data-table-cols], ' +
+            '[data-table-widths], [data-table-preview]'
         ).forEach(function (node) {
             const data = node.dataset;
 
             if (data.tableConfig === field) found.box = node;
             else if (data.tableCount === field) found.count = node;
             else if (data.tableCols === field) found.cols = node;
+            else if (data.tableWidths === field) found.widths = node;
+            else if (data.tablePreview === field) found.preview = node;
         });
 
         return found;
@@ -283,6 +310,293 @@
             input.setAttribute('aria-label', 'ชื่อคอลัมน์ ' + (index + 1) + ' ของ ' + field);
             nodes.cols.appendChild(input);
         });
+    }
+
+    // สร้างช่องสัดส่วนความกว้างใหม่ทั้งชุด (เรียกพร้อมช่องชื่อคอลัมน์เสมอ)
+    function renderColumnWidthInputs(field, columns, widths) {
+        const nodes = tableNodes(field);
+        if (!nodes.widths) return;
+
+        nodes.widths.innerHTML = '';
+
+        columns.forEach(function (_, index) {
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '0.1';
+            input.step = '0.1';
+            input.className = 'table-col-width';
+            // ใช้ data-table-width (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
+            input.dataset.tableWidth = field;
+            input.dataset.tableWidthIndex = String(index);
+            input.autocomplete = 'off';
+            input.value = String(widths[index]);
+            input.placeholder = '1';
+            input.setAttribute(
+                'aria-label',
+                'สัดส่วนความกว้างคอลัมน์ ' + (index + 1) + ' ของ ' + field
+            );
+            nodes.widths.appendChild(input);
+        });
+
+        // ตัวอย่างสัดส่วนเดินตามค่าในช่อง (ไม่สร้างใหม่ จะได้ไม่สะดุดระหว่างลาก)
+        scheduleRatioPreview(field, columns);
+    }
+
+    // ── ตัวอย่างสัดส่วน (ลากขอบปรับความกว้างได้) ──
+    //
+    // แถบแนวนอนแบ่งตามสัดส่วนของแต่ละคอลัมน์ ระหว่างคอลัมน์มี "ที่จับ" ให้ลาก
+    // การลากย้ายเฉพาะขอบเส้นนั้น (คอลัมน์ซ้าย + ขวาสลับความกว้างกัน)
+    // ผลรวมสัดส่วนทั้งแถวจึงคงเดิมเสมอ — เห็นผลทันทีทั้งตัวอย่าง ช่องสัดส่วน และโครงตาราง
+    //
+    // ทำงานด้วยปุ่มลูกศรได้ด้วย (โฟกัสที่จับแล้วกด ← / → ทีละ 0.1)
+
+    const RATIO_STEP = 0.1;      // หน่วยเล็กสุดของการลาก/กดลูกศร
+    const RATIO_MIN_TENTHS = 1;  // สัดส่วนต่ำสุด = 0.1 (เก็บเป็นจำนวน 0.1)
+
+    // แสดงเลขสัดส่วนสั้น ๆ เช่น 1, 1.5, 2
+    function formatRatio(value) {
+        return String(Math.round(Number(value) * 10) / 10);
+    }
+
+    // ย้ายขอบที่ moveIndex (ระหว่างคอลัมน์ moveIndex กับ moveIndex + 1)
+    // เป็นจำนวน tenths หน่วย 0.1 — คอลัมน์ซ้าย+ขวาสลับกัน ผลรวมคงเดิม
+    // ย้ายไม่ได้ (คอลัมน์ใดจะติดลบ) = คืน null
+    function moveRatios(ratios, moveIndex, tenths) {
+        if (!(moveIndex >= 0 && moveIndex + 1 < ratios.length)) return null;
+
+        const left = Math.round(Number(ratios[moveIndex]) / RATIO_STEP);
+        const right = Math.round(Number(ratios[moveIndex + 1]) / RATIO_STEP);
+
+        let newLeft = left + tenths;
+        let newRight = right - tenths;
+
+        if (newLeft < RATIO_MIN_TENTHS) {
+            newRight += newLeft - RATIO_MIN_TENTHS;
+            newLeft = RATIO_MIN_TENTHS;
+        }
+
+        if (newRight < RATIO_MIN_TENTHS) {
+            newLeft += newRight - RATIO_MIN_TENTHS;
+            newRight = RATIO_MIN_TENTHS;
+        }
+
+        if (newLeft < RATIO_MIN_TENTHS || newRight < RATIO_MIN_TENTHS) return null;
+
+        const next = ratios.slice();
+
+        // ปัดเป็นทศนิยม 1 ตำแหน่ง กันเศษ floating point (เช่น 21 * 0.1 = 2.1000...05)
+        next[moveIndex] = Math.round(newLeft * RATIO_STEP * 10) / 10;
+        next[moveIndex + 1] = Math.round(newRight * RATIO_STEP * 10) / 10;
+
+        return next;
+    }
+
+    // เขียนสัดส่วนชุดใหม่ลงโครงตาราง (ผ่าน FieldTypes เหมือนการพิมพ์ในช่อง)
+    function setTableWidths(field, ratios) {
+        const schema = scope.FieldTypes.getTableSchema(field);
+
+        schema.widths = ratios;
+        scope.FieldTypes.setTableSchema(field, schema);
+    }
+
+    // สร้างแถบตัวอย่างใหม่ทั้งอัน (เรียกเมื่อจำนวนคอลัมน์เปลี่ยน)
+    function renderRatioPreview(field, columns, widths) {
+        const nodes = tableNodes(field);
+        if (!nodes.preview) return;
+
+        nodes.preview.innerHTML = '';
+
+        columns.forEach(function (_, index) {
+            const cell = document.createElement('div');
+            cell.className = 'table-ratio-cell';
+            cell.style.flexGrow = String(widths[index] || 1);
+
+            const label = document.createElement('span');
+            label.className = 'table-ratio-label';
+            label.textContent = formatRatio(widths[index]);
+
+            cell.appendChild(label);
+            nodes.preview.appendChild(cell);
+
+            // ที่จับอยู่ระหว่างคอลัมน์ (คอลัมน์สุดท้ายไม่มี)
+            if (index < columns.length - 1) {
+                nodes.preview.appendChild(
+                    createRatioHandle(field, index, widths)
+                );
+            }
+        });
+    }
+
+    // ที่จับ 1 อัน = ขอบระหว่างคอลัมน์ index กับ index + 1 (ลาก/กดลูกศรได้)
+    function createRatioHandle(field, index, widths) {
+        const handle = document.createElement('div');
+        handle.className = 'table-ratio-handle';
+        handle.tabIndex = 0;
+        handle.setAttribute('role', 'separator');
+        handle.setAttribute('aria-orientation', 'vertical');
+        handle.setAttribute(
+            'aria-label',
+            'ขอบระหว่างคอลัมน์ ' + (index + 1) + ' และ ' + (index + 2) + ' ของ ' + field +
+            ' — ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้าง'
+        );
+        updateRatioHandleAria(handle, widths, index);
+
+        handle.addEventListener('mousedown', function (event) {
+            startRatioDrag(field, index, handle, event);
+        });
+
+        handle.addEventListener('keydown', function (event) {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+
+            event.preventDefault();
+
+            nudgeRatio(field, index, event.key === 'ArrowLeft' ? -1 : 1);
+        });
+
+        return handle;
+    }
+
+    // ค่า aria-valuenow = % ความกว้างของคอลัมน์ซ้าย (อ่านด้วย screen reader ได้)
+    function updateRatioHandleAria(handle, widths, index) {
+        const total = widths.reduce(function (all, value) {
+            return all + Number(value);
+        }, 0);
+
+        handle.setAttribute(
+            'aria-valuemin', '0'
+        );
+        handle.setAttribute(
+            'aria-valuemax', '100'
+        );
+        handle.setAttribute(
+            'aria-valuenow',
+            String(Math.round(Number(widths[index]) / (total || 1) * 100))
+        );
+    }
+
+    // เริ่มลากขอบ — เก็บตำแหน่งเมาส์/สัดส่วนต้นไว้ แล้วอัปเดตตามระยะที่ลาก
+    // (อัปเดตเป็นสเต็ป 0.1 เท่านั้น จึงเขียน schema ไม่บ่อยเกินจำเป็น)
+    function startRatioDrag(field, moveIndex, handle, event) {
+        const track = handle.parentNode;
+
+        if (!track) return;
+
+        const startX = event.clientX;
+        const startRatios = scope.FieldTypes.getColumnWidths(
+            scope.FieldTypes.getTableSchema(field)
+        );
+        const totalStart = startRatios.reduce(function (all, value) {
+            return all + value;
+        }, 0) || startRatios.length;
+
+        // กว้าง 1 หน่วย (0.1 สัดส่วน) เท่ากับกี่พิกเซล ณ ตอนเริ่มลาก
+        const pxPerTenth = track.getBoundingClientRect().width * RATIO_STEP / totalStart;
+
+        if (!(pxPerTenth > 0)) return;
+
+        let appliedTenths = 0;
+
+        function onMove(moveEvent) {
+            const tenths = Math.round((moveEvent.clientX - startX) / pxPerTenth);
+
+            if (tenths === appliedTenths) return;
+
+            const next = moveRatios(startRatios, moveIndex, tenths);
+
+            if (!next) return;
+
+            appliedTenths = tenths;
+
+            setTableWidths(field, next);
+            syncRatioPreview(field, next);
+        }
+
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.classList.remove('table-ratio-dragging');
+        }
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+
+        // กันไฮไลต์ข้อความขณะลาก + เปลี่ยนเคอร์เซอร์ทั้งหน้าเป็น col-resize
+        event.preventDefault();
+        document.body.classList.add('table-ratio-dragging');
+    }
+
+    // กดลูกศรบนที่จับ = ย้ายขอบทีละ 0.1 (← ซ้ายเล็กลง, → ซ้ายกว้างขึ้น)
+    function nudgeRatio(field, moveIndex, tenths) {
+        const next = moveRatios(
+            scope.FieldTypes.getColumnWidths(scope.FieldTypes.getTableSchema(field)),
+            moveIndex,
+            tenths
+        );
+
+        if (!next) return;
+
+        setTableWidths(field, next);
+        syncRatioPreview(field, next);
+    }
+
+    // อัปเดตตัวอย่าง/ช่องสัดส่วนให้ตรงกับค่าใหม่ โดยไม่สร้าง element ใหม่
+    // (การลากเรียกบ่อย จึงแค่แก้ flex/เลข/ค่าในช่อง — โฟกัสค้างที่เดิม)
+    function syncRatioPreview(field, widths) {
+        const nodes = tableNodes(field);
+
+        if (!nodes.preview) return;
+
+        let cellIndex = 0;
+
+        nodes.preview.childNodes.forEach(function (node) {
+            if (!node.classList) return;
+
+            if (node.classList.contains('table-ratio-cell')) {
+                const ratio = widths[cellIndex];
+
+                node.style.flexGrow = String(ratio);
+
+                const label = node.querySelector('.table-ratio-label');
+
+                if (label) label.textContent = formatRatio(ratio);
+
+                cellIndex++;
+            } else if (node.classList.contains('table-ratio-handle')) {
+                updateRatioHandleAria(node, widths, Math.max(cellIndex - 1, 0));
+            }
+        });
+
+        // ช่องสัดส่วนเดินตาม (ค่าที่แสดงเป็นตัวเดียวกับในโครงตาราง)
+        // เว้นช่องที่กำลังโฟกัส — กำลังพิมพ์อยู่ เช่น "1." ห้ามแทนที่กลางคำ
+        if (nodes.widths) {
+            Array.prototype.forEach.call(
+                nodes.widths.querySelectorAll('input'),
+                function (input, index) {
+                    if (
+                        index < widths.length &&
+                        input !== document.activeElement
+                    ) {
+                        input.value = String(widths[index]);
+                    }
+                }
+            );
+        }
+    }
+
+    // เตรียมตัวอย่างสัดส่วนของ field — มีแถบอยู่แล้ว = อัปเดตเฉย ๆ ไม่สร้างใหม่
+    // (เรียกทุกครั้งที่วาดช่องสัดส่วน จะได้เห็นค่าตรงกันเสมอ)
+    function scheduleRatioPreview(field, columns) {
+        const nodes = tableNodes(field);
+        if (!nodes.preview) return;
+
+        const schema = scope.FieldTypes.getTableSchema(field);
+
+        if (nodes.preview.childNodes.length === columns.length * 2 - 1) {
+            syncRatioPreview(field, schema.widths);
+            return;
+        }
+
+        renderRatioPreview(field, columns, schema.widths);
     }
 
     // จำนวนที่ {{field}} ถูกวางไว้ในเอกสาร (นับเป็นย่อหน้า)
@@ -343,6 +657,7 @@
         if (nodes.count) nodes.count.value = String(schema.columns.length);
 
         renderColumnInputs(field, schema.columns);
+        renderColumnWidthInputs(field, schema.columns, schema.widths);
         renderTableUsage(field);
     }
 
@@ -410,6 +725,7 @@
     page.refreshTableConfig = renderTableConfig;
 
     // จำนวนคอลัมน์: ตัด/ต่อชื่อหัวคอลัมน์ให้ครบตามจำนวนใหม่
+    // (สัดส่วนความกว้างเดิมต้องคงอยู่ — คอลัมน์ใหม่ได้สัดส่วน 1)
     page.setTableCount = function (field, value) {
         const raw = String(value == null ? '' : value).trim();
 
@@ -421,13 +737,16 @@
             scope.FieldTypes.tableMaxColumns
         );
 
-        const columns = scope.FieldTypes.getTableSchema(field).columns.slice(0, count);
+        const schema = scope.FieldTypes.getTableSchema(field);
+        const columns = schema.columns.slice(0, count);
+        const widths = schema.widths.slice(0, count);
 
         while (columns.length < count) {
             columns.push('คอลัมน์ ' + (columns.length + 1));
+            widths.push(scope.FieldTypes.normalizeColumnRatio(null));
         }
 
-        scope.FieldTypes.setTableSchema(field, { columns: columns });
+        scope.FieldTypes.setTableSchema(field, { columns: columns, widths: widths });
 
         renderTableConfig(field);
     };
@@ -439,6 +758,19 @@
 
         schema.columns[index] = String(value == null ? '' : value);
         scope.FieldTypes.setTableSchema(field, schema);
+    };
+
+    // แก้สัดส่วนความกว้างของคอลัมน์หนึ่ง (เลขไม่ถูกต้อง = กลับเป็น 1)
+    page.setTableWidth = function (field, index, value) {
+        const schema = scope.FieldTypes.getTableSchema(field);
+
+        if (!(index >= 0 && index < schema.columns.length)) return;
+
+        schema.widths[index] = scope.FieldTypes.normalizeColumnRatio(value);
+        scope.FieldTypes.setTableSchema(field, schema);
+
+        // ตัวอย่างสัดส่วนเดินตามค่าที่พิมพ์ทันที (ช่องที่โฟกัสไม่ถูกแทนที่)
+        syncRatioPreview(field, scope.FieldTypes.getColumnWidths(schema));
     };
 
     // โครงตารางของทุก field ที่เป็น type table (บันทึกพร้อม template)

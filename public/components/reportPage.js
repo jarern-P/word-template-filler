@@ -474,6 +474,8 @@
 
             tables[field] = {
                 columns: schema.columns.slice(),
+                // สัดส่วนความกว้างของแต่ละคอลัมน์ (ตั้งไว้ที่หน้า Template Configuration)
+                widths: scope.FieldTypes.getColumnWidths(schema),
                 rows: normalizeRows(field),
                 // ขนาดกลุ่มช่องของแต่ละแถว (1 = ไม่ผสาน)
                 rowSpans: (tableSpans[field] || []).map(function (list) {

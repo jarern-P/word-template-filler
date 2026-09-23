@@ -586,8 +586,31 @@
     const DEFAULT_TABLE_COLUMNS = 3;
     const MAX_TABLE_COLUMNS = 12;
 
+    // สัดส่วนความกว้างเริ่มต้นของ 1 คอลัมน์ (เท่ากันทุกคอลัมน์)
+    // เก็บเป็นสัดส่วน (ratio) เช่น 2 กับ 1 = กว้างเป็นสองเท่าของอีกคอลัมน์
+    const DEFAULT_COLUMN_RATIO = 1;
+
     // โครงตารางของแต่ละ field (เป็นการตั้งค่า ไม่ใช่ข้อมูลที่ผู้ใช้กรอก)
     const tableSchemas = {};
+
+    // สัดส่วนความกว้างของคอลัมน์หนึ่ง (เลข >= 0, ว่าง/ไม่ถูกต้อง = ใช้ค่าเริ่มต้น)
+    function normalizeColumnRatio(value) {
+        const number = Number(String(value == null ? '' : value).trim());
+
+        return isFinite(number) && number > 0 ? number : DEFAULT_COLUMN_RATIO;
+    }
+
+    // รายการสัดส่วนต้องยาวเท่าจำนวนคอลัมน์ (ช่องที่หายไป = ค่าเริ่มต้น)
+    function normalizeColumnWidths(widths, columnCount) {
+        const list = Array.isArray(widths) ? widths : [];
+        const ratios = [];
+
+        for (let i = 0; i < columnCount; i++) {
+            ratios.push(normalizeColumnRatio(list[i]));
+        }
+
+        return ratios;
+    }
 
     function makeColumnNames(count) {
         const names = [];
@@ -601,7 +624,8 @@
 
     function defaultTableSchema() {
         return {
-            columns: makeColumnNames(DEFAULT_TABLE_COLUMNS)
+            columns: makeColumnNames(DEFAULT_TABLE_COLUMNS),
+            widths: normalizeColumnWidths(null, DEFAULT_TABLE_COLUMNS)
         };
     }
 
@@ -626,7 +650,10 @@
             columns = columns.slice(0, MAX_TABLE_COLUMNS);
         }
 
-        return { columns: columns };
+        return {
+            columns: columns,
+            widths: normalizeColumnWidths(schema.widths, columns.length)
+        };
     }
 
     function getTableSchema(field) {
@@ -657,6 +684,13 @@
         return normalizeTableSchema(schema).columns.map(function () {
             return '';
         });
+    }
+
+    // สัดส่วนความกว้างของคอลัมน์ (เรียงให้ยาวเท่าจำนวนคอลัมน์เสมอ)
+    function getColumnWidths(schema) {
+        const normalized = normalizeTableSchema(schema);
+
+        return normalizeColumnWidths(normalized.widths, normalized.columns.length);
     }
 
     // ── รูปแบบข้อความในช่องตาราง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง) ──
@@ -861,6 +895,8 @@
         schema.columns.forEach(function (name, index) {
             const th = document.createElement('th');
             th.textContent = name || ('คอลัมน์ ' + (index + 1));
+            // ข้อความยาวขึ้นบรรทัดใหม่ได้ (wrap) ไม่ตัดทิ้ง
+            th.className = 'table-col-header';
             tr.appendChild(th);
         });
 
@@ -870,6 +906,25 @@
         tr.appendChild(th);
 
         return tr;
+    }
+
+    // กลุ่มความกว้างคอลัมน์ (colgroup) ของตาราง HTML — กว้างตามสัดส่วนที่ตั้งไว้
+    // (เว้นว่าง/เท่ากันทุกคอลัมน์ = แบ่งเท่า ๆ กันอัตโนมัติ)
+    function createTableColGroup(schema) {
+        const colGroup = document.createElement('colgroup');
+        const ratios = getColumnWidths(schema);
+        const total = ratios.reduce(function (all, value) {
+            return all + value;
+        }, 0) || ratios.length;
+
+        ratios.forEach(function (ratio) {
+            const col = document.createElement('col');
+
+            col.style.width = (ratio / total * 100) + '%';
+            colGroup.appendChild(col);
+        });
+
+        return colGroup;
     }
 
     // ── แถบจัดรูปแบบช่องของตาราง (หน้ารายงาน) ──
@@ -946,6 +1001,8 @@
 
         const table = document.createElement('table');
         table.className = 'field-table';
+
+        table.appendChild(createTableColGroup(schema));
 
         const thead = document.createElement('thead');
         thead.appendChild(createTableHeaderRow(schema));
@@ -1034,6 +1091,8 @@
         resetCurrencyModes: resetCurrencyModes,
         tableDefaultColumns: DEFAULT_TABLE_COLUMNS,
         tableMaxColumns: MAX_TABLE_COLUMNS,
+        normalizeColumnRatio: normalizeColumnRatio,
+        getColumnWidths: getColumnWidths,
         getTableSchema: getTableSchema,
         setTableSchema: setTableSchema,
         setTableSchemas: setTableSchemas,
