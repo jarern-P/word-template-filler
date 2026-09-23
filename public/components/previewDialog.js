@@ -6,8 +6,11 @@
 // - ค่าที่กรอกแล้ว      = ไฮไลต์สีชมพู (ชี้เมาส์เห็นชื่อ field)
 // - field ที่ยังไม่ได้กรอก = แสดง {{field}} สีเตือน ให้เห็นว่าเอกสารยังไม่ครบ
 //
-// ตั้งใจไม่แสดงรูปแบบ/ตาราง/ฟอนต์ เพราะการเรนเดอร์ Word ให้เหมือนจริงต้องใช้ไลบรารีเพิ่ม
+// ตั้งใจไม่แสดงรูปแบบ/ฟอนต์ เพราะการเรนเดอร์ Word ให้เหมือนจริงต้องใช้ไลบรารีเพิ่ม
 // (ตัวอย่างนี้มีไว้ตรวจว่า "ค่าลงถูกช่องหรือไม่" ไม่ใช่ตรวจหน้าตาเอกสาร)
+//
+// field ที่เป็น type Table (ย่อหน้ามีแต่ {{field}}) จะวาดเป็นตารางให้เห็นคอลัมน์ แถว
+// และช่องที่ผสานกัน — ตรงกับตาราง Word ที่จะถูกสร้างลงเอกสาร
 (function (scope) {
     'use strict';
 
@@ -26,7 +29,8 @@
         '    <div id="previewBody" class="preview-body"></div>',
         '    <div id="previewNotes" class="preview-notes"></div>',
         '    <p class="preview-foot">ตัวอย่างนี้แสดงเฉพาะข้อความตามลำดับย่อหน้า ' +
-            'ไม่แสดงตาราง ฟอนต์ หรือระยะห่าง — ตรวจแล้วกด "Download DOCX" เพื่อบันทึกไฟล์</p>',
+            '(ตารางแสดงแบบง่าย ไม่มีฟอนต์/ระยะห่างของเอกสาร) — ' +
+            'ตรวจแล้วกด "Download DOCX" เพื่อบันทึกไฟล์</p>',
         '</div>'
     ].join('\n');
 
@@ -120,9 +124,11 @@
     // ──────────────────────────────────────────────────────────────
 
     // ได้ทั้งข้อความคงที่ ช่วงที่เป็นค่าที่จะเขียนลงเอกสาร และ field ที่ยังไม่ได้กรอก
-    function splitSegments(text, values) {
+    // skipFields = field ที่เป็นตาราง (ถูกวาดเป็นตารางแยกอยู่แล้ว ไม่ต้องแทนในข้อความ)
+    function splitSegments(text, values, skipFields) {
         const segments = [];
         const regex = new RegExp(FIELD_PATTERN.source, 'g');
+        const skip = skipFields || [];
 
         let lastIndex = 0;
         let match;
@@ -133,6 +139,11 @@
             }
 
             const field = match[1];
+
+            if (skip.indexOf(field) !== -1) {
+                lastIndex = match.index + match[0].length;
+                continue;
+            }
             const raw = values ? values[field] : undefined;
             const value = (raw === null || raw === undefined) ? '' : String(raw);
 
@@ -169,6 +180,103 @@
             : segment.field;
 
         return mark;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ตาราง (type = table)
+    // ──────────────────────────────────────────────────────────────
+
+    // field ที่เป็นตารางและมีแถวแล้วในบรรทัดนี้ (มีแถว = จะถูกวาดเป็นตารางจริง)
+    // field ที่ตั้งเป็นตารางแต่ยังไม่มีแถว ปล่อยให้ขึ้นเป็น "ยังไม่ได้กรอก" ตามเดิม
+    function lineTableFields(line, tables) {
+        if (!tables) return [];
+
+        const regex = new RegExp(FIELD_PATTERN.source, 'g');
+        const fields = [];
+
+        let match;
+
+        while ((match = regex.exec(line || '')) !== null) {
+            const spec = tables[match[1]];
+
+            if (!spec || fields.indexOf(match[1]) !== -1) continue;
+            if (!Array.isArray(spec.rows) || spec.rows.length === 0) continue;
+
+            fields.push(match[1]);
+        }
+
+        return fields;
+    }
+
+    // ขนาดกลุ่มช่องของแถว (1 = ไม่ผสาน) ให้ตรงกับจำนวนคอลัมน์เสมอ
+    function normalizeSpans(spans, columnCount) {
+        const list = Array.isArray(spans)
+            ? spans.map(function (value) {
+                return Math.max(Math.round(Number(value)) || 1, 1);
+            })
+            : [];
+
+        const sum = list.reduce(function (all, value) {
+            return all + value;
+        }, 0);
+
+        const separated = [];
+
+        for (let i = 0; i < columnCount; i++) {
+            separated.push(1);
+        }
+
+        return list.length > 0 && sum === columnCount ? list : separated;
+    }
+
+    // วาดตารางแบบง่าย: หัวคอลัมน์ + แถวข้อมูล (ช่องที่ผสานแสดงเป็นช่องเดียว)
+    function renderTable(spec) {
+        const table = document.createElement('table');
+        table.className = 'preview-table';
+
+        const columns = Array.isArray(spec.columns) ? spec.columns : [];
+        const rows = Array.isArray(spec.rows) ? spec.rows : [];
+
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+
+        columns.forEach(function (name, index) {
+            const th = document.createElement('th');
+            th.textContent = name || ('คอลัมน์ ' + (index + 1));
+            headRow.appendChild(th);
+        });
+
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        const rowSpans = Array.isArray(spec.rowSpans) ? spec.rowSpans : [];
+
+        rows.forEach(function (row, rowIndex) {
+            const tr = document.createElement('tr');
+
+            let columnIndex = 0;
+
+            normalizeSpans(rowSpans[rowIndex], columns.length).forEach(function (span) {
+                const td = document.createElement('td');
+                td.colSpan = span;
+                td.textContent =
+                    row && row[columnIndex] != null ? String(row[columnIndex]) : '';
+
+                tr.appendChild(td);
+                columnIndex += span;
+            });
+
+            tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'preview-table-wrap';
+        wrapper.appendChild(table);
+
+        return wrapper;
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -235,24 +343,43 @@
             const missingFields = [];
 
             lines.forEach(function (line) {
-                const paragraph = document.createElement('p');
-                paragraph.className = line === '' ? 'preview-para blank' : 'preview-para';
-
-                if (line !== '') {
-                    splitSegments(line, data.values).forEach(function (segment) {
-                        if (segment.field) {
-                            const bucket = segment.missing ? missingFields : filledFields;
-
-                            if (bucket.indexOf(segment.field) === -1) {
-                                bucket.push(segment.field);
-                            }
-                        }
-
-                        paragraph.appendChild(renderSegment(segment));
-                    });
+                if (line === '') {
+                    const blank = document.createElement('p');
+                    blank.className = 'preview-para blank';
+                    body.appendChild(blank);
+                    return;
                 }
 
-                body.appendChild(paragraph);
+                // field ที่เป็นตารางในบรรทัดนี้ (จะวาดเป็นตารางต่อจากข้อความ)
+                const tableFields = lineTableFields(line, data.tables);
+
+                const paragraph = document.createElement('p');
+                paragraph.className = 'preview-para';
+
+                splitSegments(line, data.values, tableFields).forEach(function (segment) {
+                    if (segment.field) {
+                        const bucket = segment.missing ? missingFields : filledFields;
+
+                        if (bucket.indexOf(segment.field) === -1) {
+                            bucket.push(segment.field);
+                        }
+                    }
+
+                    paragraph.appendChild(renderSegment(segment));
+                });
+
+                // บรรทัดที่มีแต่ {{field}} ของตาราง = ไม่มีย่อหน้าให้แสดง
+                if (paragraph.childNodes.length > 0) {
+                    body.appendChild(paragraph);
+                }
+
+                tableFields.forEach(function (field) {
+                    if (filledFields.indexOf(field) === -1) {
+                        filledFields.push(field);
+                    }
+
+                    body.appendChild(renderTable(data.tables[field]));
+                });
             });
 
             meta.className = 'preview-meta' + (missingFields.length > 0 ? ' warn' : '');

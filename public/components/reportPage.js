@@ -52,6 +52,11 @@
 
         // ช่องที่เป็น type text จะมีปุ่มแว่นขยายให้เลือกค่าจาก Master Data
         renderControl: function (field) {
+            // ตาราง: วาดเป็นตารางเพิ่ม/ลบแถวได้ (โครงมาจากหน้า Template Configuration)
+            if (getConfiguredTypes()[field] === 'table') {
+                return createTable(field);
+            }
+
             return scope.FieldTypes.createFieldControl(
                 getConfiguredTypes()[field],
                 field,
@@ -95,6 +100,233 @@
         }
 
         select.value = selectedId ? String(selectedId) : '';
+    };
+
+    // ──────────────────────────────────────────────────────────────
+    // ตาราง (type = table)
+    //
+    // แถวที่ผู้ใช้เพิ่ม/ลบ/พิมพ์ เก็บไว้ที่นี่ (ไม่ใช่ pageValues เพราะค่าไม่ใช่ข้อความ)
+    // ฟอร์มถูกวาดใหม่ทุกครั้งที่สลับหน้า จึงต้องมีที่เก็บที่อยู่ข้ามการวาดฟอร์ม
+    // โครงตาราง (จำนวนคอลัมน์ / ชื่อหัวคอลัมน์) มาจาก FieldTypes
+    // ──────────────────────────────────────────────────────────────
+    const tableRows = {};      // field -> [ [cell, ...], ... ]
+    const tableSpans = {};     // field -> [ [span ของแต่ละกลุ่มช่อง], ... ]
+
+    function tableSchema(field) {
+        return scope.FieldTypes.getTableSchema(field);
+    }
+
+    function emptyRow(schema) {
+        return schema.columns.map(function () {
+            return '';
+        });
+    }
+
+    // แถวที่เก็บไว้ต้องยาวเท่ากับจำนวนคอลัมน์ปัจจุบันเสมอ (โครงอาจถูกแก้ทีหลัง)
+    function normalizeRows(field) {
+        const schema = tableSchema(field);
+        const stored = tableRows[field];
+
+        const rows = (Array.isArray(stored) ? stored : []).map(function (row) {
+            return schema.columns.map(function (_, index) {
+                return row && row[index] != null ? String(row[index]) : '';
+            });
+        });
+
+        if (rows.length === 0) {
+            rows.push(emptyRow(schema));
+        }
+
+        tableRows[field] = rows;
+        normalizeSpans(field, rows);
+
+        return rows;
+    }
+
+    // ขนาดกลุ่มช่องของแต่ละแถว (ผสาน/แยก)
+    // แถวที่ยังไม่มีข้อมูล หรือผลรวมไม่เท่ากับจำนวนคอลัมน์ จะกลับไปเป็น "ไม่ผสาน"
+    function normalizeSpans(field, rows) {
+        const columns = tableSchema(field).columns.length;
+        const stored = Array.isArray(tableSpans[field]) ? tableSpans[field] : [];
+
+        tableSpans[field] = rows.map(function (_, index) {
+            return scope.FieldTypes.normalizeRowSpans(stored[index], columns);
+        });
+
+        return tableSpans[field];
+    }
+
+    function createTable(field) {
+        const schema = tableSchema(field);
+
+        return scope.FieldTypes.createTableControl(field, {
+            schema: schema,
+            rows: normalizeRows(field),
+            spans: tableSpans[field]
+        });
+    }
+
+    function findTableWidget(field) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-table-field]').forEach(function (node) {
+            if (node.dataset.tableField === field) found = node;
+        });
+
+        return found;
+    }
+
+    // วาดตารางของ field นั้นใหม่ (หลังเพิ่ม/ลบแถว)
+    function renderTable(field) {
+        const current = findTableWidget(field);
+        if (!current || !current.parentNode) return;
+
+        current.parentNode.replaceChild(createTable(field), current);
+    }
+
+    page.setTableCell = function (field, rowIndex, colIndex, value) {
+        const rows = normalizeRows(field);
+        const row = rows[Number(rowIndex)];
+
+        if (!row) return;
+
+        row[Number(colIndex)] = String(value == null ? '' : value);
+    };
+
+    page.addTableRow = function (field) {
+        const rows = normalizeRows(field);
+
+        rows.push(emptyRow(tableSchema(field)));
+        normalizeSpans(field, rows);
+
+        renderTable(field);
+    };
+
+    page.removeTableRow = function (field, rowIndex) {
+        const schema = tableSchema(field);
+        const rows = normalizeRows(field);
+        const index = Number(rowIndex);
+
+        if (!(index >= 0 && index < rows.length)) return;
+
+        rows.splice(index, 1);
+
+        // เหลืออย่างน้อย 1 แถวเสมอ เพื่อให้พิมพ์ต่อได้ทันที
+        if (rows.length === 0) {
+            rows.push(emptyRow(schema));
+        }
+
+        normalizeSpans(field, rows);
+        renderTable(field);
+    };
+
+    // ── ผสาน / แยกช่องของแถวข้อมูล ──
+
+    // ข้อความของสองช่องมารวมกัน (ช่องเปล่าไม่ทำให้เกิดช่องว่างเกิน)
+    function joinCellText(left, right) {
+        const first = left == null ? '' : String(left);
+        const second = right == null ? '' : String(right);
+
+        if (first.trim() === '') return second;
+        if (second.trim() === '') return first;
+
+        return first + ' ' + second;
+    }
+
+    // ผสานกลุ่มช่องที่ groupIndex เข้ากับกลุ่มถัดไป (ข้อความย้ายมารวมที่กลุ่มแรก)
+    page.mergeTableCells = function (field, rowIndex, groupIndex) {
+        const rows = normalizeRows(field);
+        const spans = tableSpans[field];
+
+        const index = Number(rowIndex);
+        const group = Number(groupIndex);
+        const row = rows[index];
+        const list = spans ? spans[index] : null;
+
+        if (!row || !list) return;
+        if (!(group >= 0 && group < list.length - 1)) return;
+
+        const start = scope.FieldTypes.startColumnOf(list, group);
+        const nextStart = start + list[group];
+
+        row[start] = joinCellText(row[start], row[nextStart]);
+        row[nextStart] = '';
+
+        const merged = list.slice();
+        merged[group] = list[group] + list[group + 1];
+        merged.splice(group + 1, 1);
+
+        spans[index] = merged;
+        renderTable(field);
+    };
+
+    // แยกกลุ่มที่ผสานอยู่กลับเป็นช่องปกติ (ข้อความอยู่ในช่องแรกของกลุ่ม)
+    page.unmergeTableCells = function (field, rowIndex, groupIndex) {
+        const rows = normalizeRows(field);
+        const spans = tableSpans[field];
+
+        const index = Number(rowIndex);
+        const group = Number(groupIndex);
+        const row = rows[index];
+        const list = spans ? spans[index] : null;
+
+        if (!row || !list) return;
+        if (!(group >= 0 && group < list.length)) return;
+
+        const count = list[group];
+        if (count <= 1) return;
+
+        const start = scope.FieldTypes.startColumnOf(list, group);
+        const separated = [];
+
+        for (let i = 0; i < count; i++) {
+            separated.push(1);
+
+            if (i > 0) row[start + i] = '';
+        }
+
+        spans[index] = list
+            .slice(0, group)
+            .concat(separated, list.slice(group + 1));
+
+        renderTable(field);
+    };
+
+    // ตารางทั้งหมดที่พร้อมเขียนลงเอกสาร (ส่งให้ replace.js คนละทางกับ values)
+    page.getTableValues = function () {
+        const types = getConfiguredTypes();
+        const tables = {};
+
+        Object.keys(types).forEach(function (field) {
+            if (types[field] !== 'table') return;
+
+            const schema = tableSchema(field);
+
+            tables[field] = {
+                columns: schema.columns.slice(),
+                rows: normalizeRows(field),
+                // ขนาดกลุ่มช่องของแต่ละแถว (1 = ไม่ผสาน)
+                rowSpans: (tableSpans[field] || []).map(function (list) {
+                    return list.slice();
+                })
+            };
+        });
+
+        return tables;
+    };
+
+    // ล้างแถวทั้งหมด (ตอนเปลี่ยน template หรือล้างฟอร์ม)
+    page.resetTables = function () {
+        Object.keys(tableRows).forEach(function (field) {
+            delete tableRows[field];
+        });
+
+        Object.keys(tableSpans).forEach(function (field) {
+            delete tableSpans[field];
+        });
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -167,6 +399,40 @@
     page.applyValues = function (values) {
         baseApplyValues.call(page, values);
         page.syncCurrencyInputs(values);
+        page.syncTables(values);
+    };
+
+    // เติมแถวของตารางกลับเข้าฟอร์ม (ใช้ตอนกดใช้ซ้ำจากประวัติ)
+    page.syncTables = function (values) {
+        if (!values) return;
+
+        Object.keys(values).forEach(function (field) {
+            const spec = values[field];
+
+            if (!spec || typeof spec !== 'object' || !Array.isArray(spec.rows)) return;
+
+            const schema = tableSchema(field);
+
+            const rows = spec.rows.map(function (row) {
+                return schema.columns.map(function (_, index) {
+                    return row && row[index] != null ? String(row[index]) : '';
+                });
+            });
+
+            if (rows.length === 0) {
+                rows.push(emptyRow(schema));
+            }
+
+            tableRows[field] = rows;
+
+            const storedSpans = Array.isArray(spec.rowSpans) ? spec.rowSpans : [];
+
+            tableSpans[field] = rows.map(function (_, index) {
+                return scope.FieldTypes.normalizeRowSpans(storedSpans[index], schema.columns.length);
+            });
+
+            renderTable(field);
+        });
     };
 
     scope.ReportPage = page;

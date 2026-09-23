@@ -50,6 +50,69 @@
         return input;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ช่องตั้งค่าตาราง (แสดงเมื่อเลือก type = Table)
+    //
+    // - จำนวนคอลัมน์
+    // - ชื่อหัวคอลัมน์ (1 ช่องต่อ 1 คอลัมน์)
+    // (แถวรวมยอดให้ผสานช่องในหน้ารายงานแทน — เขียนเป็น w:gridSpan ในเอกสาร)
+    //
+    // โครงตารางเก็บไว้ที่ FieldTypes เพราะหน้ารายงานและตอนสร้างเอกสารใช้ด้วย
+    // ──────────────────────────────────────────────────────────────
+    function createTableConfig(field) {
+        const box = document.createElement('div');
+        box.className = 'table-config';
+        box.dataset.tableConfig = field;
+        box.hidden = true;
+
+        const countRow = document.createElement('div');
+        countRow.className = 'table-config-row';
+
+        const countLabel = document.createElement('label');
+        countLabel.textContent = 'จำนวนคอลัมน์';
+
+        const countInput = document.createElement('input');
+        countInput.type = 'number';
+        countInput.min = '1';
+        countInput.max = String(scope.FieldTypes.tableMaxColumns);
+        countInput.step = '1';
+        countInput.className = 'table-count';
+        countInput.dataset.tableCount = field;
+
+        countRow.appendChild(countLabel);
+        countRow.appendChild(countInput);
+
+        const colsLabel = document.createElement('span');
+        colsLabel.className = 'table-config-label';
+        colsLabel.textContent = 'ชื่อหัวคอลัมน์ (เว้นว่าง = ใช้ชื่อเริ่มต้น)';
+
+        const cols = document.createElement('div');
+        cols.className = 'table-cols';
+        cols.dataset.tableCols = field;
+
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.textContent =
+            'วาง {{' + field + '}} ไว้บรรทัดเดียวของมันเอง — ' +
+            'ตอนสร้างเอกสารจะแทนที่ทั้งย่อหน้านั้นด้วยตาราง ' +
+            '(เพิ่ม/ลบแถว และผสานช่องเพื่อทำแถวรวมยอด ได้ที่หน้ารายงาน)';
+
+        // เตือนเมื่อ {{field}} ถูกวางไว้หลายที่ในเอกสาร
+        // (ตารางจะถูกใส่ในเอกสารเท่าจำนวนที่วางไว้ — มักไม่ใช่สิ่งที่ผู้ใช้ต้องการ)
+        const usage = document.createElement('p');
+        usage.className = 'hint table-usage';
+        usage.dataset.tableUsage = field;
+        usage.hidden = true;
+
+        box.appendChild(countRow);
+        box.appendChild(colsLabel);
+        box.appendChild(cols);
+        box.appendChild(hint);
+        box.appendChild(usage);
+
+        return box;
+    }
+
     // select เลือก type + ช่อง placeholder + checkbox "ล็อกตำแหน่ง" ของ field นั้น
     function createTypeSelect(field) {
         const wrapper = document.createElement('div');
@@ -99,6 +162,7 @@
 
         wrapper.appendChild(row);
         wrapper.appendChild(createPlaceholderInput(field));
+        wrapper.appendChild(createTableConfig(field));
         return wrapper;
     }
 
@@ -177,6 +241,120 @@
 
     // ── ส่วนที่ใช้เฉพาะหน้านี้ ──
 
+    // ── โครงตาราง (type = table) ──
+
+    // หา node ของช่องตั้งค่าตารางของ field หนึ่ง (หาไม่ได้ = ฟอร์มถูกล้างไปแล้ว)
+    function tableNodes(field) {
+        const form = document.getElementById('form');
+        const found = {};
+
+        if (!form) return found;
+
+        form.querySelectorAll(
+            '[data-table-config], [data-table-count], [data-table-cols]'
+        ).forEach(function (node) {
+            const data = node.dataset;
+
+            if (data.tableConfig === field) found.box = node;
+            else if (data.tableCount === field) found.count = node;
+            else if (data.tableCols === field) found.cols = node;
+        });
+
+        return found;
+    }
+
+    // สร้างช่องชื่อหัวคอลัมน์ใหม่ทั้งชุด (เรียกเมื่อจำนวนคอลัมน์เปลี่ยน)
+    function renderColumnInputs(field, columns) {
+        const nodes = tableNodes(field);
+        if (!nodes.cols) return;
+
+        nodes.cols.innerHTML = '';
+
+        columns.forEach(function (name, index) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'table-col-name';
+            // ใช้ data-table-column (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
+            input.dataset.tableColumn = field;
+            input.dataset.tableColumnIndex = String(index);
+            input.autocomplete = 'off';
+            input.value = name || '';
+            input.placeholder = 'ชื่อคอลัมน์ ' + (index + 1);
+            input.setAttribute('aria-label', 'ชื่อคอลัมน์ ' + (index + 1) + ' ของ ' + field);
+            nodes.cols.appendChild(input);
+        });
+    }
+
+    // จำนวนที่ {{field}} ถูกวางไว้ในเอกสาร (นับเป็นย่อหน้า)
+    // ว่างไว้ถ้านับไม่ได้ (ยังไม่โหลดไฟล์) หรือวางไว้ที่เดียว
+    function renderTableUsage(field) {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        let note = null;
+
+        form.querySelectorAll('[data-table-usage]').forEach(function (node) {
+            if (node.dataset.tableUsage === field) note = node;
+        });
+
+        if (!note) return;
+
+        const usage =
+            scope.App &&
+            scope.App.getFieldUsage
+                ? scope.App.getFieldUsage()
+                : {};
+
+        const copies = usage[field] || 0;
+
+        note.hidden = copies <= 1;
+        note.textContent = copies > 1
+            ? '⚠ วาง {{' + field + '}} ไว้ ' + copies + ' ที่ในเอกสาร ' +
+                '→ ตอนสร้างเอกสารจะได้ตาราง ' + copies + ' อัน ' +
+                'ถ้าต้องการที่เดียว ให้เหลือไว้ที่เดียวใน template แล้ววางไฟล์ใหม่'
+            : '';
+    }
+
+    // ซิงก์ช่องตั้งค่าตารางของ field ให้ตรงกับ type ที่เลือกและโครงที่เก็บไว้
+    function renderTableConfig(field) {
+        const nodes = tableNodes(field);
+        if (!nodes.box) return;
+
+        const control = scope.FormPage.findControl(field);
+        const isTable = !!control && control.value === 'table';
+
+        nodes.box.hidden = !isTable;
+
+        // ช่อง placeholder ไม่ใช้กับตาราง (ชื่อคอลัมน์บอกความหมายอยู่แล้ว)
+        const form = document.getElementById('form');
+
+        if (form) {
+            form.querySelectorAll('[data-placeholder-field]').forEach(function (input) {
+                if (input.dataset.placeholderField === field) {
+                    input.hidden = isTable;
+                }
+            });
+        }
+
+        if (!isTable) return;
+
+        const schema = scope.FieldTypes.getTableSchema(field);
+
+        if (nodes.count) nodes.count.value = String(schema.columns.length);
+
+        renderColumnInputs(field, schema.columns);
+        renderTableUsage(field);
+    }
+
+    function renderAllTableConfigs() {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        form.querySelectorAll('[data-table-config]').forEach(function (node) {
+            renderTableConfig(node.dataset.tableConfig);
+        });
+    }
+
     // field ที่ถูกล็อกตำแหน่ง (เก็บแยกจากค่าของ type)
     let lockState = {};
 
@@ -214,6 +392,73 @@
         baseRenderForm.call(page, fields);
         renderLockState();
         renderPlaceholderState();
+        renderAllTableConfigs();
+    };
+
+    const baseApplyValues = page.applyValues;
+
+    // ค่า type ถูกเติมกลับหลังฟอร์มถูกวาด จึงต้องอัปเดตช่องตั้งค่าตารางอีกครั้ง
+    // ไม่งั้น field ที่บันทึกไว้ว่าเป็น Table จะยังซ่อนช่องตั้งค่าอยู่
+    page.applyValues = function (values) {
+        baseApplyValues.call(page, values);
+        renderAllTableConfigs();
+    };
+
+    // ── โครงตาราง: ให้ app.js เรียกเมื่อผู้ใช้แก้ค่าที่หน้า Template Configuration ──
+
+    // อัปเดตช่องตั้งค่าตารางของ field นี้ (เรียกเมื่อเปลี่ยน type)
+    page.refreshTableConfig = renderTableConfig;
+
+    // จำนวนคอลัมน์: ตัด/ต่อชื่อหัวคอลัมน์ให้ครบตามจำนวนใหม่
+    page.setTableCount = function (field, value) {
+        const raw = String(value == null ? '' : value).trim();
+
+        // ระหว่างพิมพ์ (ลบเลขจนว่าง) ยังไม่ต้องแก้อะไร
+        if (raw === '') return;
+
+        const count = Math.min(
+            Math.max(Math.round(Number(raw)) || 1, 1),
+            scope.FieldTypes.tableMaxColumns
+        );
+
+        const columns = scope.FieldTypes.getTableSchema(field).columns.slice(0, count);
+
+        while (columns.length < count) {
+            columns.push('คอลัมน์ ' + (columns.length + 1));
+        }
+
+        scope.FieldTypes.setTableSchema(field, { columns: columns });
+
+        renderTableConfig(field);
+    };
+
+    page.setTableColumn = function (field, index, value) {
+        const schema = scope.FieldTypes.getTableSchema(field);
+
+        if (!(index >= 0 && index < schema.columns.length)) return;
+
+        schema.columns[index] = String(value == null ? '' : value);
+        scope.FieldTypes.setTableSchema(field, schema);
+    };
+
+    // โครงตารางของทุก field ที่เป็น type table (บันทึกพร้อม template)
+    page.getTableSchemas = function (types) {
+        const byType = types || page.getValues();
+        const schemas = {};
+
+        Object.keys(byType).forEach(function (field) {
+            if (byType[field] === 'table') {
+                schemas[field] = scope.FieldTypes.getTableSchema(field);
+            }
+        });
+
+        return schemas;
+    };
+
+    // คืนโครงตารางที่บันทึกไว้กลับมา (ตอนโหลด template) — null/{} = ไม่มีตาราง
+    page.setTableSchemas = function (schemas) {
+        scope.FieldTypes.setTableSchemas(schemas);
+        renderAllTableConfigs();
     };
 
     page.setLock = function (field, locked) {

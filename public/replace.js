@@ -534,19 +534,415 @@
         console.warn('หยุดแทนค่าใน paragraph หนึ่งเพราะถึงขีดจำกัดรอบ');
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ตาราง (type = table)
+    //
+    // ย่อหน้าที่มี {{field}} ของตารางจะถูก "แทนที่ทั้งย่อหน้า" ด้วยตาราง Word จริง
+    // (w:tbl) ที่สร้างจากโครงในหน้า Template Configuration + แถวจากหน้ารายงาน
+    // ช่องที่ผสานไว้ในหน้ารายงานเขียนเป็น w:gridSpan (แถวรวมยอดก็ทำแบบเดียวกัน)
+    // ──────────────────────────────────────────────────────────────
+
+    // ความกว้างเนื้อหาหน้ากระดาษ (twips) ใช้หารความกว้างของแต่ละคอลัมน์
+    // 9026 = A4 หักขอบซ้าย/ขวา 2.54 ซม. (ค่ามาตรฐานของ Word)
+    const DEFAULT_CONTENT_WIDTH = 9026;
+
+    // ลำดับลูกของ w:rPr ตาม schema — Word เข้มงวดเรื่องลำดับของ property
+    const RPR_ORDER = [
+        'rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps',
+        'strike', 'dstrike', 'outline', 'shadow', 'emboss', 'imprint',
+        'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing',
+        'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u', 'effect',
+        'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang',
+        'eastAsianLayout', 'specVanish', 'oMath'
+    ];
+
+    function el(doc, name) {
+        return doc.createElementNS(W_NS, 'w:' + name);
+    }
+
+    function setVal(node, name, value) {
+        node.setAttribute('w:' + name, String(value));
+    }
+
+    // ความกว้างเนื้อเรื่อง (twips) อ่านจาก section ตัวสุดท้ายของเอกสาร
+    function contentWidthTwips(doc) {
+        const sections = doc.getElementsByTagNameNS(W_NS, 'sectPr');
+        const section = sections.length > 0 ? sections[sections.length - 1] : null;
+
+        if (!section) return DEFAULT_CONTENT_WIDTH;
+
+        const size = section.getElementsByTagNameNS(W_NS, 'pgSz')[0];
+        const margins = section.getElementsByTagNameNS(W_NS, 'pgMar')[0];
+
+        const page = size ? Number(size.getAttribute('w:w')) : 0;
+
+        if (!(page > 0)) return DEFAULT_CONTENT_WIDTH;
+
+        const left = margins ? Number(margins.getAttribute('w:left')) || 0 : 0;
+        const right = margins ? Number(margins.getAttribute('w:right')) || 0 : 0;
+
+        const width = page - left - right;
+
+        return width > 1000 ? width : DEFAULT_CONTENT_WIDTH;
+    }
+
+    // ฟอนต์/ขนาดของข้อความในย่อหน้าต้นทาง เพื่อให้ตารางที่สร้างใหม่หน้าตาเหมือนเอกสาร
+    function cloneRunProps(paragraph) {
+        const runs = Array.from(paragraph.getElementsByTagNameNS(W_NS, 'r'));
+
+        for (const run of runs) {
+            const props = run.getElementsByTagNameNS(W_NS, 'rPr')[0];
+
+            if (props) return props.cloneNode(true);
+        }
+
+        const paragraphProps = paragraph.getElementsByTagNameNS(W_NS, 'pPr')[0];
+
+        if (paragraphProps) {
+            const props = paragraphProps.getElementsByTagNameNS(W_NS, 'rPr')[0];
+
+            if (props) return props.cloneNode(true);
+        }
+
+        return null;
+    }
+
+    // แทรก property ลงใน w:rPr ตามลำดับที่ schema กำหนด
+    function insertRunProp(props, node) {
+        const order = RPR_ORDER.indexOf(node.localName);
+
+        if (order === -1) {
+            props.appendChild(node);
+            return;
+        }
+
+        for (const child of Array.from(props.childNodes)) {
+            if (child.nodeType !== 1) continue;
+
+            const at = RPR_ORDER.indexOf(child.localName);
+
+            if (at > order) {
+                props.insertBefore(node, child);
+                return;
+            }
+        }
+
+        props.appendChild(node);
+    }
+
+    // ชุด rPr ของหัวตาราง (ตัวหนา) — คัดลอกจากเอกสารแล้วเติม w:b
+    function boldRunProps(doc, runProps) {
+        const props = runProps ? runProps.cloneNode(true) : el(doc, 'rPr');
+
+        if (props.getElementsByTagNameNS(W_NS, 'b').length === 0) {
+            insertRunProp(props, el(doc, 'b'));
+        }
+
+        return props;
+    }
+
+    // ย่อหน้าในเซลล์ — ไม่เว้นระยะก่อน/หลัง เพื่อให้ตารางกระชับ
+    function buildCellParagraph(doc, text, runProps) {
+        const paragraph = el(doc, 'p');
+        const paragraphProps = el(doc, 'pPr');
+
+        const spacing = el(doc, 'spacing');
+        setVal(spacing, 'before', 0);
+        setVal(spacing, 'after', 0);
+        paragraphProps.appendChild(spacing);
+
+        if (runProps) {
+            paragraphProps.appendChild(runProps.cloneNode(true));
+        }
+
+        paragraph.appendChild(paragraphProps);
+
+        const run = el(doc, 'r');
+
+        if (runProps) {
+            run.appendChild(runProps.cloneNode(true));
+        }
+
+        const textNode = el(doc, 't');
+        setText(textNode, text);
+        run.appendChild(textNode);
+
+        paragraph.appendChild(run);
+        return paragraph;
+    }
+
+    // เซลล์ 1 ช่อง (gridSpan > 1 = รวมช่องกับช่องติดกัน)
+    function buildCell(doc, text, runProps, width, gridSpan) {
+        const cell = el(doc, 'tc');
+        const props = el(doc, 'tcPr');
+
+        // ลำดับใน tcPr ต้องเป็น tcW ก่อน gridSpan
+        const cellWidth = el(doc, 'tcW');
+        setVal(cellWidth, 'w', Math.round(width * gridSpan));
+        setVal(cellWidth, 'type', 'dxa');
+        props.appendChild(cellWidth);
+
+        if (gridSpan > 1) {
+            const span = el(doc, 'gridSpan');
+            setVal(span, 'val', gridSpan);
+            props.appendChild(span);
+        }
+
+        cell.appendChild(props);
+        cell.appendChild(buildCellParagraph(doc, text, runProps));
+
+        return cell;
+    }
+
+    // ขนาดกลุ่มช่องของแถว (1 = ไม่ผสาน) — ผลรวมต้องเท่ากับจำนวนคอลัมน์
+    // ถ้าไม่ตรง (ค่าที่เพี้ยน/ไฟล์เก่า) กลับไปเป็น "ไม่ผสานทุกช่อง"
+    function normalizeRowSpans(spans, columnCount) {
+        const list = Array.isArray(spans)
+            ? spans.map(function (value) {
+                return Math.max(Math.round(Number(value)) || 1, 1);
+            })
+            : [];
+
+        const sum = list.reduce(function (all, value) {
+            return all + value;
+        }, 0);
+
+        const separated = [];
+
+        for (let i = 0; i < columnCount; i++) {
+            separated.push(1);
+        }
+
+        return list.length > 0 && sum === columnCount ? list : separated;
+    }
+
+    // สร้าง w:tbl จากโครงตาราง + แถวที่กรอกไว้
+    function buildTableElement(doc, spec, runProps, contentWidth) {
+        let columns = Array.isArray(spec.columns) ? spec.columns : [];
+
+        columns = columns.map(function (name) {
+            return String(name == null ? '' : name);
+        });
+
+        if (columns.length === 0) columns = [''];
+
+        const rows = (Array.isArray(spec.rows) ? spec.rows : []).map(function (row) {
+            return columns.map(function (_, index) {
+                return row && row[index] != null ? String(row[index]) : '';
+            });
+        });
+
+        const rowSpans = Array.isArray(spec.rowSpans) ? spec.rowSpans : [];
+
+        const width = contentWidth / columns.length;
+
+        const table = el(doc, 'tbl');
+
+        // ── tblPr (ความกว้าง + เส้นตาราง) ──
+        const tableProps = el(doc, 'tblPr');
+
+        const tableWidth = el(doc, 'tblW');
+        setVal(tableWidth, 'w', 0);
+        setVal(tableWidth, 'type', 'auto');
+        tableProps.appendChild(tableWidth);
+
+        const borders = el(doc, 'tblBorders');
+
+        ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].forEach(function (side) {
+            const border = el(doc, side);
+            setVal(border, 'val', 'single');
+            setVal(border, 'sz', 4);
+            setVal(border, 'space', 0);
+            setVal(border, 'color', 'auto');
+            borders.appendChild(border);
+        });
+
+        tableProps.appendChild(borders);
+
+        const look = el(doc, 'tblLook');
+        setVal(look, 'val', '04A0');
+        setVal(look, 'firstRow', 1);
+        setVal(look, 'lastRow', 0);
+        setVal(look, 'firstColumn', 0);
+        setVal(look, 'lastColumn', 0);
+        setVal(look, 'noHBand', 0);
+        setVal(look, 'noVBand', 1);
+        tableProps.appendChild(look);
+
+        table.appendChild(tableProps);
+
+        // ── tblGrid (ความกว้างเท่ากันทุกคอลัมน์) ──
+        const grid = el(doc, 'tblGrid');
+
+        columns.forEach(function () {
+            const column = el(doc, 'gridCol');
+            setVal(column, 'w', Math.round(width));
+            grid.appendChild(column);
+        });
+
+        table.appendChild(grid);
+
+        // ── แถวหัวตาราง (ตัวหนา) ──
+        const header = el(doc, 'tr');
+        const headerProps = boldRunProps(doc, runProps);
+
+        columns.forEach(function (name) {
+            header.appendChild(buildCell(doc, name, headerProps, width, 1));
+        });
+
+        table.appendChild(header);
+
+        // ── แถวข้อมูล (ช่องที่ผสานกันจะกลายเป็นช่องเดียวตาม w:gridSpan) ──
+        rows.forEach(function (row, rowIndex) {
+            const tr = el(doc, 'tr');
+
+            let columnIndex = 0;
+
+            normalizeRowSpans(rowSpans[rowIndex], columns.length).forEach(function (span) {
+                tr.appendChild(
+                    buildCell(doc, row[columnIndex], runProps, width, span)
+                );
+
+                columnIndex += span;
+            });
+
+            table.appendChild(tr);
+        });
+
+        return table;
+    }
+
+    function hasChildParagraph(node) {
+        for (const child of Array.from(node.childNodes)) {
+            if (child.nodeType === 1 && child.localName === 'p') return true;
+        }
+
+        return false;
+    }
+
+    // element ถัดไป (ข้ามช่องว่างระหว่างแท็ก ซึ่งไม่มีในไฟล์ที่ Word สร้าง)
+    function nextElementSibling(node) {
+        let next = node.nextSibling;
+
+        while (
+            next &&
+            next.nodeType === 3 &&
+            String(next.nodeValue || '').trim() === ''
+        ) {
+            next = next.nextSibling;
+        }
+
+        return next;
+    }
+
+    // Word ต้องการย่อหน้าหลังตารางที่อยู่ท้ายเนื้อเรื่อง และเซลล์ต้องมีย่อหน้าอย่างน้อย 1 อัน
+    function ensureParagraphAfterTable(doc, table) {
+        const parent = table.parentNode;
+        if (!parent) return;
+
+        const next = nextElementSibling(table);
+
+        const atEnd =
+            !next ||
+            (next.nodeType === 1 && next.localName === 'sectPr');
+
+        const emptyCell =
+            parent.localName === 'tc' && !hasChildParagraph(parent);
+
+        if (atEnd || emptyCell) {
+            parent.insertBefore(el(doc, 'p'), table.nextSibling);
+        }
+    }
+
+    // แทนที่ย่อหน้าที่มี {{field}} ของตารางด้วยตาราง Word จริง
+    // (field ที่ยังไม่มีแถวเลยจะไม่ถูกแตะ — ยังเห็น {{field}} ว่าไม่ได้กรอก)
+    function insertTables(doc, tables) {
+        const fields = Object.keys(tables).filter(function (field) {
+            const spec = tables[field];
+
+            return !!(spec && Array.isArray(spec.rows) && spec.rows.length > 0);
+        });
+
+        if (fields.length === 0) return;
+
+        const regex = buildFieldRegex(fields);
+        if (!regex) return;
+
+        const contentWidth = contentWidthTwips(doc);
+
+        // ต้องคัดลอกเป็น array ก่อน เพราะแก้ DOM ระหว่างวน
+        const paragraphs = Array.from(doc.getElementsByTagNameNS(W_NS, 'p'));
+
+        for (const paragraph of paragraphs) {
+            const textNodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+
+            const text = textNodes.map(function (node) {
+                return node.textContent || '';
+            }).join('');
+
+            const matches = findMatches(regex, text);
+            if (matches.length === 0) continue;
+
+            const parent = paragraph.parentNode;
+            if (!parent) continue;
+
+            const anchor = paragraph.nextSibling;
+            const runProps = cloneRunProps(paragraph);
+
+            // ย่อหน้าเดียว = ตารางเดียวต่อ field
+            // ({{field}} ที่พิมพ์ซ้ำในย่อหน้าเดียวกัน ไม่ทำให้ได้ตารางซ้อนกัน)
+            const placed = [];
+
+            matches.forEach(function (match) {
+                if (placed.indexOf(match.field) !== -1) return;
+
+                const spec = tables[match.field];
+                if (!spec) return;
+
+                placed.push(match.field);
+
+                const table = buildTableElement(doc, spec, runProps, contentWidth);
+
+                // วางตารางไว้ตรงตำแหน่งของย่อหน้าเดิม (index อ้างจากย่อหน้าเดิม)
+                parent.insertBefore(table, anchor);
+                ensureParagraphAfterTable(doc, table);
+            });
+
+            // {{field}} ของตารางต้องอยู่บรรทัดเดียวของมันเอง → ทิ้งย่อหน้าเดิมทั้งอัน
+            parent.removeChild(paragraph);
+        }
+    }
+
     let lastWarnings = [];
     let lastApplied = [];
 
-    function replaceFields(xml, values, lockedFields) {
+    // tables = { field: { columns, rows, rowSpans } } ของ field ที่เป็น type Table
+    function replaceFields(xml, values, lockedFields, tables) {
         lastWarnings = [];
         lastApplied = [];
 
-        if (!xml || !values) return xml;
+        if (!xml) return xml;
 
-        const regex = buildFieldRegex(Object.keys(values));
-        if (!regex) return xml;
+        const tableValues =
+            tables && typeof tables === 'object' ? tables : {};
 
-        const locked = toLockedSet(lockedFields);
+        // ค่าปกติ (ข้อความ) — field ที่เป็นตารางแยกออกไปสร้างเป็นตาราง
+        const scalarValues = {};
+
+        if (values) {
+            Object.keys(values).forEach(function (field) {
+                if (!Object.prototype.hasOwnProperty.call(tableValues, field)) {
+                    scalarValues[field] = values[field];
+                }
+            });
+        }
+
+        if (
+            Object.keys(scalarValues).length === 0 &&
+            Object.keys(tableValues).length === 0
+        ) {
+            return xml;
+        }
 
         const doc = new DOMParser().parseFromString(xml, 'application/xml');
         if (doc.getElementsByTagName('parsererror').length > 0) {
@@ -554,9 +950,26 @@
             return xml;
         }
 
-        const paragraphs = doc.getElementsByTagNameNS(W_NS, 'p');
-        for (const paragraph of paragraphs) {
-            replaceInParagraph(paragraph, regex, values, locked, lastWarnings, lastApplied);
+        // 1) field ที่เป็นตาราง: แทนที่ทั้งย่อหน้าด้วยตาราง Word
+        insertTables(doc, tableValues);
+
+        // 2) field ปกติ: แทนค่าในข้อความ (อ่านย่อหน้าใหม่หลังแทรกตารางแล้ว)
+        const regex = buildFieldRegex(Object.keys(scalarValues));
+
+        if (regex) {
+            const locked = toLockedSet(lockedFields);
+            const paragraphs = Array.from(doc.getElementsByTagNameNS(W_NS, 'p'));
+
+            for (const paragraph of paragraphs) {
+                replaceInParagraph(
+                    paragraph,
+                    regex,
+                    scalarValues,
+                    locked,
+                    lastWarnings,
+                    lastApplied
+                );
+            }
         }
 
         return new XMLSerializer().serializeToString(doc);

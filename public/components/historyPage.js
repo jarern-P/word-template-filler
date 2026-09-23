@@ -104,14 +104,33 @@
         list.appendChild(item);
     }
 
+    // ค่าของ field ที่เป็น type Table เก็บเป็น object { columns, rows, rowSpans }
+    // ไม่ใช่ข้อความ จึงต้องแยกอ่านจากค่าปกติ
+    function isTableValue(value) {
+        return !!value && typeof value === 'object' && Array.isArray(value.rows);
+    }
+
     // เฉพาะช่องที่กรอกค่าจริง (ช่องว่างไม่ได้ถูกเก็บอยู่แล้ว แต่กันไว้ให้ทน)
     function filledEntries(record) {
         const values = (record && record.values) || {};
 
         return Object.keys(values).filter(function (field) {
             const value = values[field];
-            return value !== null && value !== undefined && String(value).trim() !== '';
+
+            if (value === null || value === undefined) return false;
+            if (isTableValue(value)) return value.rows.length > 0;
+
+            return String(value).trim() !== '';
         });
+    }
+
+    // ข้อความย่อของค่าหนึ่งช่อง (ตารางอ่านเป็น "ตาราง N แถว")
+    function describeValue(value) {
+        if (isTableValue(value)) {
+            return 'ตาราง ' + value.rows.length + ' แถว';
+        }
+
+        return truncate(value, PREVIEW_LENGTH);
     }
 
     // ข้อความย่อของค่าที่กรอก เช่น "ชื่อ: สมชาย · จำนวนเงิน: 1,000"
@@ -120,7 +139,7 @@
         const shown = fields.slice(0, MAX_PREVIEW_ITEMS);
 
         const parts = shown.map(function (field) {
-            return field + ': ' + truncate(record.values[field], PREVIEW_LENGTH);
+            return field + ': ' + describeValue(record.values[field]);
         });
 
         if (fields.length > shown.length) {

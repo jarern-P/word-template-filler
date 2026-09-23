@@ -1757,6 +1757,244 @@ button.danger:hover {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   ตาราง (type = Table)
+   ────────────────────────────────────────────────────────────── */
+
+/* ── หน้า Template Configuration: จำนวนคอลัมน์ / ชื่อหัวคอลัมน์ ── */
+
+.table-config {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.table-config[hidden] {
+    display: none;
+}
+
+.table-config-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.table-config-row label {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    white-space: nowrap;
+}
+
+.field .table-config-row input[type="number"] {
+    width: 90px;
+}
+
+.table-config-label {
+    font-size: 12px;
+    color: var(--ink-faint);
+}
+
+.table-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px;
+}
+
+.table-config .hint {
+    margin: 0;
+}
+
+/* เตือนว่า {{field}} ของตารางถูกวางไว้หลายที่ในเอกสาร
+   (ต้องอ้าง #form ด้วย เพราะกฎ `#form .hint` ด้านบนมี specificity สูงกว่า) */
+#form .table-config .hint.table-usage {
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--warn);
+    background: var(--warn-soft);
+    border: 1px solid #f6e0b8;
+    border-radius: var(--radius);
+}
+
+#form .table-config .hint.table-usage[hidden] {
+    display: none;
+}
+
+/* ── หน้ารายงาน: ตารางที่เพิ่ม/ลบแถวได้ ── */
+
+.field-control.table-field {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.table-scroll {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--line-input);
+    border-radius: var(--radius);
+}
+
+.field-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.field-table th,
+.field-table td {
+    padding: 6px 8px;
+    text-align: left;
+    border-right: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.field-table th {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--pink-700);
+    background: var(--pink-50);
+    white-space: nowrap;
+}
+
+.field-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.field-table .table-row-actions {
+    width: 44px;
+    text-align: center;
+    border-right: none;
+}
+
+.field-table input.table-cell-input {
+    width: 100%;
+    min-width: 90px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+}
+
+.field-table input.table-cell-input:focus {
+    outline: none;
+    border-color: var(--pink-400);
+    box-shadow: var(--focus-ring);
+}
+
+/* ── ช่องที่ผสานกัน: input + ปุ่มผสาน/แยกอยู่ในเซลล์เดียวกัน ── */
+
+.field-table .table-cell-group {
+    vertical-align: middle;
+}
+
+/* ช่องที่ผสานอยู่ = ย้อมพื้นให้เห็นว่าเป็นช่องเดียวกัน */
+.field-table .table-cell-group.merged {
+    background: var(--pink-50);
+}
+
+.field-table .table-cell-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.field-table .table-cell-wrap input.table-cell-input {
+    flex: 1;
+    min-width: 60px;
+}
+
+.field-table button.table-group-btn {
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    color: var(--ink-soft);
+    background: var(--surface);
+    border-color: var(--line-input);
+    box-shadow: none;
+}
+
+.field-table button.table-group-btn:hover {
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-color: var(--pink-300);
+}
+
+/* ปุ่มแยกช่องเห็นเฉพาะช่องที่ผสานอยู่ จึงเน้นสีไว้ให้หาเจอ */
+.field-table button.table-group-btn.unmerge {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: #fbd6e2;
+}
+
+.field-table button.table-group-btn.unmerge:hover {
+    background: #ffe6ee;
+}
+
+.table-field .table-actions {
+    display: flex;
+}
+
+.table-field button.table-add-row {
+    margin-top: 0;
+    padding: 9px 18px;
+    font-size: 14px;
+}
+
+.field-table button.table-row-remove {
+    margin: 0;
+    padding: 2px 10px;
+    font-size: 15px;
+    line-height: 1.2;
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: #fbd6e2;
+    box-shadow: none;
+}
+
+.field-table button.table-row-remove:hover {
+    background: #ffe6ee;
+}
+
+/* ── ตารางใน popup ตัวอย่างเอกสาร ── */
+
+.preview-table-wrap {
+    margin: 10px 0 14px;
+    overflow-x: auto;
+}
+
+.preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    color: var(--ink);
+}
+
+.preview-table th,
+.preview-table td {
+    padding: 7px 10px;
+    text-align: left;
+    border: 1px solid var(--line-input);
+}
+
+.preview-table th {
+    font-weight: 700;
+    color: var(--pink-700);
+    background: var(--pink-50);
+}
+
+/* ──────────────────────────────────────────────────────────────
    หน้าต่างแคบ: ย้าย sidebar ขึ้นด้านบน
    ────────────────────────────────────────────────────────────── */
 

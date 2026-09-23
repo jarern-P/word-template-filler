@@ -59,6 +59,7 @@ const SCHEMA = `
         types      TEXT NOT NULL DEFAULT '{}',
         locks      TEXT NOT NULL DEFAULT '{}',
         placeholders TEXT NOT NULL DEFAULT '{}',
+        tables     TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
@@ -220,6 +221,39 @@ function migrateTemplatePlaceholders() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ tables ให้ตาราง templates
+// ============================================================
+
+// เก็บโครงตาราง (จำนวนคอลัมน์ / ชื่อหัวคอลัมน์) ของ field ที่เป็น type Table
+// ที่ตั้งไว้ในหน้า Template Configuration
+function migrateTemplateTables() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(templates)
+        `).all();
+
+    // ยังไม่มีตาราง templates (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "tables")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE templates
+        ADD COLUMN tables TEXT NOT NULL DEFAULT '{}'
+    `);
+
+    console.log(
+        "Migrated templates table: added 'tables' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -231,6 +265,7 @@ function openDatabase() {
     migrateMasterTable();
     migrateTemplateLocks();
     migrateTemplatePlaceholders();
+    migrateTemplateTables();
 
     db.exec(SCHEMA);
 
@@ -275,7 +310,8 @@ function handleSave(message) {
             fields,
             types,
             locks,
-            placeholders
+            placeholders,
+            tables
         } = payload;
 
 
@@ -300,6 +336,9 @@ function handleSave(message) {
 
         const placeholdersJson =
             JSON.stringify(placeholders || {});
+
+        const tablesJson =
+            JSON.stringify(tables || {});
 
 
         const docxBuffer =
@@ -326,6 +365,7 @@ function handleSave(message) {
                         types = @types,
                         locks = @locks,
                         placeholders = @placeholders,
+                        tables = @tables,
                         updated_at = @updated_at
                     WHERE id = @id
                 `)
@@ -338,6 +378,7 @@ function handleSave(message) {
                     types: typesJson,
                     locks: locksJson,
                     placeholders: placeholdersJson,
+                    tables: tablesJson,
                     updated_at: new Date().toISOString()
                 });
 
@@ -372,6 +413,7 @@ function handleSave(message) {
                         types,
                         locks,
                         placeholders,
+                        tables,
                         created_at,
                         updated_at
                     )
@@ -383,6 +425,7 @@ function handleSave(message) {
                         @types,
                         @locks,
                         @placeholders,
+                        @tables,
                         @created_at,
                         @updated_at
                     )
@@ -395,6 +438,7 @@ function handleSave(message) {
                     types: typesJson,
                     locks: locksJson,
                     placeholders: placeholdersJson,
+                    tables: tablesJson,
                     created_at: now,
                     updated_at: now
                 });
@@ -458,6 +502,7 @@ function handleList(message) {
                     types,
                     locks,
                     placeholders,
+                    tables,
                     created_at,
                     updated_at
                 FROM templates
@@ -475,6 +520,7 @@ function handleList(message) {
                 types: JSON.parse(row.types),
                 locks: JSON.parse(row.locks || "{}"),
                 placeholders: JSON.parse(row.placeholders || "{}"),
+                tables: JSON.parse(row.tables || "{}"),
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
@@ -529,6 +575,7 @@ function handleGet(message) {
                     types,
                     locks,
                     placeholders,
+                    tables,
                     created_at,
                     updated_at
                 FROM templates
@@ -572,6 +619,9 @@ function handleGet(message) {
 
             placeholders:
                 JSON.parse(row.placeholders || "{}"),
+
+            tables:
+                JSON.parse(row.tables || "{}"),
 
             created_at:
                 row.created_at,

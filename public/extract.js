@@ -50,7 +50,36 @@
         return Array.from(found);
     }
 
+    // นับว่าแต่ละ field ถูกใช้กี่ "ย่อหน้า"
+    // (ตรงกับตอนแทนค่า: 1 ย่อหน้า = ค่า/ตาราง 1 ชุด)
+    // field ที่เป็นตารางวางไว้หลายย่อหน้า จะได้ตารางหลายอัน — ใช้เตือนผู้ใช้ก่อนดาวน์โหลด
+    function countFields(xml) {
+        if (!xml) return {};
+
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        if (hasParseError(doc)) return {};
+
+        const paragraphs = doc.getElementsByTagNameNS(W_NS, 'p');
+        const containers = paragraphs.length > 0
+            ? Array.from(paragraphs)
+            : [doc.documentElement];
+
+        const counts = {};
+
+        for (const container of containers) {
+            const found = new Set();
+            collectFromContainer(container, found);
+
+            for (const field of found) {
+                counts[field] = (counts[field] || 0) + 1;
+            }
+        }
+
+        return counts;
+    }
+
     scope.Extract = {
-        extractFields: extractFields
+        extractFields: extractFields,
+        countFields: countFields
     };
 })(window);

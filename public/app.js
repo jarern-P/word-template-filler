@@ -126,6 +126,22 @@
         ) {
             config.setPlaceholders(null);
         }
+
+        // ล้างโครงตารางที่ตั้งไว้ (type = Table)
+        if (
+            config &&
+            config.setTableSchemas
+        ) {
+            config.setTableSchemas(null);
+        }
+
+        // ล้างแถวของตารางที่กรอกไว้ในหน้ารายงาน
+        if (
+            scope.ReportPage &&
+            scope.ReportPage.resetTables
+        ) {
+            scope.ReportPage.resetTables();
+        }
     }
 
     function getPageHTML(page) {
@@ -506,6 +522,65 @@
             return;
         }
 
+        // ── ช่องตั้งค่าตาราง (หน้า Template Configuration) ──
+
+        // จำนวนคอลัมน์
+        if (target.dataset.tableCount !== undefined) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setTableCount) {
+
+                config.setTableCount(
+                    target.dataset.tableCount,
+                    target.value
+                );
+            }
+
+            return;
+        }
+
+        // ชื่อหัวคอลัมน์ (มี index ของคอลัมน์มากับช่องด้วย)
+        if (
+            target.dataset.tableColumn !== undefined &&
+            target.dataset.tableColumnIndex !== undefined
+        ) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setTableColumn) {
+
+                config.setTableColumn(
+                    target.dataset.tableColumn,
+                    Number(target.dataset.tableColumnIndex),
+                    target.value
+                );
+            }
+
+            return;
+        }
+
+        // ── ช่องกรอกในตารางของหน้ารายงาน (data-table-row = ลำดับแถว) ──
+        if (target.dataset.tableInput !== undefined) {
+
+            const report =
+                getComponent(DEFAULT_PAGE);
+
+            if (report.setTableCell) {
+
+                report.setTableCell(
+                    target.dataset.tableInput,
+                    Number(target.dataset.tableRow),
+                    Number(target.dataset.tableCol),
+                    target.value
+                );
+            }
+
+            return;
+        }
+
         if (target.dataset.field) {
 
             // ช่อง currency แสดงรูปแบบตามโหมด (comma / ตัวหนังสือ)
@@ -538,6 +613,21 @@
                 currentPage
             )[target.dataset.persist] =
                 target.value;
+        }
+
+        // เปลี่ยน type ของ field → อัปเดตช่องตั้งค่าตารางของ field นั้น
+        // (แสดง/ซ่อน + สร้างช่องชื่อคอลัมน์ตามจำนวนที่ตั้งไว้)
+        if (
+            target.classList &&
+            target.classList.contains('field-type')
+        ) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.refreshTableConfig) {
+                config.refreshTableConfig(target.dataset.field);
+            }
         }
     }
 
@@ -810,6 +900,92 @@
                     onCurrencyToggle(
                         currencyToggle
                     );
+
+                    return;
+                }
+
+                // ปุ่มเพิ่มแถวของตาราง (หน้ารายงาน)
+                const addRowBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-table-add]')
+                        : null;
+
+                if (addRowBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.addTableRow) {
+                        report.addTableRow(addRowBtn.dataset.tableAdd);
+                    }
+
+                    return;
+                }
+
+                // ปุ่มลบแถวของตาราง (หน้ารายงาน)
+                const removeRowBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-table-remove]')
+                        : null;
+
+                if (removeRowBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.removeTableRow) {
+
+                        report.removeTableRow(
+                            removeRowBtn.dataset.tableRemove,
+                            Number(removeRowBtn.dataset.tableRow)
+                        );
+                    }
+
+                    return;
+                }
+
+                // ปุ่มผสานช่องกับช่องถัดไป (หน้ารายงาน)
+                const mergeCellBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-table-merge]')
+                        : null;
+
+                if (mergeCellBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.mergeTableCells) {
+
+                        report.mergeTableCells(
+                            mergeCellBtn.dataset.tableMerge,
+                            Number(mergeCellBtn.dataset.tableRow),
+                            Number(mergeCellBtn.dataset.tableGroup)
+                        );
+                    }
+
+                    return;
+                }
+
+                // ปุ่มแยกช่องที่ผสานอยู่ (หน้ารายงาน)
+                const unmergeCellBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-table-unmerge]')
+                        : null;
+
+                if (unmergeCellBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.unmergeTableCells) {
+
+                        report.unmergeTableCells(
+                            unmergeCellBtn.dataset.tableUnmerge,
+                            Number(unmergeCellBtn.dataset.tableRow),
+                            Number(unmergeCellBtn.dataset.tableGroup)
+                        );
+                    }
 
                     return;
                 }
@@ -1210,6 +1386,21 @@
         }
     }
 
+    // ตารางของหน้ารายงาน (type = Table) — ไปคนละทางกับค่าปกติ
+    // เพราะค่าของตารางไม่ใช่ข้อความ ต้องสร้างเป็นตาราง Word จริงใน replace.js
+    function collectTables() {
+
+        const component =
+            getComponent(currentPage);
+
+        return (
+            component &&
+            component.getTableValues
+        )
+            ? component.getTableValues()
+            : {};
+    }
+
     // ดูตัวอย่างข้อความในเอกสารก่อนดาวน์โหลด
     //
     // ตัวอย่างสร้างจาก xml ต้นฉบับ (แทน {{field}} เองในหน้าตัวอย่าง) จึงรู้ว่าค่าไหน
@@ -1245,11 +1436,15 @@
                 ? config.getLocks()
                 : null;
 
+        const tables =
+            collectTables();
+
         // รันจริงหนึ่งรอบ เพื่อให้ getWarnings/getApplied เป็นของค่าที่กรอกอยู่ตอนนี้
         scope.Replace.replaceFields(
             state.xml,
             values,
-            locks
+            locks,
+            tables
         );
 
         const notes = [];
@@ -1284,6 +1479,31 @@
             });
         }
 
+        // ตารางของ field ที่ {{field}} ถูกวางไว้หลายย่อหน้า → เอกสารจะได้ตารางหลายอัน
+        // (ผู้ใช้มักไม่รู้ตัวว่าวาง placeholder ซ้ำ จึงบอกจำนวนให้เห็นก่อนดาวน์โหลด)
+        const fieldUsage =
+            scope.Extract &&
+            scope.Extract.countFields
+                ? scope.Extract.countFields(state.xml)
+                : {};
+
+        Object.keys(tables).forEach(function (field) {
+
+            const copies =
+                fieldUsage[field] || 0;
+
+            if (copies > 1) {
+
+                notes.push({
+                    kind: 'warn',
+                    text:
+                        'ตาราง "' + field + '" จะถูกใส่ในเอกสาร ' + copies + ' ที่ ' +
+                        '({{' + field + '}} อยู่ใน ' + copies + ' ย่อหน้า) — ' +
+                        'ถ้าต้องการที่เดียว ให้เหลือ {{' + field + '}} ไว้ที่เดียวใน template'
+                });
+            }
+        });
+
         scope.PreviewDialog.open({
             // ใช้ชื่อไฟล์เต็ม (มี .docx) เพราะหัวเรื่องนี้คือ "ไฟล์ที่จะดาวน์โหลด"
             title:
@@ -1293,6 +1513,8 @@
                 state.xml,
             values:
                 values,
+            tables:
+                tables,
             notes:
                 notes
         });
@@ -1336,7 +1558,8 @@
             scope.Replace.replaceFields(
                 state.xml,
                 values,
-                locks
+                locks,
+                collectTables()
             );
 
         // ล็อกตำแหน่งได้ครบหรือไม่ + ปรับช่องว่างไปเท่าไร แจ้งบนหน้ารายงาน
@@ -1579,6 +1802,23 @@
                 config.setPlaceholders(keptPlaceholders);
             }
 
+            // ทิ้งโครงตารางของ field ที่หายไปจากไฟล์ใหม่ด้วย
+            if (config.getTableSchemas && config.setTableSchemas) {
+
+                const schemas =
+                    config.getTableSchemas();
+
+                const keptSchemas = {};
+
+                Object.keys(schemas).forEach(function (field) {
+                    if (present[field]) {
+                        keptSchemas[field] = schemas[field];
+                    }
+                });
+
+                config.setTableSchemas(keptSchemas);
+            }
+
             fillForm(CONFIG_PAGE);
 
             if (state.templateId) {
@@ -1658,6 +1898,9 @@
 
             await ensureDb();
 
+            const types =
+                config.getValues();
+
             const saved =
                 await scope.Db.save({
 
@@ -1677,13 +1920,20 @@
                         state.fields,
 
                     types:
-                        config.getValues(),
+                        types,
 
                     locks:
                         config.getLocks(),
 
                     placeholders:
-                        config.getPlaceholders()
+                        config.getPlaceholders(),
+
+                    // โครงตาราง (จำนวนคอลัมน์ / ชื่อหัวคอลัมน์)
+                    // ของ field ที่เป็น type Table
+                    tables:
+                        config.getTableSchemas
+                            ? config.getTableSchemas(types)
+                            : {}
 
                 });
 
@@ -1845,6 +2095,13 @@
             if (config.setPlaceholders) {
                 config.setPlaceholders(
                     record.placeholders
+                );
+            }
+
+            // คืนโครงตารางที่บันทึกไว้ใน template
+            if (config.setTableSchemas) {
+                config.setTableSchemas(
+                    record.tables
                 );
             }
 
@@ -2406,6 +2663,28 @@
                 values[field] = text;
             }
         });
+
+        // ตารางเก็บทั้งโครงและแถวไว้ (ไม่ใช่ข้อความ) เพื่อกดใช้ซ้ำแล้วได้แถวเดิม
+        if (report.getTableValues) {
+
+            const tables =
+                report.getTableValues();
+
+            Object.keys(tables).forEach(function (field) {
+
+                const rows = tables[field].rows || [];
+
+                const filled = rows.some(function (row) {
+                    return row.some(function (cell) {
+                        return String(cell == null ? '' : cell).trim() !== '';
+                    });
+                });
+
+                if (filled) {
+                    values[field] = tables[field];
+                }
+            });
+        }
 
         if (Object.keys(values).length === 0) {
             return;
@@ -3281,6 +3560,26 @@
                 )
                     ? config.getPlaceholders()
                     : {};
+            },
+
+        // จำนวนที่ {{field}} ถูกใช้ในเอกสาร (นับเป็นย่อหน้า)
+        // หน้า Template Configuration ใช้เตือนเมื่อ placeholder ของตารางถูกวางไว้หลายที่
+        // (ตารางจะถูกใส่ในเอกสารเท่าจำนวนที่วางไว้)
+        getFieldUsage:
+            function () {
+
+                if (
+                    !state.xml ||
+                    !scope.Extract ||
+                    !scope.Extract.countFields
+                ) {
+
+                    return {};
+                }
+
+                return scope.Extract.countFields(
+                    state.xml
+                );
             },
 
         // บันทึกคำที่ผู้ใช้เลือกจาก popup แนะนำคำ (รายการ "เพิ่มคำนี้")

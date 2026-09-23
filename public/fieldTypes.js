@@ -17,7 +17,8 @@
         { value: 'date', label: 'Date (วันที่)', input: 'date' },
         { value: 'checkbox', label: 'Checkbox (ติ๊ก/ไม่ติ๊ก)', input: 'checkbox' },
         { value: 'textarea', label: 'Long text (ข้อความยาว)', input: 'textarea' },
-        { value: 'email', label: 'Email', input: 'email' }
+        { value: 'email', label: 'Email', input: 'email' },
+        { value: 'table', label: 'Table (ตาราง)', input: 'table' }
     ];
 
     const byValue = {};
@@ -569,11 +570,331 @@
         return wrapper;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Table (ตาราง)
+    //
+    // หน้า Template Configuration กำหนด "จำนวนคอลัมน์" + ชื่อหัวคอลัมน์
+    // หน้ารายงานเพิ่ม/ลบแถว พิมพ์ค่าในแต่ละช่อง และผสานช่องได้
+    // (แถวรวมยอดก็ใช้การผสานช่องแล้วพิมพ์ข้อความเอง)
+    // ตอนสร้างเอกสาร replace.js จะแทรก "ตาราง Word จริง" (w:tbl)
+    // แทนย่อหน้าที่มี {{field}} อยู่
+    //
+    // ค่าของตารางไม่ใช่ข้อความ จึงไม่เก็บในช่องกรอกปกติ แต่เก็บเป็น
+    // { columns, rows, rowSpans } แยกจากค่าของ field อื่น
+    // ──────────────────────────────────────────────────────────────
+
+    const DEFAULT_TABLE_COLUMNS = 3;
+    const MAX_TABLE_COLUMNS = 12;
+
+    // โครงตารางของแต่ละ field (เป็นการตั้งค่า ไม่ใช่ข้อมูลที่ผู้ใช้กรอก)
+    const tableSchemas = {};
+
+    function makeColumnNames(count) {
+        const names = [];
+
+        for (let i = 0; i < count; i++) {
+            names.push('คอลัมน์ ' + (i + 1));
+        }
+
+        return names;
+    }
+
+    function defaultTableSchema() {
+        return {
+            columns: makeColumnNames(DEFAULT_TABLE_COLUMNS)
+        };
+    }
+
+    // ทำให้โครงตารางอยู่ในรูปที่ใช้ได้เสมอ (จำนวนคอลัมน์ 1..MAX)
+    function normalizeTableSchema(schema) {
+        if (!schema || typeof schema !== 'object') {
+            return defaultTableSchema();
+        }
+
+        let columns =
+            Array.isArray(schema.columns)
+                ? schema.columns.map(function (name) {
+                    return String(name == null ? '' : name);
+                })
+                : [];
+
+        if (columns.length === 0) {
+            columns = makeColumnNames(DEFAULT_TABLE_COLUMNS);
+        }
+
+        if (columns.length > MAX_TABLE_COLUMNS) {
+            columns = columns.slice(0, MAX_TABLE_COLUMNS);
+        }
+
+        return { columns: columns };
+    }
+
+    function getTableSchema(field) {
+        return normalizeTableSchema(tableSchemas[field]);
+    }
+
+    function setTableSchema(field, schema) {
+        tableSchemas[field] = normalizeTableSchema(schema);
+    }
+
+    function setTableSchemas(schemas) {
+        resetTableSchemas();
+
+        if (schemas && typeof schemas === 'object') {
+            Object.keys(schemas).forEach(function (field) {
+                setTableSchema(field, schemas[field]);
+            });
+        }
+    }
+
+    function resetTableSchemas() {
+        Object.keys(tableSchemas).forEach(function (field) {
+            delete tableSchemas[field];
+        });
+    }
+
+    function emptyTableRow(schema) {
+        return normalizeTableSchema(schema).columns.map(function () {
+            return '';
+        });
+    }
+
+    // input ของหนึ่งช่องในตาราง
+    // ใช้ data-table-input ไม่ใช่ data-field เพื่อไม่ให้ปนกับค่าของ type
+    function createTableCellInput(field, rowIndex, colIndex, value, placeholder) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'table-cell-input';
+        input.dataset.tableInput = field;
+        input.dataset.tableRow = String(rowIndex);
+        input.dataset.tableCol = String(colIndex);
+        input.autocomplete = 'off';
+        input.placeholder = placeholder || '';
+        input.value = value == null ? '' : String(value);
+        return input;
+    }
+
+    // ── กลุ่มช่องในแถว (ผสาน/แยกช่อง) ──
+    //
+    // 1 แถว = หลาย "กลุ่มช่อง" เรียงกัน แต่ละกลุ่มมี span (1 = ไม่ผสาน)
+    // ผลรวม span ต้องเท่ากับจำนวนคอลัมน์เสมอ ถ้าไม่ตรง (เช่น เพิ่ม/ลดคอลัมน์
+    // หรือโหลดค่าจากที่อื่น) จะกลับไปเป็น "ไม่ผสานทุกช่อง" ให้เอง
+    // ข้อความของกลุ่มที่ผสานเก็บไว้ที่ช่องเริ่มต้นของกลุ่ม
+    function normalizeRowSpans(spans, columnCount) {
+        const total = Math.max(Math.round(Number(columnCount)) || 0, 0);
+        const list = Array.isArray(spans)
+            ? spans.map(function (value) {
+                return Math.max(Math.round(Number(value)) || 1, 1);
+            })
+            : [];
+
+        const sum = list.reduce(function (all, value) {
+            return all + value;
+        }, 0);
+
+        const separated = [];
+
+        for (let i = 0; i < total; i++) {
+            separated.push(1);
+        }
+
+        return sum === total && list.length > 0 ? list : separated;
+    }
+
+    // ช่องเริ่มต้น (index ของคอลัมน์) ของกลุ่มที่ groupIndex
+    function startColumnOf(spans, groupIndex) {
+        let start = 0;
+
+        for (let i = 0; i < groupIndex; i++) {
+            start += spans[i];
+        }
+
+        return start;
+    }
+
+    // ปุ่มผสาน/แยกช่องของกลุ่มนั้น (ใช้ data-table-merge / data-table-unmerge)
+    function createTableGroupButton(kind, field, rowIndex, groupIndex, label, title) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'table-group-btn ' + kind;
+        button.textContent = label;
+        button.title = title;
+        button.setAttribute('aria-label', title);
+
+        if (kind === 'merge') {
+            button.dataset.tableMerge = field;
+        } else {
+            button.dataset.tableUnmerge = field;
+        }
+
+        button.dataset.tableRow = String(rowIndex);
+        button.dataset.tableGroup = String(groupIndex);
+
+        return button;
+    }
+
+    // แถวข้อมูล 1 แถว (แยกเป็นกลุ่มช่องตาม spans)
+    function createTableDataRow(field, schema, row, rowIndex, spans) {
+        const tr = document.createElement('tr');
+
+        const groups = normalizeRowSpans(spans, schema.columns.length);
+
+        let columnIndex = 0;
+
+        groups.forEach(function (span, groupIndex) {
+            const td = document.createElement('td');
+            td.className = span > 1 ? 'table-cell-group merged' : 'table-cell-group';
+            td.colSpan = span;
+            td.dataset.tableGroup = String(groupIndex);
+
+            const wrap = document.createElement('div');
+            wrap.className = 'table-cell-wrap';
+
+            // ช่องกรอกของกลุ่มนี้ ชี้ที่คอลัมน์เริ่มต้นของกลุ่ม
+            wrap.appendChild(
+                createTableCellInput(
+                    field,
+                    rowIndex,
+                    columnIndex,
+                    row[columnIndex],
+                    schema.columns[columnIndex]
+                )
+            );
+
+            // ยังมีกลุ่มถัดไป = ผสานต่อได้
+            if (groupIndex < groups.length - 1) {
+                wrap.appendChild(
+                    createTableGroupButton(
+                        'merge',
+                        field,
+                        rowIndex,
+                        groupIndex,
+                        '⇥ ผสาน',
+                        'ผสานช่องนี้กับช่องถัดไป'
+                    )
+                );
+            }
+
+            // กลุ่มที่ผสานอยู่ = แยกกลับได้ (ข้อความอยู่ในช่องแรกของกลุ่ม)
+            if (span > 1) {
+                wrap.appendChild(
+                    createTableGroupButton(
+                        'unmerge',
+                        field,
+                        rowIndex,
+                        groupIndex,
+                        'แยก',
+                        'แยกช่องที่ผสานออกเป็นช่องปกติ'
+                    )
+                );
+            }
+
+            td.appendChild(wrap);
+            tr.appendChild(td);
+
+            columnIndex += span;
+        });
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'table-row-actions';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'table-row-remove';
+        removeBtn.dataset.tableRemove = field;
+        removeBtn.dataset.tableRow = String(rowIndex);
+        removeBtn.title = 'ลบแถวนี้';
+        removeBtn.setAttribute('aria-label', 'ลบแถว ' + (rowIndex + 1));
+        removeBtn.textContent = '×';
+
+        actionCell.appendChild(removeBtn);
+        tr.appendChild(actionCell);
+
+        return tr;
+    }
+
+    function createTableHeaderRow(schema) {
+        const tr = document.createElement('tr');
+
+        schema.columns.forEach(function (name, index) {
+            const th = document.createElement('th');
+            th.textContent = name || ('คอลัมน์ ' + (index + 1));
+            tr.appendChild(th);
+        });
+
+        // ช่องว่างท้ายแถวสำหรับปุ่มลบแถว (ไม่ถูกเขียนลงเอกสาร)
+        const th = document.createElement('th');
+        th.className = 'table-row-actions';
+        tr.appendChild(th);
+
+        return tr;
+    }
+
+    // สร้างตารางของหน้ารายงาน ตามโครงที่ตั้งไว้ในหน้า Template Configuration
+    // rows = แถวข้อมูล, spans = ขนาดกลุ่มช่องของแต่ละแถว
+    // (แถวรวมยอดทำได้ด้วยการผสานช่องในแถวข้อมูลแล้วพิมพ์ข้อความเอง)
+    function createTableControl(field, options) {
+        const opts = options || {};
+        const schema = normalizeTableSchema(opts.schema || tableSchemas[field]);
+
+        const rows =
+            Array.isArray(opts.rows) && opts.rows.length > 0
+                ? opts.rows
+                : [emptyTableRow(schema)];
+
+        const spans = Array.isArray(opts.spans) ? opts.spans : [];
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-control table-field';
+        wrapper.dataset.tableField = field;
+
+        const scroller = document.createElement('div');
+        scroller.className = 'table-scroll';
+
+        const table = document.createElement('table');
+        table.className = 'field-table';
+
+        const thead = document.createElement('thead');
+        thead.appendChild(createTableHeaderRow(schema));
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+
+        rows.forEach(function (row, rowIndex) {
+            tbody.appendChild(
+                createTableDataRow(field, schema, row, rowIndex, spans[rowIndex])
+            );
+        });
+
+        table.appendChild(tbody);
+
+        scroller.appendChild(table);
+        wrapper.appendChild(scroller);
+
+        const actions = document.createElement('div');
+        actions.className = 'table-actions';
+
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'plain table-add-row';
+        addBtn.dataset.tableAdd = field;
+        addBtn.textContent = '＋ เพิ่มแถว';
+
+        actions.appendChild(addBtn);
+        wrapper.appendChild(actions);
+
+        return wrapper;
+    }
+
     // สร้าง control ของหน้ารายงานตาม type ที่ตั้งไว้
     // options.lookup = true → ช่องข้อความธรรมดาได้ปุ่มค้นหา Master Data
     function createFieldControl(value, field, options) {
         const type = get(value);
         const opts = options || {};
+
+        if (type.value === 'table') {
+            return createTableControl(field, opts);
+        }
 
         if (type.value === 'currency') {
             return createCurrencyControl(field, opts);
@@ -617,6 +938,16 @@
         setCurrencyMode: setCurrencyMode,
         getCurrencyMode: getCurrencyMode,
         resetCurrencyModes: resetCurrencyModes,
+        tableDefaultColumns: DEFAULT_TABLE_COLUMNS,
+        tableMaxColumns: MAX_TABLE_COLUMNS,
+        getTableSchema: getTableSchema,
+        setTableSchema: setTableSchema,
+        setTableSchemas: setTableSchemas,
+        resetTableSchemas: resetTableSchemas,
+        emptyTableRow: emptyTableRow,
+        normalizeRowSpans: normalizeRowSpans,
+        startColumnOf: startColumnOf,
+        createTableControl: createTableControl,
         createFieldControl: createFieldControl,
         formatValue: formatValue,
         defaultDateFormat: DEFAULT_DATE_FORMAT,
