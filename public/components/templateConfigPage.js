@@ -83,32 +83,19 @@
         countRow.appendChild(countLabel);
         countRow.appendChild(countInput);
 
-        const colsLabel = document.createElement('span');
-        colsLabel.className = 'table-config-label';
-        colsLabel.textContent = 'ชื่อหัวคอลัมน์ (เว้นว่าง = ใช้ชื่อเริ่มต้น)';
+        // ชื่อหัวคอลัมน์ + ความกว้างอยู่ในแถบเดียวกัน (ช่องกรอกเลขสัดส่วนแยกออกไปแล้ว
+        // — ปรับความกว้างด้วยการลากขอบระหว่างคอลัมน์ในแถบนี้แทน)
+        const previewLabel = document.createElement('span');
+        previewLabel.className = 'table-config-label';
+        previewLabel.textContent =
+            'ชื่อหัวคอลัมน์ + ความกว้างของคอลัมน์ — พิมพ์ชื่อในช่อง ' +
+            '(เว้นว่าง = ใช้ชื่อเริ่มต้น) และลากขอบระหว่างคอลัมน์ ' +
+            '(หรือโฟกัสขอบแล้วกด ← / →) เพื่อปรับความกว้าง';
 
-        const cols = document.createElement('div');
-        cols.className = 'table-cols';
-        cols.dataset.tableCols = field;
-
-        const widthsLabel = document.createElement('span');
-        widthsLabel.className = 'table-config-label';
-        widthsLabel.textContent =
-            'สัดส่วนความกว้างของคอลัมน์ (เช่น 2 กับ 1 = กว้างเป็นสองเท่า — เว้นว่าง = เท่ากันทุกคอลัมน์)';
-
-        const widths = document.createElement('div');
-        widths.className = 'table-cols table-widths';
-        widths.dataset.tableWidths = field;
-
-        // ตัวอย่างสัดส่วน — ลากขอบระหว่างคอลัมน์เพื่อปรับความกว้างได้เลย
+        // แถบชื่อคอลัมน์/สัดส่วน — ลากขอบระหว่างคอลัมน์เพื่อปรับความกว้างได้เลย
         const preview = document.createElement('div');
         preview.className = 'table-ratio-preview';
         preview.dataset.tablePreview = field;
-
-        const previewHint = document.createElement('p');
-        previewHint.className = 'hint';
-        previewHint.textContent =
-            'ตัวอย่างสัดส่วน — ลากขอบระหว่างคอลัมน์เพื่อปรับ หรือคลิกขอบแล้วกด ← / → ทีละ 0.1';
 
         const hint = document.createElement('p');
         hint.className = 'hint';
@@ -125,12 +112,8 @@
         usage.hidden = true;
 
         box.appendChild(countRow);
-        box.appendChild(colsLabel);
-        box.appendChild(cols);
-        box.appendChild(widthsLabel);
-        box.appendChild(widths);
+        box.appendChild(previewLabel);
         box.appendChild(preview);
-        box.appendChild(previewHint);
         box.appendChild(hint);
         box.appendChild(usage);
 
@@ -277,78 +260,24 @@
         if (!form) return found;
 
         form.querySelectorAll(
-            '[data-table-config], [data-table-count], [data-table-cols], ' +
-            '[data-table-widths], [data-table-preview]'
+            '[data-table-config], [data-table-count], [data-table-preview]'
         ).forEach(function (node) {
             const data = node.dataset;
 
             if (data.tableConfig === field) found.box = node;
             else if (data.tableCount === field) found.count = node;
-            else if (data.tableCols === field) found.cols = node;
-            else if (data.tableWidths === field) found.widths = node;
             else if (data.tablePreview === field) found.preview = node;
         });
 
         return found;
     }
 
-    // สร้างช่องชื่อหัวคอลัมน์ใหม่ทั้งชุด (เรียกเมื่อจำนวนคอลัมน์เปลี่ยน)
-    function renderColumnInputs(field, columns) {
-        const nodes = tableNodes(field);
-        if (!nodes.cols) return;
-
-        nodes.cols.innerHTML = '';
-
-        columns.forEach(function (name, index) {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'table-col-name';
-            // ใช้ data-table-column (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
-            input.dataset.tableColumn = field;
-            input.dataset.tableColumnIndex = String(index);
-            input.autocomplete = 'off';
-            input.value = name || '';
-            input.placeholder = 'ชื่อคอลัมน์ ' + (index + 1);
-            input.setAttribute('aria-label', 'ชื่อคอลัมน์ ' + (index + 1) + ' ของ ' + field);
-            nodes.cols.appendChild(input);
-        });
-    }
-
-    // สร้างช่องสัดส่วนความกว้างใหม่ทั้งชุด (เรียกพร้อมช่องชื่อคอลัมน์เสมอ)
-    function renderColumnWidthInputs(field, columns, widths) {
-        const nodes = tableNodes(field);
-        if (!nodes.widths) return;
-
-        nodes.widths.innerHTML = '';
-
-        columns.forEach(function (_, index) {
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.min = '0.1';
-            input.step = '0.1';
-            input.className = 'table-col-width';
-            // ใช้ data-table-width (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
-            input.dataset.tableWidth = field;
-            input.dataset.tableWidthIndex = String(index);
-            input.autocomplete = 'off';
-            input.value = String(widths[index]);
-            input.placeholder = '1';
-            input.setAttribute(
-                'aria-label',
-                'สัดส่วนความกว้างคอลัมน์ ' + (index + 1) + ' ของ ' + field
-            );
-            nodes.widths.appendChild(input);
-        });
-
-        // ตัวอย่างสัดส่วนเดินตามค่าในช่อง (ไม่สร้างใหม่ จะได้ไม่สะดุดระหว่างลาก)
-        scheduleRatioPreview(field, columns);
-    }
-
-    // ── ตัวอย่างสัดส่วน (ลากขอบปรับความกว้างได้) ──
+    // ── ชื่อคอลัมน์ + ตัวอย่างสัดส่วน (ลากขอบปรับความกว้างได้) ──
     //
-    // แถบแนวนอนแบ่งตามสัดส่วนของแต่ละคอลัมน์ ระหว่างคอลัมน์มี "ที่จับ" ให้ลาก
+    // แต่ละช่องของแถบเป็น "ช่องพิมพ์ชื่อคอลัมน์" และระหว่างคอลัมน์มี "ที่จับ" ให้ลาก
     // การลากย้ายเฉพาะขอบเส้นนั้น (คอลัมน์ซ้าย + ขวาสลับความกว้างกัน)
-    // ผลรวมสัดส่วนทั้งแถวจึงคงเดิมเสมอ — เห็นผลทันทีทั้งตัวอย่าง ช่องสัดส่วน และโครงตาราง
+    // ผลรวมสัดส่วนทั้งแถวจึงคงเดิมเสมอ — เห็นผลทันทีทั้งตัวอย่างและโครงตาราง
+    // (ตัวเลขสัดส่วนของแต่ละคอลัมน์แสดงกำกับใต้ช่องชื่อ — ไม่มีช่องกรอกเลขแยกแล้ว)
     //
     // ทำงานด้วยปุ่มลูกศรได้ด้วย (โฟกัสที่จับแล้วกด ← / → ทีละ 0.1)
 
@@ -401,23 +330,38 @@
         scope.FieldTypes.setTableSchema(field, schema);
     }
 
-    // สร้างแถบตัวอย่างใหม่ทั้งอัน (เรียกเมื่อจำนวนคอลัมน์เปลี่ยน)
+    // สร้างแถบใหม่ทั้งอัน (เรียกเมื่อจำนวนคอลัมน์เปลี่ยน)
+    // แต่ละช่องมี "ช่องพิมพ์ชื่อคอลัมน์" + ตัวเลขสัดส่วนกำกับ และมีที่จับคั่นระหว่างคอลัมน์
     function renderRatioPreview(field, columns, widths) {
         const nodes = tableNodes(field);
         if (!nodes.preview) return;
 
         nodes.preview.innerHTML = '';
 
-        columns.forEach(function (_, index) {
+        columns.forEach(function (name, index) {
             const cell = document.createElement('div');
             cell.className = 'table-ratio-cell';
             cell.style.flexGrow = String(widths[index] || 1);
 
-            const label = document.createElement('span');
-            label.className = 'table-ratio-label';
-            label.textContent = formatRatio(widths[index]);
+            // ชื่อหัวคอลัมน์อยู่ในแถบเดียวกับที่ลากปรับความกว้าง — ไม่มีช่องกรอกแยกอีก
+            // ใช้ data-table-column (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'table-col-name';
+            input.dataset.tableColumn = field;
+            input.dataset.tableColumnIndex = String(index);
+            input.autocomplete = 'off';
+            input.value = name || '';
+            input.placeholder = 'ชื่อคอลัมน์ ' + (index + 1);
+            input.setAttribute('aria-label', 'ชื่อคอลัมน์ ' + (index + 1) + ' ของ ' + field);
 
-            cell.appendChild(label);
+            const ratio = document.createElement('span');
+            ratio.className = 'table-ratio-label';
+            ratio.textContent = formatRatio(widths[index]);
+            ratio.setAttribute('aria-hidden', 'true');
+
+            cell.appendChild(input);
+            cell.appendChild(ratio);
             nodes.preview.appendChild(cell);
 
             // ที่จับอยู่ระหว่างคอลัมน์ (คอลัมน์สุดท้ายไม่มี)
@@ -442,6 +386,7 @@
             ' — ลากหรือกดลูกศรซ้าย/ขวาเพื่อปรับความกว้าง'
         );
         updateRatioHandleAria(handle, widths, index);
+        updateRatioHandleLabel(handle, widths, index);
 
         handle.addEventListener('mousedown', function (event) {
             startRatioDrag(field, index, handle, event);
@@ -474,6 +419,21 @@
             'aria-valuenow',
             String(Math.round(Number(widths[index]) / (total || 1) * 100))
         );
+    }
+
+    // แสดงสัดส่วนจริงเป็น tooltip ของที่จับ (ไม่มีช่องกรอกเลขให้ดูค่าอีกแล้ว)
+    function updateRatioHandleLabel(handle, widths, index) {
+        const right = widths[index + 1];
+
+        if (right == null) {
+            handle.title = '';
+            return;
+        }
+
+        handle.title =
+            'สัดส่วนคอลัมน์ ' + (index + 1) + ' : ' + (index + 2) + ' = ' +
+            formatRatio(widths[index]) + ' : ' + formatRatio(right) +
+            ' — ลาก หรือโฟกัสแล้วกด ← / → เพื่อปรับ';
     }
 
     // เริ่มลากขอบ — เก็บตำแหน่งเมาส์/สัดส่วนต้นไว้ แล้วอัปเดตตามระยะที่ลาก
@@ -541,12 +501,16 @@
         syncRatioPreview(field, next);
     }
 
-    // อัปเดตตัวอย่าง/ช่องสัดส่วนให้ตรงกับค่าใหม่ โดยไม่สร้าง element ใหม่
-    // (การลากเรียกบ่อย จึงแค่แก้ flex/เลข/ค่าในช่อง — โฟกัสค้างที่เดิม)
+    // อัปเดตชื่อคอลัมน์/เลขสัดส่วน/ตำแหน่งที่จับให้ตรงกับค่าใหม่ โดยไม่สร้าง element ใหม่
+    // (การลากเรียกบ่อย จึงแค่แก้ flex/ข้อความ — ช่องที่กำลังโฟกัสไม่ถูกแทนที่)
     function syncRatioPreview(field, widths) {
         const nodes = tableNodes(field);
 
         if (!nodes.preview) return;
+
+        const schema = scope.FieldTypes.getTableSchema(field);
+        const columns = schema.columns;
+        const ratios = widths || scope.FieldTypes.getColumnWidths(schema);
 
         let cellIndex = 0;
 
@@ -554,9 +518,19 @@
             if (!node.classList) return;
 
             if (node.classList.contains('table-ratio-cell')) {
-                const ratio = widths[cellIndex];
+                const ratio = ratios[cellIndex];
 
                 node.style.flexGrow = String(ratio);
+
+                // ช่องชื่อเดินตามโครงตาราง — เว้นช่องที่กำลังพิมพ์อยู่กลางคำ
+                const input = node.querySelector('.table-col-name');
+
+                if (input && input !== document.activeElement) {
+                    input.value =
+                        columns[cellIndex] == null
+                            ? ''
+                            : String(columns[cellIndex]);
+                }
 
                 const label = node.querySelector('.table-ratio-label');
 
@@ -564,41 +538,30 @@
 
                 cellIndex++;
             } else if (node.classList.contains('table-ratio-handle')) {
-                updateRatioHandleAria(node, widths, Math.max(cellIndex - 1, 0));
+                const index = Math.max(cellIndex - 1, 0);
+
+                updateRatioHandleAria(node, ratios, index);
+                updateRatioHandleLabel(node, ratios, index);
             }
         });
-
-        // ช่องสัดส่วนเดินตาม (ค่าที่แสดงเป็นตัวเดียวกับในโครงตาราง)
-        // เว้นช่องที่กำลังโฟกัส — กำลังพิมพ์อยู่ เช่น "1." ห้ามแทนที่กลางคำ
-        if (nodes.widths) {
-            Array.prototype.forEach.call(
-                nodes.widths.querySelectorAll('input'),
-                function (input, index) {
-                    if (
-                        index < widths.length &&
-                        input !== document.activeElement
-                    ) {
-                        input.value = String(widths[index]);
-                    }
-                }
-            );
-        }
     }
 
-    // เตรียมตัวอย่างสัดส่วนของ field — มีแถบอยู่แล้ว = อัปเดตเฉย ๆ ไม่สร้างใหม่
-    // (เรียกทุกครั้งที่วาดช่องสัดส่วน จะได้เห็นค่าตรงกันเสมอ)
+    // เตรียมแถบชื่อคอลัมน์/สัดส่วนของ field — มีแถบอยู่แล้ว = อัปเดตเฉย ๆ ไม่สร้างใหม่
+    // (ไม่สร้างใหม่ = ช่องที่กำลังพิมพ์อยู่ไม่เสียโฟกัส)
     function scheduleRatioPreview(field, columns) {
         const nodes = tableNodes(field);
         if (!nodes.preview) return;
 
         const schema = scope.FieldTypes.getTableSchema(field);
+        const widths = scope.FieldTypes.getColumnWidths(schema);
 
+        // จำนวนช่องเดิม (ช่องกรอก + ที่จับ) ยังตรงกับจำนวนคอลัมน์ = แค่อัปเดตค่า
         if (nodes.preview.childNodes.length === columns.length * 2 - 1) {
-            syncRatioPreview(field, schema.widths);
+            syncRatioPreview(field, widths);
             return;
         }
 
-        renderRatioPreview(field, columns, schema.widths);
+        renderRatioPreview(field, columns, widths);
     }
 
     // จำนวนที่ {{field}} ถูกวางไว้ในเอกสาร (นับเป็นย่อหน้า)
@@ -658,8 +621,7 @@
 
         if (nodes.count) nodes.count.value = String(schema.columns.length);
 
-        renderColumnInputs(field, schema.columns);
-        renderColumnWidthInputs(field, schema.columns, schema.widths);
+        scheduleRatioPreview(field, schema.columns);
         renderTableUsage(field);
     }
 
@@ -760,19 +722,6 @@
 
         schema.columns[index] = String(value == null ? '' : value);
         scope.FieldTypes.setTableSchema(field, schema);
-    };
-
-    // แก้สัดส่วนความกว้างของคอลัมน์หนึ่ง (เลขไม่ถูกต้อง = กลับเป็น 1)
-    page.setTableWidth = function (field, index, value) {
-        const schema = scope.FieldTypes.getTableSchema(field);
-
-        if (!(index >= 0 && index < schema.columns.length)) return;
-
-        schema.widths[index] = scope.FieldTypes.normalizeColumnRatio(value);
-        scope.FieldTypes.setTableSchema(field, schema);
-
-        // ตัวอย่างสัดส่วนเดินตามค่าที่พิมพ์ทันที (ช่องที่โฟกัสไม่ถูกแทนที่)
-        syncRatioPreview(field, scope.FieldTypes.getColumnWidths(schema));
     };
 
     // โครงตารางของทุก field ที่เป็น type table (บันทึกพร้อม template)

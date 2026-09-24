@@ -606,27 +606,6 @@
             return;
         }
 
-        // สัดส่วนความกว้างของคอลัมน์ (หน้า Template Configuration)
-        if (
-            target.dataset.tableWidth !== undefined &&
-            target.dataset.tableWidthIndex !== undefined
-        ) {
-
-            const config =
-                getComponent(CONFIG_PAGE);
-
-            if (config.setTableWidth) {
-
-                config.setTableWidth(
-                    target.dataset.tableWidth,
-                    Number(target.dataset.tableWidthIndex),
-                    target.value
-                );
-            }
-
-            return;
-        }
-
         // ── ช่องกรอกในตารางของหน้ารายงาน (data-table-row = ลำดับแถว) ──
         if (target.dataset.tableInput !== undefined) {
 
