@@ -234,10 +234,14 @@
         const digits = input.dataset.currencyValue || '';
         const textMode = getCurrencyMode(input.dataset.field) === CURRENCY_MODES.TEXT;
 
+        // ช่องที่ยังไม่มีค่าต้องพิมพ์ได้เสมอ ไม่งั้นโหมดตัวหนังสือจะเหลือช่องว่างที่กดไม่ได้เลย
+        const locked = textMode && digits !== '';
+
         input.value = formatCurrency(digits, textMode ? CURRENCY_MODES.TEXT : CURRENCY_MODES.NUMBER);
-        input.readOnly = textMode;
-        input.title = textMode
-            ? 'โหมดตัวหนังสือ (อ่านอย่างเดียว) — กดปุ่มด้านขวาเพื่อสลับกลับเป็นตัวเลขเพื่อแก้ไข'
+        input.readOnly = locked;
+        input.classList.toggle('currency-text-mode', locked);
+        input.title = locked
+            ? 'โหมดตัวหนังสือ (อ่านอย่างเดียว) — คลิกที่ช่องหรือกดปุ่มด้านขวาเพื่อกลับมาแก้ไขเป็นตัวเลข'
             : '';
     }
 
@@ -323,6 +327,11 @@
         toggleBtn.title = 'สลับระหว่างตัวเลข (1,000) กับตัวหนังสือ (หนึ่งพันบาทถ้วน)';
         toggleBtn.setAttribute('aria-label', toggleBtn.title);
         toggleBtn.textContent = TOGGLE_LABELS[getCurrencyMode(field)];
+        // โหมดตัวหนังสือต้องเห็นสถานะได้ทันทีหลังวาดฟอร์มใหม่ (เปลี่ยนหน้า/โหลด)
+        toggleBtn.classList.toggle(
+            'active',
+            getCurrencyMode(field) === CURRENCY_MODES.TEXT
+        );
 
         wrapper.appendChild(input);
         wrapper.appendChild(toggleBtn);

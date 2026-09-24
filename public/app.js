@@ -164,6 +164,27 @@
         );
     }
 
+    // ชื่อเอกสารที่กรอกเสร็จแล้ว (ใช้ตอน Download DOCX / ตัวอย่างเอกสาร)
+    // ใช้ชื่อแม่แบบที่ตั้ง/บันทึกไว้ ถ้ายังไม่มีจึงใช้ชื่อไฟล์ .docx ต้นฉบับ
+    // และตัดอักขระที่ตั้งเป็นชื่อไฟล์บน Windows ไม่ได้ออก
+    function templateOutputName() {
+
+        const name =
+            String(
+                getPageMeta(
+                    CONFIG_PAGE
+                ).templateName || ''
+            ).trim() ||
+            defaultTemplateName(
+                state.fileName
+            );
+
+        return name.replace(
+            /[\\/:*?"<>|]+/g,
+            '-'
+        );
+    }
+
     async function readDocumentXml(bytes) {
 
         const zip =
@@ -249,7 +270,12 @@
     }
 
     // วาดฟอร์ม + ปุ่มของหน้าให้ตรงกับ state ปัจจุบัน
+    //
+    // เรียกทุกครั้งที่หน้า/ไฟล์เปลี่ยน (เปลี่ยนหน้า โหลด บันทึก ล้างค่า) จึงปิด popup
+    // ที่ค้างอยู่ตรงนี้ด้วย — overlay ที่ค้างจะทับฟอร์มใหม่ ทำให้ช่องกรอกกด/พิมพ์ไม่ได้
     function fillForm(page) {
+
+        closeOpenPopups();
 
         // หน้าที่ไม่ผูกกับไฟล์ .docx (เช่น Master Data) วาด UI เองทั้งหมด
         if (getComponent(page).standalone) {
@@ -297,6 +323,24 @@
         if (component.setSaveEnabled) {
             component.setSaveEnabled(true);
         }
+    }
+
+    // ปิด popup ทุกตัวที่ค้างอยู่ (date picker / lookup / preview / ลิสต์เลือก / แนะนำคำ)
+    // overlay ที่ค้างจะทับฟอร์มของหน้าใหม่ ทำให้ช่องกรอกดูเหมือนถูกปิดใช้งาน (กด/พิมพ์ไม่ได้)
+    function closeOpenPopups() {
+
+        [
+            scope.SelectMenu,
+            scope.SuggestMenu,
+            scope.DatePicker,
+            scope.MasterLookup,
+            scope.PreviewDialog
+        ].forEach(function (popup) {
+
+            if (popup && popup.close) {
+                popup.close();
+            }
+        });
     }
 
     function renderPage(page) {
@@ -755,7 +799,97 @@
         return found;
     }
 
+    function findCurrencyToggle(field) {
+
+        const form =
+            document.getElementById('form');
+
+        if (!form) {
+            return null;
+        }
+
+        let found = null;
+
+        form.querySelectorAll('[data-currency-toggle]').forEach(function (button) {
+            if (button.dataset.currencyToggle === field) {
+                found = button;
+            }
+        });
+
+        return found;
+    }
+
+    // ช่อง currency ที่แสดงเป็นตัวหนังสือ (อ่านอย่างเดียวชั่วคราว):
+    // โฟกัส/คลิกที่ช่อง = ผู้ใช้ต้องการแก้ไข จึงสลับกลับเป็นโหมดตัวเลขให้พิมพ์ต่อได้ทันที
+    // ช่องจึงไม่ค้างอยู่ในสภาพ "กดไม่ได้" หลังโหลด/บันทึก/เปลี่ยนหน้า
+    function onCurrencyEditRequest(input) {
+
+        if (!input || !input.readOnly) {
+            return;
+        }
+
+        const field =
+            input.dataset.field;
+
+        scope.FieldTypes.setCurrencyMode(
+            field,
+            scope.FieldTypes.CURRENCY_MODES.NUMBER
+        );
+
+        scope.FieldTypes.refreshCurrencyInputDisplay(
+            input
+        );
+
+        // ปุ่ม toggle ต้องบอกโหมดใหม่ให้ตรงกัน
+        const toggle =
+            findCurrencyToggle(field);
+
+        if (toggle) {
+
+            toggle.textContent =
+                'เปลี่ยนเป็นตัวอักษร';
+
+            toggle.classList.remove('active');
+        }
+
+        // รูปที่จะเขียนลงเอกสารเปลี่ยน คำเตือนล็อกตำแหน่งเดิมอาจไม่จริงอีก
+        clearReplaceWarnings();
+
+        // ประทับเคอร์เซอร์ไว้ท้ายค่า เพื่อพิมพ์ต่อได้ทันที
+        if (input.setSelectionRange) {
+
+            const end =
+                input.value.length;
+
+            input.setSelectionRange(
+                end,
+                end
+            );
+        }
+    }
+
     function bindMainEvents() {
+
+        // ช่องจำนวนเงินโหมดตัวหนังสือ: คลิก/โฟกัสแล้วกลับมาแก้ไขเป็นตัวเลขทันที
+        mainEl.addEventListener(
+            'focusin',
+            function (event) {
+
+                const target =
+                    event.target;
+
+                if (
+                    target &&
+                    target.dataset &&
+                    target.dataset.currencyInput === '1'
+                ) {
+
+                    onCurrencyEditRequest(
+                        target
+                    );
+                }
+            }
+        );
 
         mainEl.addEventListener(
             'change',
@@ -1624,7 +1758,8 @@
             // ใช้ชื่อไฟล์เต็ม (มี .docx) เพราะหัวเรื่องนี้คือ "ไฟล์ที่จะดาวน์โหลด"
             title:
                 'ตัวอย่างเอกสาร — ' +
-                (state.fileName || 'template.docx'),
+                templateOutputName() +
+                '-filled.docx',
             xml:
                 state.xml,
             values:
@@ -1708,9 +1843,8 @@
 
             downloadBlob(
                 blob,
-                defaultTemplateName(
-                    state.fileName
-                ) + '-filled.docx'
+                templateOutputName() +
+                '-filled.docx'
             );
 
             // เก็บชุดค่าที่เพิ่งสร้างเอกสารไว้ให้กดใช้ซ้ำ (หน้า "ประวัติ")

@@ -14,13 +14,13 @@
     // - ดาวน์โหลด: ได้ไฟล์ต้นฉบับที่เก็บไว้ (ยังไม่ถูกแทนค่า)
     // - อัปโหลดทับ: เอาไฟล์ที่แก้ไขนอกแอปมาทับไฟล์เดิม (มี confirm ก่อนทับใน app.js)
     // - input file ถูกซ่อน เพราะเปิดผ่านปุ่มเพื่อให้เข้าชุดกับปุ่มอื่น
+    // ปุ่มทั้งหมด (รวม Save Template และ Clear) ถูกรวมเป็นแถวเดียวโดย FormPage
+    // (ดู actionsRow ใน FormPage.create) จึงไม่ต้องมี div.form-actions ของตัวเอง
     const ACTIONS_HTML = [
-        '<div class="form-actions">',
-        '    <button id="downloadTemplateBtn" type="button" class="plain" disabled>' +
+        '<button id="downloadTemplateBtn" type="button" class="plain" disabled>' +
             'ดาวน์โหลด แม่แบบ ต้นฉบับ</button>',
-        '    <button id="replaceTemplateBtn" type="button" class="danger" disabled>' +
+        '<button id="replaceTemplateBtn" type="button" class="danger" disabled>' +
             'อัปโหลดไฟล์ใหม่ทับไฟล์เดิม</button>',
-        '</div>',
         '<input type="file" id="replaceFileInput" accept=".docx" hidden>',
         '<button id="saveBtn" type="button" disabled>Save Template</button>'
     ].join('\n');
@@ -256,6 +256,8 @@
         title: 'ตั้งค่าแม่แบบ',
         formTitle: 'ตั้งค่า Type ของแต่ละ Field',
         showDownload: false,   // หน้านี้มีแต่ค่า type ไม่ใช่ค่าที่จะใส่เอกสาร
+        // รวมปุ่มจัดการไฟล์ / Save Template / Clear ไว้แถวเดียวกัน (แบบหน้ารายงาน)
+        actionsRow: true,
         renderControl: createTypeSelect,
         metaHTML: META_HTML,
         actionsHTML: ACTIONS_HTML,

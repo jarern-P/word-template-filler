@@ -45,6 +45,8 @@
     const page = scope.FormPage.create({
         title: 'Word Template Filler',
         showFileInput: false,
+        // รวมปุ่ม ดูตัวอย่าง / Download DOCX / Clear ไว้แถวเดียวกันใต้ฟอร์ม
+        actionsRow: true,
         metaHTML: META_HTML,
         actionsHTML: ACTIONS_HTML,
         footerHTML: FOOTER_HTML,

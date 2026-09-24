@@ -77,6 +77,9 @@
         const showFileInput = config.showFileInput !== false;
         // หน้าที่มีแต่ค่า config (เช่น หน้า Template Configuration) ไม่ควรมีปุ่มดาวน์โหลด
         const showDownload = config.showDownload !== false;
+        // true = รวมปุ่มของหน้า (actionsHTML + download + clear) ไว้ในแถวเดียวกัน
+        // เพื่อให้ปุ่มเรียงชิดกันสวยงาม แทนที่จะกระจายอยู่คนละบรรทัด
+        const actionsRow = config.actionsRow === true;
 
         return {
             title: title,
@@ -93,16 +96,30 @@
                     );
                 }
 
-                parts.push(metaHTML, '<div id="form"></div>', actionsHTML);
+                parts.push(metaHTML, '<div id="form"></div>');
 
-                if (showDownload) {
-                    parts.push('<button id="downloadBtn" type="button" style="display:none">Download DOCX</button>');
+                // ปุ่มของหน้า: ปุ่มพิเศษของแต่ละหน้า (actionsHTML) มาก่อน แล้วตามด้วย
+                // ปุ่มดาวน์โหลด/ล้างค่า — เก็บเป็นชิ้นแล้วค่อยประกอบเป็นแถวเดียวหรือแยกบรรทัด
+                const buttons = [];
+
+                if (actionsHTML) {
+                    buttons.push(actionsHTML);
                 }
 
-                parts.push(
-                    '<button id="clearBtn" type="button" style="display:none">Clear</button>',
-                    footerHTML
-                );
+                if (showDownload) {
+                    buttons.push('<button id="downloadBtn" type="button" style="display:none">Download DOCX</button>');
+                }
+
+                // ปุ่มล้างค่าเป็นปุ่มรอง (ขอบจาง) เพื่อไม่ให้แย่งความสนใจกับปุ่มดาวน์โหลด
+                buttons.push('<button id="clearBtn" type="button" class="plain" style="display:none">Clear</button>');
+
+                if (actionsRow) {
+                    parts.push('<div class="form-actions page-actions">', buttons.join('\n'), '</div>');
+                } else {
+                    parts.push(buttons.join('\n'));
+                }
+
+                parts.push(footerHTML);
 
                 return parts.join('\n');
             },

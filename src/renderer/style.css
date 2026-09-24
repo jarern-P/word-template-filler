@@ -969,6 +969,16 @@ button.danger:hover {
     margin-top: 16px;
 }
 
+/* แถวปุ่มของหน้า (ดูตัวอย่าง / ดาวน์โหลด / ล้างค่า) — ชิดกันเป็นแถวเดียว */
+.form-actions.page-actions {
+    align-items: center;
+    margin-top: 22px;
+}
+
+.form-actions.page-actions button {
+    margin-top: 0;
+}
+
 .master-toolbar {
     display: flex;
     align-items: center;
@@ -1102,6 +1112,14 @@ button.danger:hover {
     background: var(--pink-100);
     border-color: var(--pink-300);
     box-shadow: inset 0 0 0 1px var(--pink-200);
+}
+
+/* ช่องจำนวนเงินที่แสดงเป็นข้อความไทย (โหมดตัวหนังสือ) — อ่านอย่างเดียวชั่วคราว
+   คลิกที่ช่องแล้วกลับมาแก้ไขเป็นตัวเลขได้ จึงไม่ทำให้ช่องดูเหมือนถูกปิดใช้งาน */
+.currency-field input.currency-text-mode {
+    cursor: text;
+    color: var(--ink-soft);
+    background: var(--surface-soft);
 }
 
 /* ──────────────────────────────────────────────────────────────
