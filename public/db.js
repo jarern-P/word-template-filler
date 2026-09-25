@@ -202,12 +202,61 @@
         },
 
         // นำเข้าข้อมูล master หลายรายการพร้อมกัน (จากไฟล์ Excel)
-        // payload = { rows: [{ codeGroup, name }, ...] }
+        // payload = { rows: [{ codeGroup, subGroup, name }, ...] }
         masterImport: function (payload) {
 
             return dbRequest(
                 'dbMasterImport',
                 payload
+            );
+
+        },
+
+        // ── กลุ่ม / กลุ่มย่อย ที่กำหนดไว้ล่วงหน้า ──
+
+        // คืน [{ id, name, subgroups: [{ id, group_id, name }] }]
+        groupList: function () {
+
+            return dbRequest(
+                'dbGroupList'
+            );
+
+        },
+
+        // payload = { id, name } — id = 0 คือเพิ่มใหม่
+        groupSave: function (payload) {
+
+            return dbRequest(
+                'dbGroupSave',
+                payload
+            );
+
+        },
+
+        groupDelete: function (id) {
+
+            return dbRequest(
+                'dbGroupDelete',
+                id
+            );
+
+        },
+
+        // payload = { id, groupId, name } — id = 0 คือเพิ่มใหม่
+        subgroupSave: function (payload) {
+
+            return dbRequest(
+                'dbSubgroupSave',
+                payload
+            );
+
+        },
+
+        subgroupDelete: function (id) {
+
+            return dbRequest(
+                'dbSubgroupDelete',
+                id
             );
 
         },

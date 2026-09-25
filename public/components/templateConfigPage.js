@@ -89,8 +89,9 @@
         previewLabel.className = 'table-config-label';
         previewLabel.textContent =
             'ชื่อหัวคอลัมน์ + ความกว้างของคอลัมน์ — พิมพ์ชื่อในช่อง ' +
-            '(เว้นว่าง = ใช้ชื่อเริ่มต้น) และลากขอบระหว่างคอลัมน์ ' +
-            '(หรือโฟกัสขอบแล้วกด ← / →) เพื่อปรับความกว้าง';
+            '(กด Enter เพื่อขึ้นบรรทัดใหม่, เว้นว่าง = ใช้ชื่อเริ่มต้น) ' +
+            'คลิกช่องชื่อคอลัมน์แล้วจัดรูปแบบได้จากกล่องเครื่องมือด้านบน ' +
+            'และลากขอบระหว่างคอลัมน์ (หรือโฟกัสขอบแล้วกด ← / →) เพื่อปรับความกว้าง';
 
         // แถบชื่อคอลัมน์/สัดส่วน — ลากขอบระหว่างคอลัมน์เพื่อปรับความกว้างได้เลย
         const preview = document.createElement('div');
@@ -112,6 +113,8 @@
         usage.hidden = true;
 
         box.appendChild(countRow);
+        // กล่องเครื่องมือจัดรูปแบบหัวตาราง (ทำกับ "คอลัมน์ที่เลือกอยู่" — เหมือนหน้ารายงาน)
+        box.appendChild(createHeaderToolbar(field));
         box.appendChild(previewLabel);
         box.appendChild(preview);
         box.appendChild(hint);
@@ -330,11 +333,148 @@
         scope.FieldTypes.setTableSchema(field, schema);
     }
 
+    // ช่องพิมพ์ชื่อหัวคอลัมน์ — เป็น textarea เพื่อให้ขึ้นบรรทัดใหม่ได้
+    // (Enter ในช่อง = ขึ้นบรรทัดใหม่ ไม่ใช่ส่งฟอร์ม)
+    function createColumnNameInput(field, index, name, style) {
+        const textarea = document.createElement('textarea');
+        textarea.className = 'table-col-name';
+        textarea.rows = 2;
+        // ใช้ data-table-column (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
+        textarea.dataset.tableColumn = field;
+        textarea.dataset.tableColumnIndex = String(index);
+        textarea.autocomplete = 'off';
+        textarea.value = name || '';
+        textarea.placeholder = 'ชื่อคอลัมน์ ' + (index + 1);
+        textarea.setAttribute('aria-label', 'ชื่อคอลัมน์ ' + (index + 1) + ' ของ ' + field);
+        applyHeaderStyleToInput(textarea, style);
+        return textarea;
+    }
+
+    // ── รูปแบบหัวคอลัมน์ (จัดตำแหน่ง / ตัวหนา) ──
+    //
+    // ทำกับ "คอลัมน์ที่เลือกอยู่" (ช่องชื่อที่เพิ่งโฟกัส) เหมือนแถบจัดรูปแบบของหน้ารายงาน
+    // ปุ่ม disabled จนกว่าจะเลือกคอลัมน์ เพื่อไม่ให้สับสนว่าจะแก้คอลัมน์ไหน
+
+    // คอลัมน์หัวตารางที่เลือกอยู่ ({ field, index } หรือ null = ยังไม่เลือก)
+    let activeHeader = null;
+
+    function applyHeaderStyleToInput(input, style) {
+        if (!input) return;
+
+        const headerStyle = scope.FieldTypes.normalizeHeaderStyle(style);
+
+        input.style.textAlign = headerStyle.align;
+        input.style.fontWeight = headerStyle.bold ? '700' : '400';
+    }
+
+    function findColumnNameInput(field, index) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-table-column]').forEach(function (input) {
+            if (
+                input.dataset.tableColumn === field &&
+                Number(input.dataset.tableColumnIndex) === Number(index)
+            ) {
+                found = input;
+            }
+        });
+
+        return found;
+    }
+
+    // กล่องเครื่องมือ 1 กล่องต่อ 1 ตาราง (วางไว้เหนือแถบชื่อคอลัมน์)
+    function createHeaderToolbar(field) {
+        const bar = document.createElement('div');
+        bar.className = 'table-formatbar';
+        bar.dataset.tableHeaderBar = field;
+
+        const label = document.createElement('span');
+        label.className = 'table-formatbar-label';
+        label.textContent = 'จัดรูปแบบหัวคอลัมน์ที่เลือก:';
+        bar.appendChild(label);
+
+        const alignGroup = document.createElement('div');
+        alignGroup.className = 'table-format-group';
+
+        const styleGroup = document.createElement('div');
+        styleGroup.className = 'table-format-group';
+
+        const buttons = [
+            { group: alignGroup, action: 'left', text: 'ชิดซ้าย', title: 'จัดหัวคอลัมน์ชิดซ้าย', className: '' },
+            { group: alignGroup, action: 'center', text: 'กึ่งกลาง', title: 'จัดหัวคอลัมน์กึ่งกลาง', className: '' },
+            { group: alignGroup, action: 'right', text: 'ชิดขวา', title: 'จัดหัวคอลัมน์ชิดขวา', className: '' },
+            { group: styleGroup, action: 'bold', text: 'B', title: 'หัวคอลัมน์ตัวหนา / ตัวบาง', className: 'table-format-bold' }
+        ];
+
+        buttons.forEach(function (item) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className =
+                'table-format-btn' + (item.className ? ' ' + item.className : '');
+            button.dataset.tableHeaderFormat = item.action;
+            button.dataset.tableHeaderField = field;
+            button.textContent = item.text;
+            button.title = item.title;
+            button.setAttribute('aria-label', item.title);
+            button.setAttribute('aria-pressed', 'false');
+            button.disabled = true;
+            item.group.appendChild(button);
+        });
+
+        bar.appendChild(alignGroup);
+        bar.appendChild(styleGroup);
+        return bar;
+    }
+
+    // ซิงก์ปุ่มในกล่องเครื่องมือกับรูปแบบของคอลัมน์ที่เลือกอยู่
+    function updateHeaderToolbar(field) {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        let bar = null;
+
+        form.querySelectorAll('[data-table-header-bar]').forEach(function (node) {
+            if (node.dataset.tableHeaderBar === field) bar = node;
+        });
+
+        if (!bar) return;
+
+        const active = !!(activeHeader && activeHeader.field === field);
+        const schema = scope.FieldTypes.getTableSchema(field);
+
+        const style = active
+            ? scope.FieldTypes.normalizeHeaderStyle(
+                schema.headerStyles[activeHeader.index]
+            )
+            : null;
+
+        bar.querySelectorAll('[data-table-header-format]').forEach(function (button) {
+            button.disabled = !active;
+
+            const action = button.dataset.tableHeaderFormat;
+            const on = active && (
+                action === 'bold' ? style.bold : style.align === action
+            );
+
+            button.classList.toggle('active', !!on);
+            button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+
     // สร้างแถบใหม่ทั้งอัน (เรียกเมื่อจำนวนคอลัมน์เปลี่ยน)
-    // แต่ละช่องมี "ช่องพิมพ์ชื่อคอลัมน์" + ตัวเลขสัดส่วนกำกับ และมีที่จับคั่นระหว่างคอลัมน์
+    // แต่ละช่องมี "ช่องพิมพ์ชื่อคอลัมน์" + ตัวเลขสัดส่วนกำกับ
     function renderRatioPreview(field, columns, widths) {
         const nodes = tableNodes(field);
         if (!nodes.preview) return;
+
+        const schema = scope.FieldTypes.getTableSchema(field);
+        const headerStyles = scope.FieldTypes.normalizeHeaderStyleRow(
+            schema.headerStyles,
+            columns.length
+        );
 
         nodes.preview.innerHTML = '';
 
@@ -343,24 +483,15 @@
             cell.className = 'table-ratio-cell';
             cell.style.flexGrow = String(widths[index] || 1);
 
-            // ชื่อหัวคอลัมน์อยู่ในแถบเดียวกับที่ลากปรับความกว้าง — ไม่มีช่องกรอกแยกอีก
-            // ใช้ data-table-column (ไม่ใช่ data-field) เพื่อไม่ให้ปนกับค่าของ type
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'table-col-name';
-            input.dataset.tableColumn = field;
-            input.dataset.tableColumnIndex = String(index);
-            input.autocomplete = 'off';
-            input.value = name || '';
-            input.placeholder = 'ชื่อคอลัมน์ ' + (index + 1);
-            input.setAttribute('aria-label', 'ชื่อคอลัมน์ ' + (index + 1) + ' ของ ' + field);
+            cell.appendChild(
+                createColumnNameInput(field, index, name, headerStyles[index])
+            );
 
             const ratio = document.createElement('span');
             ratio.className = 'table-ratio-label';
             ratio.textContent = formatRatio(widths[index]);
             ratio.setAttribute('aria-hidden', 'true');
 
-            cell.appendChild(input);
             cell.appendChild(ratio);
             nodes.preview.appendChild(cell);
 
@@ -511,6 +642,10 @@
         const schema = scope.FieldTypes.getTableSchema(field);
         const columns = schema.columns;
         const ratios = widths || scope.FieldTypes.getColumnWidths(schema);
+        const headerStyles = scope.FieldTypes.normalizeHeaderStyleRow(
+            schema.headerStyles,
+            columns.length
+        );
 
         let cellIndex = 0;
 
@@ -519,6 +654,7 @@
 
             if (node.classList.contains('table-ratio-cell')) {
                 const ratio = ratios[cellIndex];
+                const headerStyle = headerStyles[cellIndex];
 
                 node.style.flexGrow = String(ratio);
 
@@ -530,6 +666,11 @@
                         columns[cellIndex] == null
                             ? ''
                             : String(columns[cellIndex]);
+                }
+
+                // รูปแบบหัวคอลัมน์เดินตามโครงตาราง — เว้นช่องที่กำลังพิมพ์อยู่
+                if (input && input !== document.activeElement) {
+                    applyHeaderStyleToInput(input, headerStyle);
                 }
 
                 const label = node.querySelector('.table-ratio-label');
@@ -622,6 +763,7 @@
         if (nodes.count) nodes.count.value = String(schema.columns.length);
 
         scheduleRatioPreview(field, schema.columns);
+        updateHeaderToolbar(field);
         renderTableUsage(field);
     }
 
@@ -668,6 +810,9 @@
     const baseRenderForm = page.renderForm;
 
     page.renderForm = function (fields) {
+        // วาดฟอร์มใหม่ = ยังไม่ได้เลือกคอลัมน์หัวตารางใด
+        activeHeader = null;
+
         baseRenderForm.call(page, fields);
         renderLockState();
         renderPlaceholderState();
@@ -704,13 +849,19 @@
         const schema = scope.FieldTypes.getTableSchema(field);
         const columns = schema.columns.slice(0, count);
         const widths = schema.widths.slice(0, count);
+        const headerStyles = schema.headerStyles.slice(0, count);
 
         while (columns.length < count) {
             columns.push('คอลัมน์ ' + (columns.length + 1));
             widths.push(scope.FieldTypes.normalizeColumnRatio(null));
+            headerStyles.push(scope.FieldTypes.normalizeHeaderStyle(null));
         }
 
-        scope.FieldTypes.setTableSchema(field, { columns: columns, widths: widths });
+        scope.FieldTypes.setTableSchema(field, {
+            columns: columns,
+            widths: widths,
+            headerStyles: headerStyles
+        });
 
         renderTableConfig(field);
     };
@@ -722,6 +873,47 @@
 
         schema.columns[index] = String(value == null ? '' : value);
         scope.FieldTypes.setTableSchema(field, schema);
+    };
+
+    // เรียกว่าตอนโฟกัสช่องชื่อหัวคอลัมน์ (จาก app.js) — เลือกคอลัมน์นั้น
+    page.setActiveTableColumn = function (field, index) {
+        activeHeader = {
+            field: field,
+            index: Number(index)
+        };
+
+        updateHeaderToolbar(field);
+    };
+
+    // เรียกว่าตอนกดปุ่มในกล่องเครื่องมือ (จาก app.js) — action = left/center/right/bold
+    page.applyTableHeaderFormat = function (field, action) {
+        if (!activeHeader || activeHeader.field !== field) return;
+
+        const schema = scope.FieldTypes.getTableSchema(field);
+        const index = activeHeader.index;
+
+        if (!(index >= 0 && index < schema.columns.length)) return;
+
+        const style = scope.FieldTypes.normalizeHeaderStyle(schema.headerStyles[index]);
+
+        if (action === 'bold') {
+            style.bold = !style.bold;
+        } else if (action === 'left' || action === 'center' || action === 'right') {
+            style.align = action;
+        } else {
+            return;
+        }
+
+        schema.headerStyles[index] = style;
+        scope.FieldTypes.setTableSchema(field, schema);
+
+        // อัปเดตช่องที่แสดงอยู่ทันที ไม่วาดใหม่ (จะได้ไม่เสียโฟกัส)
+        applyHeaderStyleToInput(
+            findColumnNameInput(field, index),
+            style
+        );
+
+        updateHeaderToolbar(field);
     };
 
     // โครงตารางของทุก field ที่เป็น type table (บันทึกพร้อม template)

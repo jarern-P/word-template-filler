@@ -641,6 +641,16 @@
         return props;
     }
 
+    // รูปแบบหัวคอลัมน์ (จัดตำแหน่ง / ตัวหนา) — ค่าเริ่มต้นหนา ชิดซ้าย
+    function normalizeHeaderStyle(style) {
+        const raw = style && typeof style === 'object' ? style : {};
+
+        return {
+            align: raw.align === 'center' || raw.align === 'right' ? raw.align : 'left',
+            bold: raw.bold !== false
+        };
+    }
+
     // รูปแบบข้อความในช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง) — ค่าตั้งต้นชิดซ้าย ไม่หนา ไม่เอียง
     function normalizeCellStyle(style) {
         const raw = style && typeof style === 'object' ? style : {};
@@ -697,17 +707,39 @@
 
         paragraph.appendChild(paragraphProps);
 
-        const run = el(doc, 'r');
+        // ขึ้นบรรทัดใหม่ในข้อความ (\n) → w:br ในย่อหน้าเดียวกัน
+        // (Word ขึ้นบรรทัดใหม่โดยไม่ขึ้นย่อหน้าใหม่)
+        const lines =
+            String(text == null ? '' : text).split(/\r\n|\r|\n/);
 
-        if (styled) {
-            run.appendChild(styled.cloneNode(true));
-        }
+        lines.forEach(function (line, index) {
 
-        const textNode = el(doc, 't');
-        setText(textNode, text);
-        run.appendChild(textNode);
+            if (index > 0) {
 
-        paragraph.appendChild(run);
+                const brRun = el(doc, 'r');
+
+                if (styled) {
+                    brRun.appendChild(styled.cloneNode(true));
+                }
+
+                brRun.appendChild(el(doc, 'br'));
+
+                paragraph.appendChild(brRun);
+            }
+
+            const run = el(doc, 'r');
+
+            if (styled) {
+                run.appendChild(styled.cloneNode(true));
+            }
+
+            const textNode = el(doc, 't');
+            setText(textNode, line);
+            run.appendChild(textNode);
+
+            paragraph.appendChild(run);
+        });
+
         return paragraph;
     }
 
@@ -851,13 +883,31 @@
 
         table.appendChild(grid);
 
-        // ── แถวหัวตาราง (ตัวหนา) ──
+        // ── แถวหัวตาราง (จัดตำแหน่ง / ตัวหนา ตามที่ตั้งไว้ในหน้า Configuration) ──
         const header = el(doc, 'tr');
-        const headerProps = boldRunProps(doc, runProps);
+        const headerStyles = Array.isArray(spec.headerStyles) ? spec.headerStyles : [];
 
         columns.forEach(function (name, index) {
-            // หัวตารางใช้ฟอนต์/ขนาดของ {{field}} และตัวหนา (ไม่ใช้รูปแบบรายช่อง)
-        header.appendChild(buildCell(doc, name, headerProps, columnWidths[index], 1, null));
+
+            const headerStyle =
+                normalizeHeaderStyle(headerStyles[index]);
+
+            // ตัวหนา: เติม w:b จากฟอนต์ของ {{field}} | ตัวบาง: ใช้ rPr ของ {{field}} ตรง ๆ
+            const props = headerStyle.bold
+                ? boldRunProps(doc, runProps)
+                : runProps;
+
+            header.appendChild(
+                buildCell(
+                    doc,
+                    name,
+                    props,
+                    columnWidths[index],
+                    1,
+                    // ตัวหนาจัดการจาก props แล้ว จึงส่งเฉพาะการจัดตำแหน่ง
+                    { align: headerStyle.align, bold: false }
+                )
+            );
         });
 
         table.appendChild(header);

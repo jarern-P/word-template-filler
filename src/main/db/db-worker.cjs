@@ -67,10 +67,32 @@ const SCHEMA = `
     CREATE TABLE IF NOT EXISTS master (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         code_group TEXT NOT NULL,
+        sub_group  TEXT NOT NULL DEFAULT '',
         name       TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+
+    -- กลุ่ม (Code Group) ที่กำหนดไว้ล่วงหน้า — รายการ master เลือกกลุ่มจากที่นี่
+    CREATE TABLE IF NOT EXISTS master_groups (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    -- กลุ่มย่อย (Sub Group) ของแต่ละกลุ่ม — เลือกได้เฉพาะกลุ่มย่อยที่กำหนดไว้
+    CREATE TABLE IF NOT EXISTS master_subgroups (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id   INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(group_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_subgroups_group
+        ON master_subgroups(group_id);
 
     -- คำที่ผู้ใช้เพิ่มเอง ใช้รวมกับพจนานุกรมกลางตอนแนะนำคำ
     CREATE TABLE IF NOT EXISTS words (
@@ -152,6 +174,91 @@ function migrateMasterTable() {
     console.log(
         "Migrated master table: removed 'code' column"
     );
+}
+
+
+// ============================================================
+// Migration: เพิ่มคอลัมน์ sub_group ให้ตาราง master
+// ============================================================
+
+// รายการ master แยกเป็น กลุ่ม (code_group) และ กลุ่มย่อย (sub_group)
+// ฐานข้อมูลรุ่นก่อนมีแต่ code_group จึงเติมคอลัมน์ใหม่ด้วยค่าว่าง
+function migrateMasterSubGroup() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(master)
+        `).all();
+
+    // ยังไม่มีตาราง master (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "sub_group")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE master
+        ADD COLUMN sub_group TEXT NOT NULL DEFAULT ''
+    `);
+
+    console.log(
+        "Migrated master table: added 'sub_group' column"
+    );
+}
+
+
+// ============================================================
+// Seed: กลุ่มเริ่มต้นจาก code_group ที่มีอยู่แล้ว
+// ============================================================
+
+// ต้องเรียกหลัง exec(SCHEMA) เพราะตาราง master_groups เพิ่งถูกสร้าง
+// กลุ่มที่ผู้ใช้เคยใช้จะได้เลือกได้ทันทีโดยไม่ต้องพิมพ์ใหม่
+function seedMasterGroups() {
+
+    const rows =
+        db.prepare(`
+            SELECT DISTINCT
+                code_group
+            FROM master
+            WHERE code_group <> ''
+        `).all();
+
+    if (rows.length === 0) {
+        return;
+    }
+
+    const insert =
+        db.prepare(`
+            INSERT OR IGNORE INTO master_groups (
+                name,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                @name,
+                @created_at,
+                @updated_at
+            )
+        `);
+
+    const now =
+        new Date().toISOString();
+
+    db.transaction(() => {
+
+        rows.forEach(row => {
+
+            insert.run({
+                name: row.code_group,
+                created_at: now,
+                updated_at: now
+            });
+        });
+
+    })();
 }
 
 
@@ -263,11 +370,15 @@ function openDatabase() {
 
     // ต้องย้ายข้อมูลก่อน exec(SCHEMA) เพราะ SCHEMA เป็น IF NOT EXISTS
     migrateMasterTable();
+    migrateMasterSubGroup();
     migrateTemplateLocks();
     migrateTemplatePlaceholders();
     migrateTemplateTables();
 
     db.exec(SCHEMA);
+
+    // หลังสร้างตารางแล้ว ค่อยเติมกลุ่มเริ่มต้นจากข้อมูลที่มีอยู่
+    seedMasterGroups();
 
     console.log("SQLite database opened:");
     console.log(dbPath);
@@ -732,6 +843,10 @@ function handleMasterSave(message) {
         const codeGroup =
             String(payload.codeGroup || "").trim();
 
+        // กลุ่มย่อยเว้นว่างได้ (= รายการอยู่ที่ระดับกลุ่มโดยตรง)
+        const subGroup =
+            String(payload.subGroup || "").trim();
+
         const name =
             String(payload.name || "").trim();
 
@@ -743,23 +858,26 @@ function handleMasterSave(message) {
             throw new Error("กรุณาระบุ Name");
         }
 
-        // name ต้องไม่ซ้ำภายใน code_group เดียวกัน
+        // name ต้องไม่ซ้ำภายใน (code_group + sub_group) เดียวกัน
         const duplicate =
             db.prepare(`
                 SELECT id
                 FROM master
                 WHERE code_group = ?
+                  AND sub_group = ?
                   AND name = ?
                   AND id <> ?
             `).get(
                 codeGroup,
+                subGroup,
                 name,
                 id
             );
 
         if (duplicate) {
             throw new Error(
-                `ชื่อ "${name}" มีอยู่แล้วในกลุ่ม "${codeGroup}"`
+                `ชื่อ "${name}" มีอยู่แล้วในกลุ่ม "${codeGroup}"` +
+                (subGroup ? ` / "${subGroup}"` : "")
             );
         }
 
@@ -778,6 +896,7 @@ function handleMasterSave(message) {
                     UPDATE master
                     SET
                         code_group = @code_group,
+                        sub_group = @sub_group,
                         name = @name,
                         updated_at = @updated_at
                     WHERE id = @id
@@ -785,6 +904,7 @@ function handleMasterSave(message) {
                 .run({
                     id: id,
                     code_group: codeGroup,
+                    sub_group: subGroup,
                     name: name,
                     updated_at: now
                 });
@@ -806,12 +926,14 @@ function handleMasterSave(message) {
                 db.prepare(`
                     INSERT INTO master (
                         code_group,
+                        sub_group,
                         name,
                         created_at,
                         updated_at
                     )
                     VALUES (
                         @code_group,
+                        @sub_group,
                         @name,
                         @created_at,
                         @updated_at
@@ -819,6 +941,7 @@ function handleMasterSave(message) {
                 `)
                 .run({
                     code_group: codeGroup,
+                    sub_group: subGroup,
                     name: name,
                     created_at: now,
                     updated_at: now
@@ -869,11 +992,12 @@ function handleMasterList(message) {
                 SELECT
                     id,
                     code_group,
+                    sub_group,
                     name,
                     created_at,
                     updated_at
                 FROM master
-                ORDER BY code_group ASC, name ASC
+                ORDER BY code_group ASC, sub_group ASC, name ASC
             `)
             .all();
 
@@ -881,6 +1005,7 @@ function handleMasterList(message) {
             rows.map(row => ({
                 id: row.id,
                 code_group: row.code_group,
+                sub_group: row.sub_group || "",
                 name: row.name,
                 created_at: row.created_at,
                 updated_at: row.updated_at
@@ -924,6 +1049,7 @@ function handleMasterGet(message) {
                 SELECT
                     id,
                     code_group,
+                    sub_group,
                     name,
                     created_at,
                     updated_at
@@ -948,6 +1074,8 @@ function handleMasterGet(message) {
             id: row.id,
 
             code_group: row.code_group,
+
+            sub_group: row.sub_group || "",
 
             name: row.name,
 
@@ -1023,15 +1151,21 @@ function handleMasterDelete(message) {
 
 // ใช้เป็น key เดี่ยวของรายการ master โดยไม่ต้องพึ่งคอลัมน์ใหม่
 // \u0000 เป็นอักขระที่ไม่มีทางเกิดใน code_group/name ที่ผู้ใช้กรอก
-function masterKey(codeGroup, name) {
+function masterKey(codeGroup, subGroup, name) {
+    return String(codeGroup) + "\u0000" + String(subGroup) + "\u0000" + String(name);
+}
+
+
+// ตัวระบุรายการเดิมจากไฟล์ Excel (ไม่มีคอลัมน์ ID) = Code Group + Name
+function nameKey(codeGroup, name) {
     return String(codeGroup) + "\u0000" + String(name);
 }
 
 
-// เพิ่มข้อมูล master ทีละหลายรายการ (นำเข้าจาก Excel)
+// เพิ่ม/อัปเดตข้อมูล master ทีละหลายรายการ (นำเข้าจาก Excel)
 // กติกา:
-//   - รายการที่มีอยู่แล้วในฐานข้อมูล (code_group + name ตรงกัน) = ข้าม
-//   - รายการที่ซ้ำกันเองในไฟล์ = ใส่ตัวแรกไว้ ตัวหลังข้าม
+//   - จับคู่รายการเดิมด้วย (Code Group + Name) = อัปเดตกลุ่มย่อยตามไฟล์
+//   - ไม่พบรายการเดิม = เพิ่มใหม่ (ยกเว้นซ้ำกับที่มีอยู่แล้ว/ซ้ำกันเองในไฟล์ = ข้าม)
 //   - รายการที่ไม่ครบทั้ง code_group และ name = ข้าม
 function handleMasterImport(message) {
 
@@ -1049,18 +1183,39 @@ function handleMasterImport(message) {
                 : [];
 
 
-        // key ของรายการที่มีอยู่แล้ว (อ่านครั้งเดียวก่อนเริ่ม)
+        // ดัชนีของรายการที่มีอยู่แล้ว (อ่านครั้งเดียวก่อนเริ่ม)
+        //   existing = key เต็ม (กลุ่ม + กลุ่มย่อย + ชื่อ) ใช้กันการเพิ่มซ้ำ
+        //   byName   = (กลุ่ม + ชื่อ) -> id ใช้หาการวัดรายการเดิมเพื่ออัปเดตกลุ่มย่อย
+        //   byId     = id -> ค่าปัจจุบัน (เทียบว่าเปลี่ยนจริงหรือไม่)
         const existing = new Set();
+        const byName = new Map();
+        const byId = new Map();
 
         db.prepare(`
             SELECT
+                id,
                 code_group,
+                sub_group,
                 name
             FROM master
         `).all().forEach(row => {
+
             existing.add(
-                masterKey(row.code_group, row.name)
+                masterKey(row.code_group, row.sub_group || "", row.name)
             );
+
+            byId.set(row.id, {
+                code_group: row.code_group,
+                sub_group: row.sub_group || "",
+                name: row.name
+            });
+
+            const key =
+                nameKey(row.code_group, row.name);
+
+            if (!byName.has(key)) {
+                byName.set(key, row.id);
+            }
         });
 
 
@@ -1068,12 +1223,14 @@ function handleMasterImport(message) {
             db.prepare(`
                 INSERT INTO master (
                     code_group,
+                    sub_group,
                     name,
                     created_at,
                     updated_at
                 )
                 VALUES (
                     @code_group,
+                    @sub_group,
                     @name,
                     @created_at,
                     @updated_at
@@ -1081,11 +1238,93 @@ function handleMasterImport(message) {
             `);
 
 
+        // กลุ่ม/กลุ่มย่อยที่เจอในไฟล์ถูกเพิ่มเข้าระบบอัตโนมัติ
+        // (ผู้ใช้จะได้เห็นเป็นตัวเลือกในหน้า Master Data / popup ค้นหา)
+        const insertGroup =
+            db.prepare(`
+                INSERT OR IGNORE INTO master_groups (
+                    name,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    @name,
+                    @created_at,
+                    @updated_at
+                )
+            `);
+
+        const findGroup =
+            db.prepare(`
+                SELECT id
+                FROM master_groups
+                WHERE name = ?
+            `);
+
+        const insertSubgroup =
+            db.prepare(`
+                INSERT OR IGNORE INTO master_subgroups (
+                    group_id,
+                    name,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    @group_id,
+                    @name,
+                    @created_at,
+                    @updated_at
+                )
+            `);
+
+
+        // อัปเดตรายการเดิมตาม ID (ใช้ตอนอัปโหลดไฟล์ที่ดาวน์โหลดไปแล้วแก้)
+        const updateById =
+            db.prepare(`
+                UPDATE master
+                SET
+                    code_group = @code_group,
+                    sub_group = @sub_group,
+                    name = @name,
+                    updated_at = @updated_at
+                WHERE id = @id
+            `);
+
+
         const now =
             new Date().toISOString();
 
 
+        // ลงทะเบียนกลุ่ม/กลุ่มย่อยที่เจอในไฟล์ไว้ให้เลือกภายหลัง
+        function registerGroup(codeGroup, subGroup) {
+
+            insertGroup.run({
+                name: codeGroup,
+                created_at: now,
+                updated_at: now
+            });
+
+            if (!subGroup) {
+                return;
+            }
+
+            const group =
+                findGroup.get(codeGroup);
+
+            if (group) {
+
+                insertSubgroup.run({
+                    group_id: group.id,
+                    name: subGroup,
+                    created_at: now,
+                    updated_at: now
+                });
+            }
+        }
+
+
         let inserted = 0;
+        let updated = 0;
         let skippedExisting = 0;
         let skippedDuplicate = 0;
         let skippedInvalid = 0;
@@ -1107,6 +1346,10 @@ function handleMasterImport(message) {
                         (raw && raw.codeGroup) || ""
                     ).trim();
 
+                    const subGroup = String(
+                        (raw && raw.subGroup) || ""
+                    ).trim();
+
                     const name = String(
                         (raw && raw.name) || ""
                     ).trim();
@@ -1118,8 +1361,52 @@ function handleMasterImport(message) {
                     }
 
 
+                    // จับคู่รายการเดิมด้วย (Code Group + Name) แล้วอัปเดตกลุ่มย่อย
+                    // (ไฟล์ Excel ไม่มีคอลัมน์ ID — ใช้ชื่อรายการเป็นตัวระบุ)
+                    const matchId =
+                        byName.get(nameKey(codeGroup, name));
+
+                    if (matchId) {
+
+                        const current =
+                            byId.get(matchId);
+
+                        const changed =
+                            !current ||
+                            current.code_group !== codeGroup ||
+                            current.sub_group !== subGroup ||
+                            current.name !== name;
+
+                        if (changed) {
+
+                            updateById.run({
+                                id: matchId,
+                                code_group: codeGroup,
+                                sub_group: subGroup,
+                                name: name,
+                                updated_at: now
+                            });
+
+                            byId.set(matchId, {
+                                code_group: codeGroup,
+                                sub_group: subGroup,
+                                name: name
+                            });
+
+                            updated++;
+
+                        } else {
+
+                            skippedExisting++;
+                        }
+
+                        registerGroup(codeGroup, subGroup);
+                        return;
+                    }
+
+
                     const key =
-                        masterKey(codeGroup, name);
+                        masterKey(codeGroup, subGroup, name);
 
 
                     if (existing.has(key)) {
@@ -1139,10 +1426,14 @@ function handleMasterImport(message) {
 
                     insert.run({
                         code_group: codeGroup,
+                        sub_group: subGroup,
                         name: name,
                         created_at: now,
                         updated_at: now
                     });
+
+
+                    registerGroup(codeGroup, subGroup);
 
 
                     inserted++;
@@ -1158,6 +1449,7 @@ function handleMasterImport(message) {
             ok: true,
             result: {
                 inserted: inserted,
+                updated: updated,
                 skippedExisting: skippedExisting,
                 skippedDuplicate: skippedDuplicate,
                 skippedInvalid: skippedInvalid,
@@ -1172,6 +1464,531 @@ function handleMasterImport(message) {
             "handleMasterImport error:",
             error
         );
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Master Groups / Sub Groups (กลุ่มที่กำหนดไว้ล่วงหน้า)
+// ============================================================
+
+// จำนวนรายการ master ที่ใช้กลุ่ม/กลุ่มย่อยนี้อยู่
+// (ใช้กันการลบกลุ่มที่ยังมีข้อมูลผูกอยู่)
+function countMasterUsage(codeGroup, subGroup) {
+
+    if (subGroup === null || subGroup === undefined) {
+
+        return db.prepare(`
+            SELECT
+                COUNT(*) AS total
+            FROM master
+            WHERE code_group = ?
+        `).get(codeGroup).total;
+    }
+
+    return db.prepare(`
+        SELECT
+            COUNT(*) AS total
+        FROM master
+        WHERE code_group = ?
+          AND sub_group = ?
+    `).get(codeGroup, subGroup).total;
+}
+
+
+// กลุ่มทั้งหมดพร้อมกลุ่มย่อยของแต่ละกลุ่ม
+function handleGroupList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const groups =
+            db.prepare(`
+                SELECT
+                    id,
+                    name,
+                    created_at,
+                    updated_at
+                FROM master_groups
+                ORDER BY name ASC
+            `).all();
+
+        const subgroups =
+            db.prepare(`
+                SELECT
+                    id,
+                    group_id,
+                    name,
+                    created_at,
+                    updated_at
+                FROM master_subgroups
+                ORDER BY name ASC
+            `).all();
+
+        const byGroup = {};
+
+        subgroups.forEach(row => {
+
+            if (!byGroup[row.group_id]) {
+                byGroup[row.group_id] = [];
+            }
+
+            byGroup[row.group_id].push({
+                id: row.id,
+                group_id: row.group_id,
+                name: row.name,
+                created_at: row.created_at,
+                updated_at: row.updated_at
+            });
+        });
+
+        send({
+            id: message.id,
+            ok: true,
+            result: groups.map(group => ({
+                id: group.id,
+                name: group.name,
+                subgroups: byGroup[group.id] || [],
+                created_at: group.created_at,
+                updated_at: group.updated_at
+            }))
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// เพิ่ม/แก้ไขกลุ่ม — id > 0 = แก้ไข, id = 0 = เพิ่มใหม่
+// แก้ชื่อกลุ่มแล้วอัปเดต code_group ของรายการ master ที่ใช้กลุ่มนั้นด้วย
+function handleGroupSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload =
+            message.payload || {};
+
+        const id =
+            Number(payload.id) || 0;
+
+        const name =
+            String(payload.name || "").trim();
+
+        if (!name) {
+            throw new Error("กรุณาระบุชื่อกลุ่ม");
+        }
+
+        const duplicate =
+            db.prepare(`
+                SELECT id
+                FROM master_groups
+                WHERE name = ?
+                  AND id <> ?
+            `).get(name, id);
+
+        if (duplicate) {
+            throw new Error(`กลุ่ม "${name}" มีอยู่แล้ว`);
+        }
+
+        const now =
+            new Date().toISOString();
+
+        let resultId;
+
+        if (id > 0) {
+
+            const previous =
+                db.prepare(`
+                    SELECT name
+                    FROM master_groups
+                    WHERE id = ?
+                `).get(id);
+
+            const result =
+                db.prepare(`
+                    UPDATE master_groups
+                    SET
+                        name = @name,
+                        updated_at = @updated_at
+                    WHERE id = @id
+                `)
+                .run({
+                    id: id,
+                    name: name,
+                    updated_at: now
+                });
+
+            if (result.changes === 0) {
+                throw new Error(`ไม่พบกลุ่ม id=${id}`);
+            }
+
+            // ชื่อกลุ่มในรายการ master ต้องตรงกับกลุ่มที่กำหนดไว้
+            if (previous && previous.name !== name) {
+
+                db.prepare(`
+                    UPDATE master
+                    SET
+                        code_group = @name,
+                        updated_at = @updated_at
+                    WHERE code_group = @old_name
+                `)
+                .run({
+                    name: name,
+                    old_name: previous.name,
+                    updated_at: now
+                });
+            }
+
+            resultId = id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO master_groups (
+                        name,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        @name,
+                        @created_at,
+                        @updated_at
+                    )
+                `)
+                .run({
+                    name: name,
+                    created_at: now,
+                    updated_at: now
+                });
+
+            resultId =
+                Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "handleGroupSave error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// ลบกลุ่ม — ลบได้เฉพาะกลุ่มที่ไม่มีรายการ master ใช้อยู่
+function handleGroupDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+        const group =
+            db.prepare(`
+                SELECT id, name
+                FROM master_groups
+                WHERE id = ?
+            `).get(id);
+
+        if (!group) {
+            throw new Error(`ไม่พบกลุ่ม id=${id}`);
+        }
+
+        const used =
+            countMasterUsage(group.name, null);
+
+        if (used > 0) {
+            throw new Error(
+                `ลบไม่ได้ — กลุ่ม "${group.name}" ถูกใช้โดยข้อมูล ${used} รายการ`
+            );
+        }
+
+        db.transaction(() => {
+
+            db.prepare(`
+                DELETE FROM master_subgroups
+                WHERE group_id = ?
+            `).run(id);
+
+            db.prepare(`
+                DELETE FROM master_groups
+                WHERE id = ?
+            `).run(id);
+
+        })();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: true
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// เพิ่ม/แก้ไขกลุ่มย่อย — id > 0 = แก้ไข, id = 0 = เพิ่มใหม่
+function handleSubgroupSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload =
+            message.payload || {};
+
+        const id =
+            Number(payload.id) || 0;
+
+        const groupId =
+            Number(payload.groupId) || 0;
+
+        const name =
+            String(payload.name || "").trim();
+
+        if (!groupId) {
+            throw new Error("ไม่พบกลุ่มของกลุ่มย่อยนี้");
+        }
+
+        if (!name) {
+            throw new Error("กรุณาระบุชื่อกลุ่มย่อย");
+        }
+
+        const group =
+            db.prepare(`
+                SELECT id, name
+                FROM master_groups
+                WHERE id = ?
+            `).get(groupId);
+
+        if (!group) {
+            throw new Error(`ไม่พบกลุ่ม id=${groupId}`);
+        }
+
+        const duplicate =
+            db.prepare(`
+                SELECT id
+                FROM master_subgroups
+                WHERE group_id = ?
+                  AND name = ?
+                  AND id <> ?
+            `).get(groupId, name, id);
+
+        if (duplicate) {
+            throw new Error(`กลุ่มย่อย "${name}" มีอยู่แล้วในกลุ่ม "${group.name}"`);
+        }
+
+        const now =
+            new Date().toISOString();
+
+        let resultId;
+
+        if (id > 0) {
+
+            const previous =
+                db.prepare(`
+                    SELECT name, group_id
+                    FROM master_subgroups
+                    WHERE id = ?
+                `).get(id);
+
+            const result =
+                db.prepare(`
+                    UPDATE master_subgroups
+                    SET
+                        group_id = @group_id,
+                        name = @name,
+                        updated_at = @updated_at
+                    WHERE id = @id
+                `)
+                .run({
+                    id: id,
+                    group_id: groupId,
+                    name: name,
+                    updated_at: now
+                });
+
+            if (result.changes === 0) {
+                throw new Error(`ไม่พบกลุ่มย่อย id=${id}`);
+            }
+
+            if (previous && previous.name !== name) {
+
+                db.prepare(`
+                    UPDATE master
+                    SET
+                        sub_group = @name,
+                        updated_at = @updated_at
+                    WHERE code_group = @code_group
+                      AND sub_group = @old_name
+                `)
+                .run({
+                    name: name,
+                    old_name: previous.name,
+                    code_group: group.name,
+                    updated_at: now
+                });
+            }
+
+            resultId = id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO master_subgroups (
+                        group_id,
+                        name,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        @group_id,
+                        @name,
+                        @created_at,
+                        @updated_at
+                    )
+                `)
+                .run({
+                    group_id: groupId,
+                    name: name,
+                    created_at: now,
+                    updated_at: now
+                });
+
+            resultId =
+                Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "handleSubgroupSave error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error: error?.message || String(error)
+        });
+
+    }
+}
+
+
+// ลบกลุ่มย่อย — ลบได้เฉพาะกลุ่มย่อยที่ไม่มีรายการ master ใช้อยู่
+function handleSubgroupDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+        const subgroup =
+            db.prepare(`
+                SELECT
+                    master_subgroups.id,
+                    master_subgroups.name,
+                    master_groups.name AS group_name
+                FROM master_subgroups
+                JOIN master_groups
+                  ON master_groups.id = master_subgroups.group_id
+                WHERE master_subgroups.id = ?
+            `).get(id);
+
+        if (!subgroup) {
+            throw new Error(`ไม่พบกลุ่มย่อย id=${id}`);
+        }
+
+        const used =
+            countMasterUsage(subgroup.group_name, subgroup.name);
+
+        if (used > 0) {
+            throw new Error(
+                `ลบไม่ได้ — กลุ่มย่อย "${subgroup.name}" ถูกใช้โดยข้อมูล ${used} รายการ`
+            );
+        }
+
+        db.prepare(`
+            DELETE FROM master_subgroups
+            WHERE id = ?
+        `).run(id);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: true
+            }
+        });
+
+    } catch (error) {
 
         send({
             id: message.id,
@@ -2033,6 +2850,48 @@ parentPort.on("message", (message) => {
             case "master-import":
 
                 handleMasterImport(message);
+
+                break;
+
+            // ------------------------------------------------
+            // Master Groups / Sub Groups
+            // ------------------------------------------------
+
+            case "group-list":
+
+                handleGroupList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "group-save":
+
+                handleGroupSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "group-delete":
+
+                handleGroupDelete(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "subgroup-save":
+
+                handleSubgroupSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "subgroup-delete":
+
+                handleSubgroupDelete(message);
 
                 break;
 

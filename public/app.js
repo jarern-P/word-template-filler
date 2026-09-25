@@ -21,6 +21,7 @@
     // หัวคอลัมน์ที่ยอมรับในไฟล์ Excel ของหน้า Master Data
     // เทียบหลังตัดช่องว่าง/ขีด/ขีดล่าง และแปลงเป็นตัวพิมพ์เล็กแล้ว
     const MASTER_CODE_HEADERS = ['codegroup', 'กลุ่ม', 'กลุ่มรหัส', 'รหัสกลุ่ม'];
+    const MASTER_SUBGROUP_HEADERS = ['subgroup', 'กลุ่มย่อย', 'รหัสกลุ่มย่อย'];
     const MASTER_NAME_HEADERS = ['name', 'ชื่อ', 'ชื่อข้อมูล'];
 
     // ชื่อหน้า -> ชื่อ component บน window (ลำดับโหลดอยู่ใน index.html)
@@ -53,6 +54,7 @@
     let textMeasurer = null;   // ตัววัดความกว้างจริง ใช้ตอนล็อกตำแหน่ง
     let templateRecords = null;   // cache รายการ template ล่าสุดจากฐานข้อมูล
     let masterRecords = null;     // cache รายการ master data ล่าสุดจากฐานข้อมูล
+    let masterGroups = null;      // cache กลุ่ม/กลุ่มย่อยของ master data ล่าสุด
     let wordRecords = null;       // cache คำที่เพิ่มเองล่าสุดจากฐานข้อมูล
     let historyRecords = null;    // cache ประวัติการกรอกล่าสุดจากฐานข้อมูล
 
@@ -351,6 +353,29 @@
         applyMeta(page);
 
         fillForm(page);
+
+        // เปิดหน้าใหม่ = ล้างสถานะ disabled/readOnly ที่ค้างจากหน้าเดิมออก
+        clearDisabledFields();
+    }
+
+    // เคลียร์ disabled/readOnly ของช่องกรอกทุกช่องในหน้าปัจจุบัน
+    // (ไม่แตะปุ่ม — ปุ่มถูกเปิด/ปิดตามสถานะไฟล์ด้วย fillForm อยู่แล้ว)
+    function clearDisabledFields() {
+
+        if (!mainEl) {
+            return;
+        }
+
+        mainEl
+            .querySelectorAll('input, select, textarea')
+            .forEach(function (control) {
+
+                control.disabled = false;
+
+                if (control.readOnly) {
+                    control.readOnly = false;
+                }
+            });
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -958,6 +983,21 @@
                     return;
                 }
 
+                // เปลี่ยนกลุ่มในฟอร์ม Master Data → เติมกลุ่มย่อยของกลุ่มใหม่
+                if (
+                    target &&
+                    target.id === 'masterCodeGroup'
+                ) {
+
+                    getComponent(
+                        MASTER_PAGE
+                    ).setFormCodeGroup(
+                        target.value
+                    );
+
+                    return;
+                }
+
                 captureValue(target);
             }
         );
@@ -1146,6 +1186,28 @@
                     return;
                 }
 
+                // ปุ่มจัดรูปแบบหัวคอลัมน์ (หน้า Template Configuration)
+                const headerFormatBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-table-header-format]')
+                        : null;
+
+                if (headerFormatBtn) {
+
+                    const config =
+                        getComponent(CONFIG_PAGE);
+
+                    if (config.applyTableHeaderFormat) {
+
+                        config.applyTableHeaderFormat(
+                            headerFormatBtn.dataset.tableHeaderField,
+                            headerFormatBtn.dataset.tableHeaderFormat
+                        );
+                    }
+
+                    return;
+                }
+
                 const target =
                     event.target;
 
@@ -1257,6 +1319,13 @@
                     return;
                 }
 
+                // เพิ่มกลุ่มใหม่ (หน้า Master Data)
+                if (id === 'masterGroupAddBtn') {
+
+                    onAddMasterGroup();
+                    return;
+                }
+
                 const action =
                     target.dataset &&
                     target.dataset.action;
@@ -1309,6 +1378,43 @@
                         recordId
                     );
 
+                } else if (action === 'group-add') {
+
+                    onAddMasterGroup();
+
+                } else if (action === 'group-rename') {
+
+                    onRenameMasterGroup(
+                        recordId,
+                        target.dataset.name
+                    );
+
+                } else if (action === 'group-delete') {
+
+                    onDeleteMasterGroup(
+                        recordId
+                    );
+
+                } else if (action === 'subgroup-add') {
+
+                    onAddMasterSubgroup(
+                        recordId
+                    );
+
+                } else if (action === 'subgroup-rename') {
+
+                    onRenameMasterSubgroup(
+                        Number(target.dataset.groupId),
+                        recordId,
+                        target.dataset.name
+                    );
+
+                } else if (action === 'subgroup-delete') {
+
+                    onDeleteMasterSubgroup(
+                        recordId
+                    );
+
                 } else if (action === 'load') {
 
                     onLoadTemplate(
@@ -1356,6 +1462,35 @@
             }
         );
 
+        // โฟกัสช่องชื่อหัวคอลัมน์ = เลือกคอลัมน์นั้นให้กล่องเครื่องมือทำงาน (หน้า Configuration)
+        mainEl.addEventListener(
+            'focusin',
+            function (event) {
+
+                const target =
+                    event.target;
+
+                if (
+                    !target ||
+                    !target.dataset ||
+                    target.dataset.tableColumn === undefined
+                ) {
+                    return;
+                }
+
+                const config =
+                    getComponent(CONFIG_PAGE);
+
+                if (config.setActiveTableColumn) {
+
+                    config.setActiveTableColumn(
+                        target.dataset.tableColumn,
+                        Number(target.dataset.tableColumnIndex)
+                    );
+                }
+            }
+        );
+
         // ลัดคีย์จัดรูปแบบช่องในตาราง: Ctrl+B = ตัวหนา, Ctrl+I = ตัวเอียง
         mainEl.addEventListener(
             'keydown',
@@ -1398,6 +1533,40 @@
                 }
             }
         );
+
+        // กด Enter ในช่องเพิ่มกลุ่ม/กลุ่มย่อย = เพิ่มเลย
+        mainEl.addEventListener(
+            'keydown',
+            function (event) {
+
+                if (event.key !== 'Enter') {
+                    return;
+                }
+
+                const target =
+                    event.target;
+
+                if (!target || !target.dataset) {
+                    return;
+                }
+
+                if (target.id === 'masterNewGroup') {
+
+                    event.preventDefault();
+                    onAddMasterGroup();
+                    return;
+                }
+
+                if (target.dataset.subgroupInput !== undefined) {
+
+                    event.preventDefault();
+
+                    onAddMasterSubgroup(
+                        Number(target.dataset.subgroupInput)
+                    );
+                }
+            }
+        );
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1433,6 +1602,7 @@
         );
 
         refreshTemplateList();
+        refreshMasterGroups();
         refreshMasterList();
         refreshWordList();
         refreshHistory();
@@ -2462,6 +2632,300 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // Master Groups / Sub Groups (กลุ่มที่กำหนดไว้ล่วงหน้า)
+    // ──────────────────────────────────────────────────────────────
+
+    // โหลดกลุ่ม/กลุ่มย่อยมาเติมในฟอร์มและส่วนจัดการ
+    async function refreshMasterGroups() {
+
+        // ข้ามถ้าหน้าปัจจุบันไม่มีส่วนจัดการกลุ่ม
+        if (!document.getElementById('masterGroupList')) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            masterGroups =
+                await scope.Db.groupList();
+
+            master.setGroups(
+                masterGroups
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroups([]);
+
+            master.setGroupStatus(
+                'โหลดกลุ่มไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onAddMasterGroup() {
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        const name =
+            master.readNewGroupName();
+
+        if (!name) {
+
+            master.setGroupStatus(
+                'กรุณาระบุชื่อกลุ่ม',
+                'error'
+            );
+
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.groupSave({
+                id: 0,
+                name: name
+            });
+
+            master.clearNewGroupInput();
+            master.setGroupStatus('เพิ่มกลุ่มแล้ว', 'ok');
+
+            await refreshMasterGroups();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroupStatus(
+                'เพิ่มกลุ่มไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onRenameMasterGroup(groupId, currentName) {
+
+        const value =
+            window.prompt('ชื่อกลุ่มใหม่', currentName || '');
+
+        if (value === null) {
+            return;
+        }
+
+        const name =
+            value.trim();
+
+        if (!name || name === currentName) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.groupSave({
+                id: Number(groupId),
+                name: name
+            });
+
+            master.setGroupStatus('เปลี่ยนชื่อกลุ่มแล้ว', 'ok');
+
+            await refreshMasterGroups();
+
+            // code_group ของรายการ master ถูกเปลี่ยนตาม — โหลดรายการใหม่
+            await refreshMasterList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroupStatus(
+                'เปลี่ยนชื่อกลุ่มไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onDeleteMasterGroup(groupId) {
+
+        if (!window.confirm(
+            'ต้องการลบกลุ่มนี้ใช่ไหม?\n\n' +
+            'ลบได้เฉพาะกลุ่มที่ไม่มีข้อมูลหลักใช้อยู่'
+        )) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.groupDelete(
+                Number(groupId)
+            );
+
+            master.setGroupStatus('ลบกลุ่มแล้ว', 'ok');
+
+            await refreshMasterGroups();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroupStatus(
+                'ลบกลุ่มไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onAddMasterSubgroup(groupId) {
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        const name =
+            master.readNewSubgroupName(groupId);
+
+        if (!name) {
+
+            master.setGroupStatus(
+                'กรุณาระบุชื่อกลุ่มย่อย',
+                'error'
+            );
+
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.subgroupSave({
+                id: 0,
+                groupId: Number(groupId),
+                name: name
+            });
+
+            master.clearNewSubgroupInput(groupId);
+            master.setGroupStatus('เพิ่มกลุ่มย่อยแล้ว', 'ok');
+
+            await refreshMasterGroups();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroupStatus(
+                'เพิ่มกลุ่มย่อยไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onRenameMasterSubgroup(groupId, subgroupId, currentName) {
+
+        const value =
+            window.prompt('ชื่อกลุ่มย่อยใหม่', currentName || '');
+
+        if (value === null) {
+            return;
+        }
+
+        const name =
+            value.trim();
+
+        if (!name || name === currentName) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.subgroupSave({
+                id: Number(subgroupId),
+                groupId: Number(groupId),
+                name: name
+            });
+
+            master.setGroupStatus('เปลี่ยนชื่อกลุ่มย่อยแล้ว', 'ok');
+
+            await refreshMasterGroups();
+            await refreshMasterList();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroupStatus(
+                'เปลี่ยนชื่อกลุ่มย่อยไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    async function onDeleteMasterSubgroup(subgroupId) {
+
+        if (!window.confirm(
+            'ต้องการลบกลุ่มย่อยนี้ใช่ไหม?\n\n' +
+            'ลบได้เฉพาะกลุ่มย่อยที่ไม่มีข้อมูลหลักใช้อยู่'
+        )) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.subgroupDelete(
+                Number(subgroupId)
+            );
+
+            master.setGroupStatus('ลบกลุ่มย่อยแล้ว', 'ok');
+
+            await refreshMasterGroups();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setGroupStatus(
+                'ลบกลุ่มย่อยไม่สำเร็จ: ' +
+                error.message,
+                'error'
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // คำแนะนำการเดาคำ (หน้า "คำแนะนำ" ในหมวด Master)
     // ──────────────────────────────────────────────────────────────
 
@@ -3263,8 +3727,10 @@
             Array.isArray(rows) ? rows : [];
 
         let codeIndex = 0;
+        let subIndex = -1;
         let nameIndex = 1;
         let start = 0;
+        let hasHeader = false;
 
         for (
             let i = 0;
@@ -3278,17 +3744,43 @@
             const codeAt =
                 indexOfLabel(labels, MASTER_CODE_HEADERS);
 
+            const subAt =
+                indexOfLabel(labels, MASTER_SUBGROUP_HEADERS);
+
             const nameAt =
                 indexOfLabel(labels, MASTER_NAME_HEADERS);
 
             // เจออย่างน้อยหนึ่งคอลัมน์ที่รู้จัก = ถือว่าแถวนี้เป็นหัวตาราง
-            if (codeAt === -1 && nameAt === -1) continue;
+            if (codeAt === -1 && subAt === -1 && nameAt === -1) continue;
 
             if (codeAt !== -1) codeIndex = codeAt;
+            if (subAt !== -1) subIndex = subAt;
             if (nameAt !== -1) nameIndex = nameAt;
 
             start = i + 1;
+            hasHeader = true;
             break;
+        }
+
+        // ไม่มีหัวตาราง: เดาคอลัมน์จากจำนวนช่องของแถวแรก
+        //   2 ช่อง = Code Group, Name | 3 ช่องขึ้นไป = Code Group, Sub Group, Name
+        if (!hasHeader) {
+
+            const first =
+                list.find(function (row) {
+
+                    return Array.isArray(row) && row.some(function (cell) {
+
+                        return String(
+                            cell === undefined || cell === null ? '' : cell
+                        ).trim() !== '';
+                    });
+                });
+
+            if (first && first.length >= 3) {
+                subIndex = 1;
+                nameIndex = 2;
+            }
         }
 
         const records = [];
@@ -3300,14 +3792,19 @@
             const codeGroup =
                 String(row[codeIndex] === undefined ? '' : row[codeIndex]).trim();
 
+            const subGroup = subIndex === -1
+                ? ''
+                : String(row[subIndex] === undefined ? '' : row[subIndex]).trim();
+
             const name =
                 String(row[nameIndex] === undefined ? '' : row[nameIndex]).trim();
 
             // แถวว่างข้ามเงียบ ๆ ไม่ต้องนับเป็นรายการที่ผิดพลาด
-            if (!codeGroup && !name) continue;
+            if (!codeGroup && !subGroup && !name) continue;
 
             records.push({
                 codeGroup: codeGroup,
+                subGroup: subGroup,
                 name: name
             });
         }
@@ -3321,6 +3818,10 @@
         const parts = [
             'เพิ่ม ' + result.inserted + ' รายการ'
         ];
+
+        if (result.updated > 0) {
+            parts.push('อัปเดต ' + result.updated + ' รายการ');
+        }
 
         if (result.skippedExisting > 0) {
             parts.push('มีอยู่ในระบบแล้ว ' + result.skippedExisting);
@@ -3359,12 +3860,13 @@
             masterRecords = list;
 
             const rows = [
-                ['Code Group', 'Name']
+                ['Code Group', 'Sub Group', 'Name']
             ];
 
             list.forEach(function (record) {
                 rows.push([
                     record.code_group || '',
+                    record.sub_group || '',
                     record.name || ''
                 ]);
             });
@@ -3456,7 +3958,8 @@
             if (list.length === 0) {
 
                 master.setExcelStatus(
-                    'ไม่พบข้อมูลในไฟล์ — ต้องมีคอลัมน์ Code Group และ Name',
+                    'ไม่พบข้อมูลในไฟล์ — ต้องมีคอลัมน์ Code Group และ Name ' +
+                    '(Sub Group เว้นว่างได้)',
                     'error'
                 );
 
@@ -3466,8 +3969,10 @@
             if (!window.confirm(
                 'พบ ' + list.length + ' แถวในไฟล์ "' +
                 (file.name || '') + '"\n\n' +
-                'ระบบจะเพิ่มเฉพาะรายการที่ยังไม่มี ' +
-                'และข้ามรายการที่มีอยู่ในระบบแล้วหรือซ้ำกันในไฟล์\n' +
+                'ระบบจะอัปเดตกลุ่มย่อยของรายการเดิม ' +
+                '(จับคู่ด้วย Code Group + Name) ' +
+                'ส่วนรายการใหม่จะถูกเพิ่ม ' +
+                'และข้ามรายการที่ซ้ำกันในไฟล์\n' +
                 'ต้องการนำเข้าหรือไม่?'
             )) {
 
@@ -3485,6 +3990,9 @@
                 });
 
             await refreshMasterList();
+
+            // กลุ่ม/กลุ่มย่อยที่เจอในไฟล์ถูกเพิ่มเข้าฐานข้อมูลแล้ว — โหลดมาแสดงด้วย
+            await refreshMasterGroups();
 
             master.setExcelStatus(
                 describeImportResult(result),

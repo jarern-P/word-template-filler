@@ -42,6 +42,22 @@ contextBridge.exposeInMainWorld(
         dbMasterImport: (payload) =>
             ipcRenderer.invoke("db:master-import", payload),
 
+        // กลุ่ม / กลุ่มย่อย ของ Master Data (กำหนดไว้ล่วงหน้า)
+        dbGroupList: () =>
+            ipcRenderer.invoke("db:group-list"),
+
+        dbGroupSave: (payload) =>
+            ipcRenderer.invoke("db:group-save", payload),
+
+        dbGroupDelete: (id) =>
+            ipcRenderer.invoke("db:group-delete", id),
+
+        dbSubgroupSave: (payload) =>
+            ipcRenderer.invoke("db:subgroup-save", payload),
+
+        dbSubgroupDelete: (id) =>
+            ipcRenderer.invoke("db:subgroup-delete", id),
+
         // คำที่เพิ่มเองสำหรับการแนะนำคำ
         dbWordSave: (payload) =>
             ipcRenderer.invoke("db:word-save", payload),

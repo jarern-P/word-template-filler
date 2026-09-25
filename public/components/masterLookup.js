@@ -8,7 +8,9 @@
     'use strict';
 
     const ALL_GROUPS = '';             // value ของตัวเลือก "ทุกกลุ่ม"
+    const ALL_SUBGROUPS = '';          // value ของตัวเลือก "ทุกกลุ่มย่อย"
     const GROUP_FALLBACK = '(ไม่ระบุกลุ่ม)';
+    const SUBGROUP_FALLBACK = '(ไม่ระบุกลุ่มย่อย)';
 
     const HTML = [
         '<div class="lookup-backdrop"></div>',
@@ -19,6 +21,7 @@
         '    </div>',
         '    <div class="lookup-toolbar">',
         '        <select id="lookupGroup" aria-label="กรองตาม Code Group"></select>',
+        '        <select id="lookupSubgroup" aria-label="กรองตาม Sub Group"></select>',
         '        <input type="text" id="lookupSearch" placeholder="ค้นหา name" autocomplete="off">',
         '    </div>',
         '    <p id="lookupStatus" class="db-status"></p>',
@@ -30,6 +33,7 @@
     let records = [];        // master data ที่โหลดมาใช้ในรอบนี้
     let activeField = '';    // ชื่อ field ที่กำลังเลือกค่าให้
     let groupFilter = ALL_GROUPS;
+    let subgroupFilter = ALL_SUBGROUPS;
     let keyword = '';
 
     function el(id) {
@@ -53,6 +57,10 @@
 
     function groupOf(record) {
         return record.code_group || '';
+    }
+
+    function subgroupOf(record) {
+        return record.sub_group || '';
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -94,14 +102,60 @@
         select.value = groupFilter;
     }
 
+    // เติมกลุ่มย่อยให้เลือกตามกลุ่มที่กรองอยู่
+    function renderSubgroupOptions() {
+        const select = el('lookupSubgroup');
+        if (!select) return;
+
+        const subgroups = [];
+
+        records.forEach(function (record) {
+            if (groupFilter && groupOf(record) !== groupFilter) return;
+
+            const subgroup = subgroupOf(record);
+            if (subgroup && subgroups.indexOf(subgroup) === -1) {
+                subgroups.push(subgroup);
+            }
+        });
+
+        select.innerHTML = '';
+
+        const all = document.createElement('option');
+        all.value = ALL_SUBGROUPS;
+        all.textContent = 'ทุกกลุ่มย่อย';
+        select.appendChild(all);
+
+        subgroups.forEach(function (subgroup) {
+            const option = document.createElement('option');
+            option.value = subgroup;
+            option.textContent = subgroup;
+            select.appendChild(option);
+        });
+
+        // กลุ่มย่อยที่เคยเลือกอาจไม่มีในข้อมูลแล้ว
+        if (subgroupFilter && subgroups.indexOf(subgroupFilter) === -1) {
+            subgroupFilter = ALL_SUBGROUPS;
+        }
+
+        select.value = subgroupFilter;
+        select.disabled = subgroups.length === 0;
+    }
+
     function matches(record) {
         if (groupFilter && groupOf(record) !== groupFilter) {
             return false;
         }
 
+        if (subgroupFilter && subgroupOf(record) !== subgroupFilter) {
+            return false;
+        }
+
         if (!keyword) return true;
 
-        return String(record.name || '')
+        return [
+            record.name,
+            record.sub_group
+        ].join(' ')
             .toLowerCase()
             .indexOf(keyword) !== -1;
     }
@@ -139,7 +193,9 @@
 
             const group = document.createElement('span');
             group.className = 'lookup-group';
-            group.textContent = record.code_group || GROUP_FALLBACK;
+            group.textContent = record.sub_group
+                ? (record.code_group || GROUP_FALLBACK) + ' / ' + record.sub_group
+                : (record.code_group || GROUP_FALLBACK);
 
             button.appendChild(name);
             button.appendChild(group);
@@ -156,6 +212,7 @@
                 records = Array.isArray(list) ? list : [];
                 setStatus('');
                 renderGroupOptions();
+                renderSubgroupOptions();
                 renderList();
             })
             .catch(function (error) {
@@ -164,6 +221,7 @@
                 records = [];
                 setStatus('โหลดข้อมูลไม่สำเร็จ: ' + error.message, 'error');
                 renderGroupOptions();
+                renderSubgroupOptions();
                 renderList();
             });
     }
@@ -229,6 +287,7 @@
         overlay.classList.add('open');
 
         renderGroupOptions();
+        renderSubgroupOptions();
         renderList();
         loadRecords();
 
@@ -255,6 +314,13 @@
 
         el('lookupGroup').addEventListener('change', function (event) {
             groupFilter = event.target.value;
+            subgroupFilter = ALL_SUBGROUPS;
+            renderSubgroupOptions();
+            renderList();
+        });
+
+        el('lookupSubgroup').addEventListener('change', function (event) {
+            subgroupFilter = event.target.value;
             renderList();
         });
 

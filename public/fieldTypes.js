@@ -631,10 +631,36 @@
         return names;
     }
 
+    // ── รูปแบบหัวคอลัมน์ (จัดตำแหน่ง / ตัวหนา) ──
+    //
+    // ตั้งทีละคอลัมน์ และหัวตารางหนาเป็นค่าเริ่มต้น (เหมือนตาราง Word ทั่วไป)
+    // ข้อความหัวคอลัมน์ขึ้นบรรทัดใหม่ได้ (เก็บ \n ไว้ในข้อความ)
+    function normalizeHeaderStyle(style) {
+        const raw = style && typeof style === 'object' ? style : {};
+
+        return {
+            align: raw.align === 'center' || raw.align === 'right' ? raw.align : 'left',
+            bold: raw.bold !== false
+        };
+    }
+
+    // รายการรูปแบบหัวคอลัมน์ — ยาวเท่าจำนวนคอลัมน์เสมอ
+    function normalizeHeaderStyleRow(styles, columnCount) {
+        const list = Array.isArray(styles) ? styles : [];
+        const result = [];
+
+        for (let i = 0; i < columnCount; i++) {
+            result.push(normalizeHeaderStyle(list[i]));
+        }
+
+        return result;
+    }
+
     function defaultTableSchema() {
         return {
             columns: makeColumnNames(DEFAULT_TABLE_COLUMNS),
-            widths: normalizeColumnWidths(null, DEFAULT_TABLE_COLUMNS)
+            widths: normalizeColumnWidths(null, DEFAULT_TABLE_COLUMNS),
+            headerStyles: normalizeHeaderStyleRow(null, DEFAULT_TABLE_COLUMNS)
         };
     }
 
@@ -661,7 +687,8 @@
 
         return {
             columns: columns,
-            widths: normalizeColumnWidths(schema.widths, columns.length)
+            widths: normalizeColumnWidths(schema.widths, columns.length),
+            headerStyles: normalizeHeaderStyleRow(schema.headerStyles, columns.length)
         };
     }
 
@@ -900,12 +927,22 @@
 
     function createTableHeaderRow(schema) {
         const tr = document.createElement('tr');
+        const headerStyles =
+            normalizeHeaderStyleRow(schema.headerStyles, schema.columns.length);
 
         schema.columns.forEach(function (name, index) {
             const th = document.createElement('th');
             th.textContent = name || ('คอลัมน์ ' + (index + 1));
             // ข้อความยาวขึ้นบรรทัดใหม่ได้ (wrap) ไม่ตัดทิ้ง
             th.className = 'table-col-header';
+
+            // จัดตำแหน่ง / ตัวหนา ตามที่ตั้งไว้ในหน้า Template Configuration
+            // white-space: pre-line ทำให้ \\n ที่พิมพ์ไว้ขึ้นบรรทัดใหม่จริง
+            const style = headerStyles[index];
+            th.style.textAlign = style.align;
+            th.style.fontWeight = style.bold ? '700' : '400';
+            th.style.whiteSpace = 'pre-line';
+
             tr.appendChild(th);
         });
 
@@ -1110,6 +1147,8 @@
         normalizeRowSpans: normalizeRowSpans,
         normalizeCellStyle: normalizeCellStyle,
         normalizeCellStyleRow: normalizeCellStyleRow,
+        normalizeHeaderStyle: normalizeHeaderStyle,
+        normalizeHeaderStyleRow: normalizeHeaderStyleRow,
         applyCellStyleToInput: applyCellStyleToInput,
         createTableFormatBar: createTableFormatBar,
         startColumnOf: startColumnOf,

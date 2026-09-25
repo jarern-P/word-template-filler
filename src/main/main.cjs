@@ -846,6 +846,222 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB Group List
+// ============================================================
+
+ipcMain.handle(
+    "db:group-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "group-list",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Group Save
+// ============================================================
+
+ipcMain.handle(
+    "db:group-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "group-save",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Group Delete
+// ============================================================
+
+ipcMain.handle(
+    "db:group-delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "group-delete",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Sub Group Save
+// ============================================================
+
+ipcMain.handle(
+    "db:subgroup-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "subgroup-save",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Sub Group Delete
+// ============================================================
+
+ipcMain.handle(
+    "db:subgroup-delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "subgroup-delete",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // DB Word Save
 // ============================================================
 
