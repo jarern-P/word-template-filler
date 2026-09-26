@@ -240,6 +240,14 @@
         input.value = formatCurrency(digits, textMode ? CURRENCY_MODES.TEXT : CURRENCY_MODES.NUMBER);
         input.readOnly = locked;
         input.classList.toggle('currency-text-mode', locked);
+
+        // จำว่า "อ่านอย่างเดียวเพราะตั้งใจ" (โหมดตัวหนังสือ) เพื่อให้
+        // clearDisabledFields ของ app.js ไม่ปลด readOnly ทิ้ง
+        if (locked) {
+            input.dataset.keepReadonly = '1';
+        } else {
+            delete input.dataset.keepReadonly;
+        }
         input.title = locked
             ? 'โหมดตัวหนังสือ (อ่านอย่างเดียว) — คลิกที่ช่องหรือกดปุ่มด้านขวาเพื่อกลับมาแก้ไขเป็นตัวเลข'
             : '';

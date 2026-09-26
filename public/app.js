@@ -360,6 +360,10 @@
 
     // เคลียร์ disabled/readOnly ของช่องกรอกทุกช่องในหน้าปัจจุบัน
     // (ไม่แตะปุ่ม — ปุ่มถูกเปิด/ปิดตามสถานะไฟล์ด้วย fillForm อยู่แล้ว)
+    //
+    // ช่องที่ component ตั้งใจปิดไว้จะติด data-keep-disabled / data-keep-readonly
+    // จึงไม่ถูกล้างทิ้ง เช่น เลือกกลุ่มย่อยเมื่อยังไม่เลือกกลุ่ม,
+    // ช่องเงินโหมดตัวหนังสือ (อ่านอย่างเดียวโดยตั้งใจ)
     function clearDisabledFields() {
 
         if (!mainEl) {
@@ -370,12 +374,32 @@
             .querySelectorAll('input, select, textarea')
             .forEach(function (control) {
 
+                if (control.dataset && control.dataset.keepDisabled === '1') {
+                    return;
+                }
+
                 control.disabled = false;
 
-                if (control.readOnly) {
+                if (
+                    control.readOnly &&
+                    !(control.dataset && control.dataset.keepReadonly === '1')
+                ) {
                     control.readOnly = false;
                 }
             });
+    }
+
+    // ล้างสถานะ "ค้าง" ทั้งหมดที่ทับหรือปิดการพิมพ์ของฟอร์ม
+    //
+    //   - ปิด popup ที่ค้าง  (overlay เต็มจอจะบังช่องกรอก ทำให้กด/พิมพ์ไม่ได้)
+    //   - ปลด disabled/readOnly ที่ค้างจากหน้า/การทำงานก่อนหน้า
+    //
+    // เรียกหลังทุกงานกับฐานข้อมูล (ลบ / นำเข้า / แทนที่ไฟล์ / บันทึก ฯลฯ)
+    // เพื่อไม่ให้ handler ที่ไม่ผ่าน renderPage ทิ้งสถานะค้างไว้
+    function resetInteractionState() {
+
+        closeOpenPopups();
+        clearDisabledFields();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1769,6 +1793,9 @@
 
             fillForm(currentPage);
 
+            // อัปโหลดไฟล์ = ฟอร์มถูกวาดใหม่ ล้าง popup/สถานะค้างที่อาจบังช่องกรอก
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -2220,6 +2247,9 @@
 
             fillForm(CONFIG_PAGE);
 
+            // แทนที่ไฟล์ = ฟอร์มถูกวาดใหม่ ล้าง popup/สถานะค้าง
+            resetInteractionState();
+
             if (state.templateId) {
 
                 // บันทึกทับ record เดิม (onSaveTemplate อัปเดต state.templateId ให้)
@@ -2352,6 +2382,8 @@
             );
 
             await refreshTemplateList();
+
+            resetInteractionState();
 
             return true;
 
@@ -2526,6 +2558,8 @@
                 );
             }
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -2571,6 +2605,8 @@
             );
 
             await refreshTemplateList();
+
+            resetInteractionState();
 
         } catch (error) {
 
@@ -2703,6 +2739,8 @@
 
             await refreshMasterGroups();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -2750,6 +2788,8 @@
             // code_group ของรายการ master ถูกเปลี่ยนตาม — โหลดรายการใหม่
             await refreshMasterList();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -2785,6 +2825,8 @@
             master.setGroupStatus('ลบกลุ่มแล้ว', 'ok');
 
             await refreshMasterGroups();
+
+            resetInteractionState();
 
         } catch (error) {
 
@@ -2830,6 +2872,8 @@
             master.setGroupStatus('เพิ่มกลุ่มย่อยแล้ว', 'ok');
 
             await refreshMasterGroups();
+
+            resetInteractionState();
 
         } catch (error) {
 
@@ -2877,6 +2921,8 @@
             await refreshMasterGroups();
             await refreshMasterList();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -2912,6 +2958,8 @@
             master.setGroupStatus('ลบกลุ่มย่อยแล้ว', 'ok');
 
             await refreshMasterGroups();
+
+            resetInteractionState();
 
         } catch (error) {
 
@@ -3071,6 +3119,8 @@
 
             await refreshWordList();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -3138,6 +3188,8 @@
 
             await refreshWordList();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -3178,6 +3230,8 @@
             );
 
             await refreshWordList();
+
+            resetInteractionState();
 
         } catch (error) {
 
@@ -3576,6 +3630,8 @@
 
             await refreshHistory();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -3608,6 +3664,8 @@
                 });
 
             await refreshHistory();
+
+            resetInteractionState();
 
             page.setStatus(
                 days > 0
@@ -3657,6 +3715,8 @@
                 await scope.Db.historyClear();
 
             await refreshHistory();
+
+            resetInteractionState();
 
             page.setStatus(
                 'ล้างประวัติแล้ว ' +
@@ -3999,6 +4059,9 @@
                 result.inserted > 0 ? 'ok' : 'warn'
             );
 
+            // นำเข้า Excel = ล้าง popup/สถานะค้าง กันช่องกรอกถูกบัง
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -4099,6 +4162,8 @@
 
             await refreshMasterList();
 
+            resetInteractionState();
+
         } catch (error) {
 
             console.error(error);
@@ -4155,6 +4220,8 @@
             );
 
             await refreshMasterList();
+
+            resetInteractionState();
 
         } catch (error) {
 

@@ -230,6 +230,14 @@
 
         // ไม่มีกลุ่มที่เลือก = เลือกกลุ่มย่อยไม่ได้
         select.disabled = !groupSelect || !groupSelect.value;
+
+        // จำว่า "ปิดเพราะตั้งใจ" เพื่อให้ clearDisabledFields ของ app.js
+        // ไม่ปลด disabled ทิ้งหลังทำงานกับฐานข้อมูล
+        if (select.disabled) {
+            select.dataset.keepDisabled = '1';
+        } else {
+            delete select.dataset.keepDisabled;
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
