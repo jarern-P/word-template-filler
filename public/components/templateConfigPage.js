@@ -25,9 +25,15 @@
         '<button id="saveBtn" type="button" disabled>Save Template</button>'
     ].join('\n');
 
-    const FOOTER_HTML = [
+    // ส่วนรายการ แสดงก่อน editor (list-first)
+    const LIST_HTML = [
         '<section class="saved-templates">',
-        '    <h2>แม่แบบ ที่บันทึกไว้</h2>',
+        '    <div class="list-head">',
+        '        <h2>แม่แบบ ที่บันทึกไว้</h2>',
+        '        <button id="templateNewBtn" type="button" class="plain"' +
+            ' data-modal-open="templateModal">+ สร้างแม่แบบใหม่</button>',
+        '    </div>',
+        '    <p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น</p>',
         '    <p id="dbStatus" class="db-status"></p>',
         '    <ul id="savedList" class="saved-list"></ul>',
         '</section>'
@@ -219,7 +225,7 @@
         // ใช้ textContent ทุกจุด เพราะชื่อ template มาจากผู้ใช้ (กัน XSS)
         const loadBtn = document.createElement('button');
         loadBtn.type = 'button';
-        loadBtn.textContent = 'โหลด';
+        loadBtn.textContent = 'แก้ไข';
         loadBtn.dataset.action = 'load';
         loadBtn.dataset.id = String(record.id);
 
@@ -247,9 +253,21 @@
         renderControl: createTypeSelect,
         metaHTML: META_HTML,
         actionsHTML: ACTIONS_HTML,
-        footerHTML: FOOTER_HTML,
-        emptyMessage: 'เลือกไฟล์ .docx ด้านบน หรือกด "โหลด" จากรายการด้านล่างเพื่อเริ่มตั้งค่า'
+        // list-first: รายการอยู่บนสุด แล้ว editor อยู่ในโมดัล
+        listHTML: LIST_HTML,
+        modalId: 'templateModal',
+        editorTitle: 'ตั้งค่า Type ของแต่ละ Field',
+        emptyMessage: 'ยังไม่ได้เลือกไฟล์ — เลือกไฟล์ .docx ด้านบน หรือกด "แก้ไข" จากรายการ'
     });
+
+    // เรียกจาก app.js ตอนกด "+ สร้างแม่แบบใหม่" — เริ่มจาก editor ว่าง
+    page.onModalOpen = function (modalId) {
+        if (modalId !== 'templateModal') return;
+
+        if (scope.App && scope.App.resetAll) {
+            scope.App.resetAll();
+        }
+    };
 
     // ── ส่วนที่ใช้เฉพาะหน้านี้ ──
 

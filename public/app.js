@@ -1087,6 +1087,47 @@
             'click',
             function (event) {
 
+                // ปิดโมดัลฟอร์ม (backdrop / ปุ่มปิด / ยกเลิก)
+                const closeTrigger =
+                    event.target.closest
+                        ? event.target.closest('[data-modal-close]')
+                        : null;
+
+                if (closeTrigger) {
+
+                    scope.PageModal.close(
+                        closeTrigger.dataset.modalClose
+                    );
+
+                    return;
+                }
+
+                // เปิดโมดัลฟอร์ม (ปุ่ม "+ เพิ่ม..." ของแต่ละหน้า)
+                const openTrigger =
+                    event.target.closest
+                        ? event.target.closest('[data-modal-open]')
+                        : null;
+
+                if (openTrigger) {
+
+                    const modalComponent =
+                        getComponent(currentPage);
+
+                    // ให้หน้าเตรียมฟอร์มก่อนเปิด (เช่น ล้างค่าเดิม)
+                    if (modalComponent && modalComponent.onModalOpen) {
+
+                        modalComponent.onModalOpen(
+                            openTrigger.dataset.modalOpen
+                        );
+                    }
+
+                    scope.PageModal.open(
+                        openTrigger.dataset.modalOpen
+                    );
+
+                    return;
+                }
+
                 // ปุ่ม toggle "ตัวเลข/ตัวหนังสือ" ของช่อง currency (หน้ารายงาน)
                 const currencyToggle =
                     event.target.closest
@@ -2385,6 +2426,8 @@
 
             resetInteractionState();
 
+            scope.PageModal.close('templateModal');
+
             return true;
 
         } catch (error) {
@@ -2559,6 +2602,12 @@
             }
 
             resetInteractionState();
+
+            // กด "แก้ไข" จากรายการของหน้า Template Configuration = เปิด editor ในโมดัล
+            if (currentPage === CONFIG_PAGE) {
+
+                scope.PageModal.open('templateModal');
+            }
 
         } catch (error) {
 
@@ -3121,6 +3170,8 @@
 
             resetInteractionState();
 
+            scope.PageModal.close('wordModal');
+
         } catch (error) {
 
             console.error(error);
@@ -3148,6 +3199,9 @@
         }
 
         getComponent(WORDS_PAGE).loadIntoForm(record);
+
+        // เปิดฟอร์มแก้ไขในโมดัล
+        scope.PageModal.open('wordModal');
     }
 
     function onCancelWordEdit() {
@@ -3157,6 +3211,8 @@
 
         page.resetForm();
         page.setFormStatus('');
+
+        scope.PageModal.close('wordModal');
     }
 
     async function onDeleteWord(recordId) {
@@ -4084,6 +4140,8 @@
 
         master.resetForm();
         master.setFormStatus('');
+
+        scope.PageModal.close('masterModal');
     }
 
     function onEditMaster(recordId) {
@@ -4106,6 +4164,9 @@
 
         master.loadIntoForm(record);
         master.setFormStatus('');
+
+        // เปิดฟอร์มแก้ไขในโมดัล
+        scope.PageModal.open('masterModal');
     }
 
     async function onSaveMaster() {
@@ -4163,6 +4224,8 @@
             await refreshMasterList();
 
             resetInteractionState();
+
+            scope.PageModal.close('masterModal');
 
         } catch (error) {
 
@@ -4332,6 +4395,11 @@
 
         showPage:
             showPage,
+
+        // เริ่มฟอร์ม template ใหม่ (ล้าง state + ไฟล์)
+        // ใช้โดยหน้า Template Configuration ตอนกด "+ สร้างแม่แบบใหม่"
+        resetAll:
+            resetAll,
 
         // type ที่ตั้งค่าไว้ในหน้า
         // Template Configuration

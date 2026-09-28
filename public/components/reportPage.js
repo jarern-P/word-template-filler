@@ -50,7 +50,7 @@
         metaHTML: META_HTML,
         actionsHTML: ACTIONS_HTML,
         footerHTML: FOOTER_HTML,
-        emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปเลือกไฟล์ที่หน้า Template Configuration ก่อน',
+        emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปสร้างแม่แบบที่หน้า "ตั้งค่าแม่แบบ" ก่อน',
 
         // ช่องที่เป็น type text จะมีปุ่มแว่นขยายให้เลือกค่าจาก Master Data
         renderControl: function (field) {

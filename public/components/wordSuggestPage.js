@@ -10,8 +10,26 @@
     'use strict';
 
     const HTML = [
-        '<h1>คำแนะนำ</h1>',
+        '<h1>คลังคำศัพท์</h1>',
 
+        // ── รายการเป็นหลัก (list-first) ──
+        '<section class="saved-templates">',
+        '    <div class="list-head">',
+        '        <h2>คำที่เพิ่มเอง</h2>',
+        '        <button id="wordNewBtn" type="button" class="plain"' +
+            ' data-modal-open="wordModal">+ เพิ่มคำ</button>',
+        '    </div>',
+
+        '    <div class="master-toolbar">',
+        '        <label for="wordSearch">ค้นหา</label>',
+        '        <input type="text" id="wordSearch" placeholder="คำ" autocomplete="off">',
+        '    </div>',
+
+        '    <p id="wordDbStatus" class="db-status"></p>',
+        '    <ul id="wordList" class="saved-list"></ul>',
+        '</section>',
+
+        // ── การตั้งค่า ──
         '<section class="suggest-settings">',
         '    <h2>การแนะนำคำ</h2>',
 
@@ -32,40 +50,37 @@
         '    </ul>',
         '</section>',
 
-        '<section class="master-form">',
-        '    <h2 id="wordFormTitle">เพิ่มคำที่แนะนำ</h2>',
-
-        '    <div class="field">',
-        '        <label for="wordInput">คำ</label>',
-        '        <input type="text" id="wordInput" placeholder="เช่น จำนวนเงิน"' +
+        // ── ฟอร์มเพิ่ม/แก้ไข (อยู่ในโมดัล) ──
+        '<div class="page-modal" id="wordModal">',
+        '    <div class="page-modal-backdrop" data-modal-close="wordModal"></div>',
+        '    <div class="page-modal-dialog">',
+        '        <div class="page-modal-head">',
+        '            <h2 id="wordFormTitle">เพิ่มคำที่แนะนำ</h2>',
+        '            <button type="button" class="page-modal-close"' +
+            ' data-modal-close="wordModal" aria-label="ปิด">&times;</button>',
+        '        </div>',
+        '        <div class="page-modal-body">',
+        '            <div class="field">',
+        '                <label for="wordInput">คำ</label>',
+        '                <input type="text" id="wordInput" placeholder="เช่น จำนวนเงิน"' +
             ' autocomplete="off">',
-        '    </div>',
+        '            </div>',
 
-        '    <input type="hidden" id="wordId" value="">',
+        '            <input type="hidden" id="wordId" value="">',
 
-        '    <p class="hint">คำที่เพิ่มเองจะถูกแนะนำก่อนคำในพจนานุกรมกลาง ' +
+        '            <p class="hint">คำที่เพิ่มเองจะถูกแนะนำก่อนคำในพจนานุกรมกลาง ' +
             'และตอนพิมพ์คำที่ยังไม่มีในพจนานุกรม จะมีรายการ "เพิ่มคำนี้" ให้กด Tab ด้วย</p>',
 
-        '    <div class="form-actions">',
-        '        <button id="wordAddBtn" type="button">เพิ่ม</button>',
-        '        <button id="wordCancelBtn" type="button" class="plain"' +
+        '            <div class="form-actions">',
+        '                <button id="wordAddBtn" type="button">เพิ่ม</button>',
+        '                <button id="wordCancelBtn" type="button" class="plain"' +
             ' style="display:none">ยกเลิกแก้ไข</button>',
+        '            </div>',
+
+        '            <p id="wordFormStatus" class="db-status"></p>',
+        '        </div>',
         '    </div>',
-
-        '    <p id="wordFormStatus" class="db-status"></p>',
-        '</section>',
-
-        '<section class="saved-templates">',
-        '    <h2>คำที่เพิ่มเอง</h2>',
-
-        '    <div class="master-toolbar">',
-        '        <label for="wordSearch">ค้นหา</label>',
-        '        <input type="text" id="wordSearch" placeholder="คำ" autocomplete="off">',
-        '    </div>',
-
-        '    <p id="wordDbStatus" class="db-status"></p>',
-        '    <ul id="wordList" class="saved-list"></ul>',
-        '</section>'
+        '</div>'
     ].join('\n');
 
     let records = [];      // รายการล่าสุดที่โหลดมาจากฐานข้อมูล
@@ -159,6 +174,14 @@
 
         getHTML: function () {
             return HTML;
+        },
+
+        // เรียกจาก app.js ตอนกดปุ่ม "+ เพิ่มคำ" (เตรียมฟอร์มก่อนเปิดโมดัล)
+        onModalOpen: function (modalId) {
+            if (modalId !== 'wordModal') return;
+
+            page.resetForm();
+            page.setFormStatus('');
         },
 
         // ── ฟอร์มเพิ่ม / แก้ไข ──
@@ -267,7 +290,7 @@
             }
 
             if (records.length === 0) {
-                appendEmpty(ul, 'ยังไม่มีคำที่เพิ่มเอง — เพิ่มคำด้านบน');
+                appendEmpty(ul, 'ยังไม่มีคำที่เพิ่มเอง — กด "+ เพิ่มคำ" ด้านบน');
                 return;
             }
 

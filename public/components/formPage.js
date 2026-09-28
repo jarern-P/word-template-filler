@@ -81,6 +81,12 @@
         // เพื่อให้ปุ่มเรียงชิดกันสวยงาม แทนที่จะกระจายอยู่คนละบรรทัด
         const actionsRow = config.actionsRow === true;
 
+        // layout แบบ list-first: แสดงรายการก่อน แล้วซ่อน editor ไว้ในโมดัล
+        // (config.modalId) — หน้าที่ไม่ส่ง modalId จะมี layout เดิม
+        const listHTML = config.listHTML || '';
+        const modalId = config.modalId || '';
+        const editorTitle = config.editorTitle || formTitle;
+
         return {
             title: title,
 
@@ -88,15 +94,18 @@
             getHTML: function () {
                 const parts = ['<h1>' + title + '</h1>'];
 
+                // ส่วน editor: กล่องไฟล์ + meta + ฟอร์ม + ปุ่ม
+                const editor = [];
+
                 if (showFileInput) {
-                    parts.push(
+                    editor.push(
                         '<div class="box">',
                         '    <input type="file" id="fileInput" accept=".docx">',
                         '</div>'
                     );
                 }
 
-                parts.push(metaHTML, '<div id="form"></div>');
+                editor.push(metaHTML, '<div id="form"></div>');
 
                 // ปุ่มของหน้า: ปุ่มพิเศษของแต่ละหน้า (actionsHTML) มาก่อน แล้วตามด้วย
                 // ปุ่มดาวน์โหลด/ล้างค่า — เก็บเป็นชิ้นแล้วค่อยประกอบเป็นแถวเดียวหรือแยกบรรทัด
@@ -114,12 +123,33 @@
                 buttons.push('<button id="clearBtn" type="button" class="plain" style="display:none">Clear</button>');
 
                 if (actionsRow) {
-                    parts.push('<div class="form-actions page-actions">', buttons.join('\n'), '</div>');
+                    editor.push('<div class="form-actions page-actions">', buttons.join('\n'), '</div>');
                 } else {
-                    parts.push(buttons.join('\n'));
+                    editor.push(buttons.join('\n'));
                 }
 
-                parts.push(footerHTML);
+                if (modalId) {
+                    // list-first: รายการอยู่ด้านบน แล้วเปิด editor ในโมดัล
+                    parts.push(listHTML);
+                    parts.push(
+                        '<div class="page-modal" id="' + modalId + '">',
+                        '    <div class="page-modal-backdrop" data-modal-close="' + modalId + '"></div>',
+                        '    <div class="page-modal-dialog">',
+                        '        <div class="page-modal-head">',
+                        '            <h2>' + editorTitle + '</h2>',
+                        '            <button type="button" class="page-modal-close" data-modal-close="' + modalId + '"' +
+                            ' aria-label="ปิด">&times;</button>',
+                        '        </div>',
+                        '        <div class="page-modal-body">',
+                        editor.join('\n'),
+                        '        </div>',
+                        '    </div>',
+                        '</div>'
+                    );
+                } else {
+                    parts.push(editor.join('\n'));
+                    parts.push(footerHTML);
+                }
 
                 return parts.join('\n');
             },

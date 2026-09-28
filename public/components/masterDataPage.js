@@ -12,76 +12,13 @@
     const HTML = [
         '<h1>ข้อมูลหลัก</h1>',
 
-        '<section class="master-form">',
-        '    <h2 id="masterFormTitle">เพิ่มข้อมูลหลัก</h2>',
-
-        '    <div class="field">',
-        '        <label for="masterCodeGroup">กลุ่ม (Code Group)</label>',
-        '        <select id="masterCodeGroup"></select>',
-        '    </div>',
-
-        '    <div class="field">',
-        '        <label for="masterSubGroup">กลุ่มย่อย (Sub Group)</label>',
-        '        <select id="masterSubGroup"></select>',
-        '    </div>',
-
-        '    <div class="field">',
-        '        <label for="masterName">Name</label>',
-        '        <input type="text" id="masterName" placeholder="เช่น ลูกค้าทั่วไป" autocomplete="off">',
-        '    </div>',
-
-        '    <input type="hidden" id="masterId" value="">',
-
-        '    <div class="form-actions">',
-        '        <button id="masterSaveBtn" type="button">เพิ่ม</button>',
-        '        <button id="masterCancelBtn" type="button" class="plain"' +
-            ' style="display:none">ยกเลิกแก้ไข</button>',
-        '    </div>',
-
-        '    <p id="masterFormStatus" class="db-status"></p>',
-        '</section>',
-
-        // กำหนดกลุ่ม/กลุ่มย่อยล่วงหน้า — รายการ master เลือกจากที่นี่เท่านั้น
-        '<section class="master-groups">',
-        '    <h2>กลุ่มและกลุ่มย่อย</h2>',
-        '    <p class="hint">กำหนดกลุ่ม/กลุ่มย่อยล่วงหน้า แล้วเลือกใช้ตอนเพิ่มข้อมูลหลัก ' +
-            '(รายการที่นำเข้าจาก Excel จะเพิ่มกลุ่มที่ยังไม่มีให้เอง)</p>',
-
-        '    <div class="master-toolbar">',
-        '        <label for="masterNewGroup">เพิ่มกลุ่ม</label>',
-        '        <input type="text" id="masterNewGroup"' +
-            ' placeholder="เช่น CUSTOMER_TYPE" autocomplete="off">',
-        '        <button id="masterGroupAddBtn" type="button" class="plain">เพิ่มกลุ่ม</button>',
-        '    </div>',
-
-        '    <p id="masterGroupStatus" class="db-status"></p>',
-        '    <ul id="masterGroupList" class="group-list"></ul>',
-        '</section>',
-
-        // นำเข้า/ส่งออก Excel: ทำชุดข้อมูลทีเดียวแล้วอัปโหลดครั้งเดียว
-        '<section class="master-excel">',
-        '    <h2>นำเข้า / ส่งออก Excel</h2>',
-        '    <p class="hint">ไฟล์ .xlsx ใช้ 3 คอลัมน์: Code Group, Sub Group และ Name ' +
-            '(แถวแรกเป็นหัวตารางได้ — เว้น Sub Group ว่างได้)</p>',
-        '    <p class="hint">ตอนนำเข้า: รายการเดิม (Code Group + Name ตรงกัน) ' +
-            'จะถูก <strong>อัปเดตกลุ่มย่อย</strong>ตามไฟล์ — รายการใหม่จะถูกเพิ่ม ' +
-            'ส่วนรายการที่ซ้ำกันในไฟล์จะถูกข้าม</p>',
-
-        '    <div class="form-actions">',
-        '        <button id="masterExportBtn" type="button" class="plain">' +
-            'ดาวน์โหลด Excel</button>',
-        '        <button id="masterImportBtn" type="button" class="plain">' +
-            'อัปโหลด Excel</button>',
-        '    </div>',
-
-        // input ถูกซ่อน เพราะเปิดผ่านปุ่มเพื่อให้เข้าชุดกับปุ่มอื่น
-        '    <input type="file" id="masterImportInput" accept=".xlsx" hidden>',
-
-        '    <p id="masterExcelStatus" class="db-status"></p>',
-        '</section>',
-
+        // ── รายการเป็นหลัก (list-first) ──
         '<section class="saved-templates">',
-        '    <h2>รายการข้อมูลหลัก</h2>',
+        '    <div class="list-head">',
+        '        <h2>รายการข้อมูลหลัก</h2>',
+        '        <button id="masterNewBtn" type="button" class="plain"' +
+            ' data-modal-open="masterModal">+ เพิ่มข้อมูลหลัก</button>',
+        '    </div>',
 
         '    <div class="master-toolbar">',
         '        <label for="masterSearch">ค้นหา</label>',
@@ -91,7 +28,92 @@
 
         '    <p id="masterDbStatus" class="db-status"></p>',
         '    <ul id="masterList" class="saved-list"></ul>',
-        '</section>'
+        '</section>',
+
+        // ── เครื่องมือ (Excel + กลุ่ม) ──
+        '<section class="master-tools">',
+        '    <h2>เครื่องมือ</h2>',
+
+        '    <div class="form-actions">',
+        '        <button id="masterGroupsBtn" type="button" class="plain"' +
+            ' data-modal-open="masterGroupModal">จัดการกลุ่ม/กลุ่มย่อย</button>',
+        '        <button id="masterExportBtn" type="button" class="plain">' +
+            'ดาวน์โหลด Excel</button>',
+        '        <button id="masterImportBtn" type="button" class="plain">' +
+            'อัปโหลด Excel</button>',
+        '    </div>',
+
+        '    <input type="file" id="masterImportInput" accept=".xlsx" hidden>',
+
+        '    <p id="masterExcelStatus" class="db-status"></p>',
+        '    <p class="hint">ไฟล์ Excel ใช้ 3 คอลัมน์: Code Group, Sub Group และ Name' +
+            ' — รายการเดิม (Code Group + Name ตรงกัน) จะถูกอัปเดตกลุ่มย่อย' +
+            ' ส่วนรายการใหม่จะถูกเพิ่ม</p>',
+        '</section>',
+
+        // ── ฟอร์มเพิ่ม/แก้ไขข้อมูลหลัก (อยู่ในโมดัล) ──
+        '<div class="page-modal" id="masterModal">',
+        '    <div class="page-modal-backdrop" data-modal-close="masterModal"></div>',
+        '    <div class="page-modal-dialog">',
+        '        <div class="page-modal-head">',
+        '            <h2 id="masterFormTitle">เพิ่มข้อมูลหลัก</h2>',
+        '            <button type="button" class="page-modal-close"' +
+            ' data-modal-close="masterModal" aria-label="ปิด">&times;</button>',
+        '        </div>',
+        '        <div class="page-modal-body">',
+        '            <div class="field">',
+        '                <label for="masterCodeGroup">กลุ่ม (Code Group)</label>',
+        '                <select id="masterCodeGroup"></select>',
+        '            </div>',
+
+        '            <div class="field">',
+        '                <label for="masterSubGroup">กลุ่มย่อย (Sub Group)</label>',
+        '                <select id="masterSubGroup"></select>',
+        '            </div>',
+
+        '            <div class="field">',
+        '                <label for="masterName">Name</label>',
+        '                <input type="text" id="masterName" placeholder="เช่น ลูกค้าทั่วไป" autocomplete="off">',
+        '            </div>',
+
+        '            <input type="hidden" id="masterId" value="">',
+
+        '            <div class="form-actions">',
+        '                <button id="masterSaveBtn" type="button">เพิ่ม</button>',
+        '                <button id="masterCancelBtn" type="button" class="plain"' +
+            ' style="display:none">ยกเลิกแก้ไข</button>',
+        '            </div>',
+
+        '            <p id="masterFormStatus" class="db-status"></p>',
+        '        </div>',
+        '    </div>',
+        '</div>',
+
+        // ── จัดการกลุ่ม/กลุ่มย่อย (อยู่ในโมดัล) ──
+        '<div class="page-modal" id="masterGroupModal">',
+        '    <div class="page-modal-backdrop" data-modal-close="masterGroupModal"></div>',
+        '    <div class="page-modal-dialog">',
+        '        <div class="page-modal-head">',
+        '            <h2>กลุ่มและกลุ่มย่อย</h2>',
+        '            <button type="button" class="page-modal-close"' +
+            ' data-modal-close="masterGroupModal" aria-label="ปิด">&times;</button>',
+        '        </div>',
+        '        <div class="page-modal-body">',
+        '            <p class="hint">กำหนดกลุ่ม/กลุ่มย่อยล่วงหน้า แล้วเลือกใช้ตอนเพิ่มข้อมูลหลัก' +
+            ' (รายการที่นำเข้าจาก Excel จะเพิ่มกลุ่มที่ยังไม่มีให้เอง)</p>',
+
+        '            <div class="master-toolbar">',
+        '                <label for="masterNewGroup">เพิ่มกลุ่ม</label>',
+        '                <input type="text" id="masterNewGroup"' +
+            ' placeholder="เช่น CUSTOMER_TYPE" autocomplete="off">',
+        '                <button id="masterGroupAddBtn" type="button" class="plain">เพิ่มกลุ่ม</button>',
+        '            </div>',
+
+        '            <p id="masterGroupStatus" class="db-status"></p>',
+        '            <ul id="masterGroupList" class="group-list"></ul>',
+        '        </div>',
+        '    </div>',
+        '</div>'
     ].join('\n');
 
     const GROUP_FALLBACK = '(ไม่ระบุกลุ่ม)';
@@ -187,7 +209,7 @@
         placeholder.value = '';
         placeholder.textContent = groups.length
             ? '— เลือกกลุ่ม —'
-            : '(ยังไม่มีกลุ่ม — เพิ่มที่ส่วน "กลุ่มและกลุ่มย่อย")';
+            : '(ยังไม่มีกลุ่ม — กดปุ่ม "จัดการกลุ่ม/กลุ่มย่อย")';
         select.appendChild(placeholder);
 
         groups.forEach(function (group) {
@@ -445,6 +467,14 @@
             return HTML;
         },
 
+        // เรียกจาก app.js ตอนกดปุ่ม "+ เพิ่มข้อมูลหลัก" (เตรียมฟอร์มก่อนเปิดโมดัล)
+        onModalOpen: function (modalId) {
+            if (modalId !== 'masterModal') return;
+
+            page.resetForm();
+            page.setFormStatus('');
+        },
+
         // ── ฟอร์มเพิ่ม / แก้ไข ──
 
         // id = 0 หมายถึงเพิ่มใหม่, id > 0 หมายถึงแก้ไข
@@ -630,7 +660,7 @@
             }
 
             if (records.length === 0) {
-                appendEmpty(ul, 'ยังไม่มีข้อมูล Master — เพิ่มรายการด้านบน');
+                appendEmpty(ul, 'ยังไม่มีข้อมูลหลัก — กด "+ เพิ่มข้อมูลหลัก" ด้านบน');
                 return;
             }
 

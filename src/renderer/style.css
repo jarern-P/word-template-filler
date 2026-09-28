@@ -2335,6 +2335,115 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   Page Modal — ฟอร์มสร้าง/แก้ไขของหน้าแบบ list-first
+   ────────────────────────────────────────────────────────────── */
+
+.list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.list-head h2 {
+    margin: 0;
+}
+
+.page-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 130;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.page-modal.open {
+    display: flex;
+}
+
+.page-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(75, 58, 68, 0.2);
+    backdrop-filter: blur(3px);
+}
+
+.page-modal-dialog {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 780px;
+    max-height: 88vh;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+    overflow: hidden;
+}
+
+.page-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--line);
+}
+
+.page-modal-head h2 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.page-modal-close {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    font-size: 1.2rem;
+    line-height: 1;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.page-modal-close:hover {
+    background: var(--surface-soft);
+    color: var(--ink);
+}
+
+.page-modal-body {
+    padding: 18px 22px;
+    overflow-y: auto;
+}
+
+.master-tools {
+    margin-top: 28px;
+    padding: 22px 24px;
+    background: linear-gradient(180deg, #fffafc, var(--pink-50));
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+}
+
+.master-tools h2 {
+    margin: 0 0 10px;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+.master-tools .hint {
+    margin: 8px 0 0;
+}
+
+/* ──────────────────────────────────────────────────────────────
    หน้าต่างแคบ: ย้าย sidebar ขึ้นด้านบน
    ────────────────────────────────────────────────────────────── */
 
