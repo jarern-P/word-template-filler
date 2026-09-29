@@ -21,6 +21,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
     "concurrently": "^9.2.4",
+    "docx-preview": "^0.4.1",
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
     "jszip": "^3.10.2",
@@ -54,11 +55,11 @@
       ]
     },
     "nsis": {
-  "oneClick": false,
-  "allowToChangeInstallationDirectory": true,
-  "createDesktopShortcut": true,
-  "createStartMenuShortcut": true,
-  "shortcutName": "Word Template Filler"
-}
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Word Template Filler"
+    }
   }
 }

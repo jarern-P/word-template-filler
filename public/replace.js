@@ -1047,6 +1047,128 @@
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // แก้ข้อความทั้งย่อหน้า (ใช้โดยหน้าจัดตำแหน่ง)
+    //
+    // หน้าจัดตำแหน่งเรนเดอร์เอกสารด้วย docx-preview แล้วให้ผู้ใช้พิมพ์แก้ข้อความ
+    // บนเอกสารที่เห็น จึงอ้างย่อหน้าด้วย "ลำดับที่" — ต้องเป็นลำดับเดียวกับที่
+    // ตัวเรนเดอร์วาด นั่นคือไล่ทุก w:p ตามลำดับในเอกสาร (รวมย่อหน้าในตาราง)
+    // โดยย่อหน้าในกล่องข้อความ (w:txbxContent) นับเป็นย่อหน้าของตัวเอง
+    // ไม่รวมอยู่ในย่อหน้าแม่
+    // ──────────────────────────────────────────────────────────────
+
+    // text node ของย่อหน้าหนึ่ง ๆ โดยไม่รวมข้อความของย่อหน้าที่ซ้อนอยู่ข้างใน
+    function paragraphTextNodes(paragraph) {
+        const nodes = [];
+
+        function walk(node) {
+            for (let i = 0; i < node.childNodes.length; i++) {
+                const child = node.childNodes[i];
+
+                if (child.nodeType !== 1) continue;
+
+                // ย่อหน้าซ้อน (กล่องข้อความ) มีลำดับของตัวเองแล้ว
+                if (child.localName === 'p') continue;
+
+                if (child.localName === 't') {
+                    nodes.push(child);
+                    continue;
+                }
+
+                walk(child);
+            }
+        }
+
+        walk(paragraph);
+        return nodes;
+    }
+
+    function paragraphText(paragraph) {
+        return paragraphTextNodes(paragraph)
+            .map(function (node) {
+                return node.textContent || '';
+            })
+            .join('');
+    }
+
+    function parseDocument(xml) {
+        if (!xml) return null;
+
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+
+        return doc.getElementsByTagName('parsererror').length > 0 ? null : doc;
+    }
+
+    // ข้อความของทุกย่อหน้าตามลำดับในเอกสาร (null = อ่าน XML ไม่ได้)
+    function listParagraphTexts(xml) {
+        const doc = parseDocument(xml);
+
+        if (!doc) return null;
+
+        return Array.from(doc.getElementsByTagNameNS(W_NS, 'p'))
+            .map(paragraphText);
+    }
+
+    // ช่วงที่ต่างกันของ before/after (ตัดหัว-ท้ายที่เหมือนกันออก)
+    // แก้เฉพาะช่วงที่ต่างจริง run ที่ไม่ถูกแตะจึงคงรูปแบบ (ฟอนต์/ตัวหนา) ไว้
+    function diffRange(before, after) {
+        let start = 0;
+        const limit = Math.min(before.length, after.length);
+
+        while (start < limit && before.charAt(start) === after.charAt(start)) start++;
+
+        let endBefore = before.length;
+        let endAfter = after.length;
+
+        while (
+            endBefore > start &&
+            endAfter > start &&
+            before.charAt(endBefore - 1) === after.charAt(endAfter - 1)
+        ) {
+            endBefore--;
+            endAfter--;
+        }
+
+        return {
+            start: start,
+            end: endBefore,
+            text: after.slice(start, endAfter)
+        };
+    }
+
+    // edits = [ { index, text } ] — index = ลำดับ w:p ในเอกสาร (ตาม listParagraphTexts)
+    // ย่อหน้าที่ไม่มี text node เดิม (เช่นมีแต่รูป) จะถูกข้าม ไม่เขียนทับ
+    function setParagraphTexts(xml, edits) {
+        if (!xml || !edits || edits.length === 0) return xml;
+
+        const doc = parseDocument(xml);
+
+        if (!doc) {
+            console.error('XML Parse Error: ไม่สามารถแก้ข้อความในเอกสารได้');
+            return xml;
+        }
+
+        const paragraphs = Array.from(doc.getElementsByTagNameNS(W_NS, 'p'));
+
+        edits.forEach(function (edit) {
+            const paragraph = paragraphs[edit.index];
+            if (!paragraph) return;
+
+            const textNodes = paragraphTextNodes(paragraph);
+            if (textNodes.length === 0) return;
+
+            // w:t อยู่บรรทัดเดียว — ขึ้นบรรทัดใหม่ที่ผู้ใช้พิมพ์ให้กลายเป็นช่องว่าง
+            const text = normalizeValue(edit.text);
+            const before = paragraphText(paragraph);
+
+            if (before === text) return;
+
+            applyEdits(textNodes, [diffRange(before, text)]);
+        });
+
+        return new XMLSerializer().serializeToString(doc);
+    }
+
     let lastWarnings = [];
     let lastApplied = [];
 
@@ -1111,6 +1233,14 @@
 
     scope.Replace = {
         replaceFields: replaceFields,
+
+        // ── หน้าจัดตำแหน่ง: อ่าน/เขียนข้อความย่อหน้าทั้งก้อน ──
+
+        // ข้อความของทุกย่อหน้าตามลำดับในเอกสาร
+        listParagraphTexts: listParagraphTexts,
+
+        // แทนข้อความย่อหน้าที่ระบุ (เก็บรูปแบบของ run ที่ไม่ถูกแก้)
+        setParagraphTexts: setParagraphTexts,
 
         // ตัววัดสำรอง (ใช้อ้างอิงเมื่อแอปวัดด้วยฟอนต์จริงไม่ได้)
         defaultMeasure: defaultMeasure,

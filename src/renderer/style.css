@@ -2443,6 +2443,331 @@ body.table-ratio-dragging .table-ratio-handle {
     margin: 8px 0 0;
 }
 
+/* ============================================================
+   ฟอนต์ของเอกสาร Word (ใช้กับหน้าจัดตำแหน่ง)
+   ------------------------------------------------------------
+   เอกสารราชการมักระบุฟอนต์ที่เครื่องผู้ใช้อาจไม่ได้ติดตั้ง
+   (เช่น TH SarabunIT๙) ถ้าไม่มี เบราว์เซอร์จะตกไปใช้ฟอนต์อื่น
+   ทำให้หน้าตาเอกสารไม่เหมือนของจริง
+
+   @font-face ที่มีแต่ src: local(...) ใช้ "ตั้งชื่อเล่น" ให้ฟอนต์ที่ติดตั้งอยู่:
+   เอกสารระบุ TH SarabunIT๙ แต่เครื่องมีแค่ TH Sarabun New → ใช้ TH Sarabun New
+   (แหล่งแรกเป็นชื่อเดียวกันเสมอ เพื่อให้ฟอนต์จริงยังถูกใช้เป็นอันดับแรก)
+   ถ้าไม่มีสักตัว เบราว์เซอร์จะไล่ไปฟอนต์ถัดไปใน font-family ของเอกสารเอง
+   ============================================================ */
+
+/* ── TH SarabunIT๙: แถมไฟล์ฟอนต์มากับแอป ──
+   เอกสารราชการจำนวนมากระบุฟอนต์นี้ แต่บางเครื่องไม่ได้ติดตั้ง
+   (หรือติดตั้งชื่อไม่ตรงกับที่เอกสารระบุ) จึงแนบไฟล์จริงมากับแอป
+   เอกสารที่ระบุ TH SarabunIT๙ จะได้หน้าตาเหมือนกันทุกเครื่อง
+   ไฟล์อยู่ใน src/renderer/fonts/ — Vite คัดลอกเข้า dist ให้ตอน build
+   (ชื่อ family ทั้งแบบมี ๙ และแบบ 9 เพราะเอกสารเขียนไม่เหมือนกัน) */
+
+@font-face {
+    font-family: "TH SarabunIT๙";
+    src: url("./fonts/THSarabunIT9-Regular.ttf") format("truetype"),
+        local("TH SarabunIT๙"), local("TH Sarabun New");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT๙";
+    src: url("./fonts/THSarabunIT9-Bold.ttf") format("truetype"),
+        local("TH SarabunIT๙ Bold"), local("TH Sarabun New Bold");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT๙";
+    src: url("./fonts/THSarabunIT9-Italic.ttf") format("truetype"),
+        local("TH SarabunIT๙ Italic"), local("TH Sarabun New Italic");
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT๙";
+    src: url("./fonts/THSarabunIT9-BoldItalic.ttf") format("truetype"),
+        local("TH SarabunIT๙ Bold Italic"), local("TH Sarabun New Bold Italic");
+    font-weight: 700;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT9";
+    src: url("./fonts/THSarabunIT9-Regular.ttf") format("truetype"),
+        local("TH SarabunIT9"), local("TH Sarabun New");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT9";
+    src: url("./fonts/THSarabunIT9-Bold.ttf") format("truetype"),
+        local("TH SarabunIT9 Bold"), local("TH Sarabun New Bold");
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT9";
+    src: url("./fonts/THSarabunIT9-Italic.ttf") format("truetype"),
+        local("TH SarabunIT9 Italic"), local("TH Sarabun New Italic");
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH SarabunIT9";
+    src: url("./fonts/THSarabunIT9-BoldItalic.ttf") format("truetype"),
+        local("TH SarabunIT9 Bold Italic"), local("TH Sarabun New Bold Italic");
+    font-weight: 700;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TH Sarabun New";
+    src: local("TH Sarabun New"), local("TH SarabunIT๙"), local("TH Sarabun PSK"),
+        local("TH SarabunPSK"), local("Sarabun New"), local("Sarabun");
+}
+
+@font-face {
+    font-family: "TH SarabunPSK";
+    src: local("TH SarabunPSK"), local("TH Sarabun PSK"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New"), local("Sarabun");
+}
+
+@font-face {
+    font-family: "TH Sarabun PSK";
+    src: local("TH Sarabun PSK"), local("TH SarabunPSK"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New"), local("Sarabun");
+}
+
+@font-face {
+    font-family: "Angsana New";
+    src: local("Angsana New"), local("AngsanaUPC"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New");
+}
+
+@font-face {
+    font-family: "AngsanaUPC";
+    src: local("AngsanaUPC"), local("Angsana New"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New");
+}
+
+@font-face {
+    font-family: "Cordia New";
+    src: local("Cordia New"), local("CordiaUPC"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New");
+}
+
+@font-face {
+    font-family: "CordiaUPC";
+    src: local("CordiaUPC"), local("Cordia New"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New");
+}
+
+@font-face {
+    font-family: "Browallia New";
+    src: local("Browallia New"), local("BrowalliaUPC"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New");
+}
+
+@font-face {
+    font-family: "BrowalliaUPC";
+    src: local("BrowalliaUPC"), local("Browallia New"), local("TH Sarabun New"),
+        local("TH SarabunIT๙"), local("Sarabun New");
+}
+
+@font-face {
+    font-family: "Sarabun New";
+    src: local("Sarabun New"), local("TH Sarabun New"), local("TH SarabunIT๙"),
+        local("TH Sarabun PSK"), local("Sarabun");
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Popup จัดตำแหน่งเอกสาร (เรนเดอร์ด้วย docx-preview)
+   เปิดจากหน้ารายการแม่แบบ — ดูเอกสารจริงแล้วแก้ข้อความ
+   ────────────────────────────────────────────────────────────── */
+
+.layout-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 130;
+    align-items: center;
+    justify-content: center;
+}
+
+.layout-overlay.open {
+    display: flex;
+}
+
+.layout-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(75, 58, 68, 0.3);
+    backdrop-filter: blur(3px);
+}
+
+.layout-dialog {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 1180px;
+    max-width: calc(100vw - 32px);
+    height: 92vh;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+}
+
+.layout-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.layout-head h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+.layout-close {
+    width: 32px;
+    height: 32px;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.layout-close:hover {
+    color: var(--pink-700);
+    background: var(--pink-50);
+}
+
+.layout-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    padding: 10px 20px;
+    background: var(--surface-soft);
+    border-bottom: 1px solid var(--line);
+}
+
+.layout-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.layout-hint {
+    font-size: 12px;
+    color: var(--ink-faint);
+}
+
+.layout-status {
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+.layout-status.dirty,
+.layout-status.warn {
+    color: var(--warn);
+}
+
+.layout-status.error {
+    color: var(--danger);
+}
+
+.layout-status.ok {
+    color: var(--ok);
+}
+
+/* ปุ่มของหน้าจัดตำแหน่งอยู่ชิดขวาของแถบเครื่องมือ */
+.layout-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.layout-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: #eef0f2;
+}
+
+/* docx-preview ยัด <style> ของตัวเองที่นี่ */
+.layout-style {
+    display: none;
+}
+
+/* พื้นหลังของเอกสาร + เลื่อนดูได้สองทาง
+   docx-preview จัดกึ่งกลางหน้าด้วย flex (align-items: center) ซึ่งถ้าเนื้อหา
+   กว้างกว่ากรอบ ส่วนซ้ายจะถูกตัดและเลื่อนไปไม่ถึง จึงจัดกึ่งกลางด้วย margin ของ
+   หน้ากระดาษแทน (flex-start + margin: auto) แล้วให้ wrapper เลื่อนได้ */
+.layout-preview .docx-wrapper {
+    background: #eef0f2;
+    align-items: flex-start;
+    overflow: auto;
+}
+
+/* ห้ามตัดเนื้อหาที่กว้างเกินหน้ากระดาษ (ตารางกว้าง/กล่องข้อความ) —
+   overflow: hidden ของ docx-preview ทำให้ส่วนที่เกินหายไปเลย
+   selector ต้องจำเพาะกว่า .docx-wrapper>section.docx ของ docx-preview */
+.layout-preview .docx-wrapper section.docx {
+    margin: 0 auto 30px;
+    overflow: visible;
+}
+
+/* ย่อหน้าที่แก้ได้ — บอกด้วยกรอบจาง ๆ ตอนชี้เมาส์/โฟกัส */
+.layout-preview .layout-para[contenteditable="true"]:hover {
+    outline: 1px dashed var(--pink-300);
+    outline-offset: 2px;
+}
+
+.layout-preview .layout-para[contenteditable="true"]:focus {
+    outline: 2px solid var(--pink-400);
+    outline-offset: 2px;
+}
+
+/* ย่อหน้าที่จับคู่กับต้นฉบับไม่ได้ = แก้ไม่ได้ (ดูคำอธิบายที่ title) */
+.layout-preview .layout-para-locked {
+    cursor: not-allowed;
+}
+
+/* ย่อหน้าที่มี {{field}} — เปิด/ปิดได้จากแถบเครื่องมือ
+   ใช้เงาด้านใน ไม่ใช้กรอบ เพื่อไม่ให้ระยะข้อความในเอกสารขยับ */
+.layout-preview.show-fields .layout-field-para {
+    box-shadow: inset 3px 0 0 var(--pink-400);
+}
+
 /* ──────────────────────────────────────────────────────────────
    หน้าต่างแคบ: ย้าย sidebar ขึ้นด้านบน
    ────────────────────────────────────────────────────────────── */

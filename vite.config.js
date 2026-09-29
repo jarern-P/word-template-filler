@@ -11,33 +11,72 @@ const require = createRequire(import.meta.url);
 
 
 // ============================================================
-// Vendored JSZip
+// Vendored browser libraries
 // ============================================================
 
-// renderer โหลด jszip ด้วย <script> ธรรมดา (ไม่ผ่าน bundler)
+// renderer โหลดไลบรารีเหล่านี้ด้วย <script> ธรรมดา (ไม่ผ่าน bundler)
 // จึงต้องมีไฟล์จริงให้ทั้ง dev server และ dist
-const JSZIP_URL = "/vendor/jszip.min.js";
+//
+// ลำดับโหลดใน index.html สำคัญ: docx-preview ใช้ JSZip จาก global
+// จึงต้องโหลดหลัง jszip
+const VENDORED_LIBS = [
 
-let jszipSource = null;
+    {
+        url: "/vendor/jszip.min.js",
+        target: "dist/vendor/jszip.min.js",
 
-function getJszipSource() {
+        source: () =>
+            require.resolve(
+                "jszip/dist/jszip.min.js"
+            )
+    },
 
-    if (!jszipSource) {
+    {
+        // เรนเดอร์ .docx ให้เห็นเหมือนเปิดใน Word (หน้าจัดตำแหน่ง)
+        url: "/vendor/docx-preview.min.js",
+        target: "dist/vendor/docx-preview.min.js",
 
-        jszipSource = require.resolve(
-            "jszip/dist/jszip.min.js"
-        );
+        // package.json ของ docx-preview มี "exports" ปิด subpath ไว้
+        // จึงเรียก require.resolve("docx-preview/dist/...") ตรง ๆ ไม่ได้
+        // ต้องหาจากไฟล์ main แล้วต่อชื่อไฟล์เอง
+        source: () =>
+            path.join(
+                path.dirname(
+                    require.resolve(
+                        "docx-preview"
+                    )
+                ),
+                "docx-preview.min.js"
+            )
+    }
+];
+
+const vendorSourceCache = {};
+
+function vendoredLib(url) {
+
+    return VENDORED_LIBS.find(
+        lib => lib.url === url
+    ) || null;
+}
+
+function getVendorSource(lib) {
+
+    if (!vendorSourceCache[lib.url]) {
+
+        vendorSourceCache[lib.url] =
+            lib.source();
     }
 
-    return jszipSource;
+    return vendorSourceCache[lib.url];
 }
 
 
-function vendoredJszipPlugin() {
+function vendoredLibsPlugin() {
 
     return {
 
-        name: "vendored-jszip",
+        name: "vendored-libs",
 
         // dev: เสิร์ฟไฟล์จาก node_modules
         configureServer(server) {
@@ -49,18 +88,38 @@ function vendoredJszipPlugin() {
                         (req.url || "")
                             .split("?")[0];
 
-                    if (url !== JSZIP_URL) {
+                    const lib =
+                        vendoredLib(url);
+
+                    if (!lib) {
                         return next();
                     }
 
-                    res.setHeader(
-                        "Content-Type",
-                        "text/javascript; charset=utf-8"
-                    );
+                    try {
 
-                    fs.createReadStream(
-                        getJszipSource()
-                    ).pipe(res);
+                        const source =
+                            getVendorSource(lib);
+
+                        if (!fs.existsSync(source)) {
+
+                            throw new Error(
+                                "ไม่พบไฟล์ " + source +
+                                " — รัน npm install ก่อน"
+                            );
+                        }
+
+                        res.setHeader(
+                            "Content-Type",
+                            "text/javascript; charset=utf-8"
+                        );
+
+                        fs.createReadStream(source)
+                            .pipe(res);
+
+                    } catch (error) {
+
+                        next(error);
+                    }
                 }
             );
         },
@@ -68,26 +127,29 @@ function vendoredJszipPlugin() {
         // build: คัดลอกเข้า dist/vendor
         closeBundle() {
 
-            const target = path.resolve(
-                __dirname,
-                "dist/vendor/jszip.min.js"
-            );
+            for (const lib of VENDORED_LIBS) {
 
-            fs.mkdirSync(
-                path.dirname(target),
-                {
-                    recursive: true
-                }
-            );
+                const target = path.resolve(
+                    __dirname,
+                    lib.target
+                );
 
-            fs.copyFileSync(
-                getJszipSource(),
-                target
-            );
+                fs.mkdirSync(
+                    path.dirname(target),
+                    {
+                        recursive: true
+                    }
+                );
 
-            console.log(
-                "Copied jszip -> dist/vendor/jszip.min.js"
-            );
+                fs.copyFileSync(
+                    getVendorSource(lib),
+                    target
+                );
+
+                console.log(
+                    "Copied " + lib.target
+                );
+            }
         }
     };
 }
@@ -392,7 +454,7 @@ export default defineConfig(({ command }) => ({
     },
 
     plugins: [
-        vendoredJszipPlugin(),
+        vendoredLibsPlugin(),
         dictionaryPlugin(),
         publicDirReloadPlugin(
             path.resolve(

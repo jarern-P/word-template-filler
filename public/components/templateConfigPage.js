@@ -35,7 +35,8 @@
         '        <button id="templateNewBtn" type="button" class="plain"' +
             ' data-modal-open="templateModal">+ สร้างแม่แบบใหม่</button>',
         '    </div>',
-        '    <p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น</p>',
+        '    <p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น' +
+            ' หรือ "จัดตำแหน่ง" เพื่อดูเอกสารจริงแล้วแก้ข้อความ/จัดตำแหน่ง</p>',
         '    <p id="dbStatus" class="db-status"></p>',
         '    <ul id="savedList" class="saved-list"></ul>',
         '</section>'
@@ -231,6 +232,16 @@
         loadBtn.dataset.action = 'load';
         loadBtn.dataset.id = String(record.id);
 
+        // เปิดเอกสารจริง (docx-preview) เพื่อดูตำแหน่งและแก้ข้อความ
+        // (logic อยู่ใน app.js เพราะต้องอ่าน/เขียนฐานข้อมูล)
+        const layoutBtn = document.createElement('button');
+        layoutBtn.type = 'button';
+        layoutBtn.className = 'plain';
+        layoutBtn.textContent = 'จัดตำแหน่ง';
+        layoutBtn.title = 'ดูเอกสารเหมือนเปิดใน Word แล้วแก้ข้อความ/จัดตำแหน่ง';
+        layoutBtn.dataset.action = 'layout';
+        layoutBtn.dataset.id = String(record.id);
+
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'danger';
@@ -238,6 +249,7 @@
         deleteBtn.dataset.action = 'delete';
         deleteBtn.dataset.id = String(record.id);
 
+        actions.appendChild(layoutBtn);
         actions.appendChild(loadBtn);
         actions.appendChild(deleteBtn);
 

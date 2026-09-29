@@ -1486,6 +1486,12 @@
                         recordId
                     );
 
+                } else if (action === 'layout') {
+
+                    onOpenLayout(
+                        recordId
+                    );
+
                 } else if (
                     action === 'delete'
                 ) {
@@ -2208,12 +2214,6 @@
                     xml
                 );
 
-            const present = {};
-
-            fields.forEach(function (field) {
-                present[field] = true;
-            });
-
             state.docxBytes = bytes;
             state.xml = xml;
             state.fileName =
@@ -2223,68 +2223,12 @@
             state.fields = fields;
             state.loaded = true;
 
-            // ทิ้งค่า type ของ field ที่ไม่มีอยู่ในไฟล์ใหม่แล้ว
-            const configValues =
-                getPageValues(CONFIG_PAGE);
-
-            Object.keys(configValues).forEach(function (field) {
-                if (!present[field]) {
-                    delete configValues[field];
-                }
-            });
-
-            // ทิ้งค่าล็อกตำแหน่งของ field ที่หายไปเช่นกัน
-            const config =
-                getComponent(CONFIG_PAGE);
-
-            const locks =
-                config.getLocks
-                    ? config.getLocks()
-                    : {};
-
-            const keptLocks = {};
-
-            Object.keys(locks).forEach(function (field) {
-                if (present[field]) {
-                    keptLocks[field] = true;
-                }
-            });
-
-            config.setLocks(keptLocks);
-
-            // ทิ้ง placeholder ของ field ที่หายไปเช่นกัน
-            if (config.getPlaceholders && config.setPlaceholders) {
-
-                const placeholders =
-                    config.getPlaceholders();
-
-                const keptPlaceholders = {};
-
-                Object.keys(placeholders).forEach(function (field) {
-                    if (present[field]) {
-                        keptPlaceholders[field] = placeholders[field];
-                    }
-                });
-
-                config.setPlaceholders(keptPlaceholders);
-            }
-
-            // ทิ้งโครงตารางของ field ที่หายไปจากไฟล์ใหม่ด้วย
-            if (config.getTableSchemas && config.setTableSchemas) {
-
-                const schemas =
-                    config.getTableSchemas();
-
-                const keptSchemas = {};
-
-                Object.keys(schemas).forEach(function (field) {
-                    if (present[field]) {
-                        keptSchemas[field] = schemas[field];
-                    }
-                });
-
-                config.setTableSchemas(keptSchemas);
-            }
+            // ทิ้ง type / ล็อกตำแหน่ง / placeholder / โครงตาราง
+            // ของ field ที่ไม่มีอยู่ในไฟล์ใหม่แล้ว
+            keepConfigForFields(
+                fields,
+                getComponent(CONFIG_PAGE)
+            );
 
             fillForm(CONFIG_PAGE);
 
@@ -2673,6 +2617,329 @@
                 error.message
             );
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // จัดตำแหน่งเอกสาร (หน้ารายการแม่แบบ → ปุ่ม "จัดตำแหน่ง")
+    //
+    // เปิดเอกสารจริงด้วย docx-preview ให้เห็นฟอนต์/ขนาดกระดาษ/การตัดขึ้นหน้าใหม่
+    // เหมือนเปิดใน Word แล้วแก้ข้อความได้ตรงหน้า
+    // (การแสดงผล/การแก้ข้อความอยู่ใน TemplateLayoutDialog)
+    // ที่นี่แค่เตรียมไฟล์ + บันทึกกลับฐานข้อมูล + ดาวน์โหลด
+    // ──────────────────────────────────────────────────────────────
+
+    // คืนชุดค่าเฉพาะ field ที่ยังมีอยู่ในเอกสาร (field อื่นถูกตัดทิ้ง)
+    function keepFieldsInConfig(values, fields) {
+
+        const present = {};
+
+        (fields || []).forEach(function (field) {
+            present[field] = true;
+        });
+
+        const kept = {};
+
+        Object.keys(values || {}).forEach(function (field) {
+            if (present[field]) {
+                kept[field] = values[field];
+            }
+        });
+
+        return kept;
+    }
+
+    // ทิ้งค่า config ของ field ที่ไม่มีในเอกสารแล้ว (ใช้เมื่อไฟล์เปลี่ยน)
+    // - ค่า type: แก้ในค่าของหน้า Template Configuration โดยตรง
+    // - ล็อกตำแหน่ง / placeholder / โครงตาราง: เก็บใน component
+    function keepConfigForFields(fields, config) {
+
+        if (!config) {
+            return;
+        }
+
+        const configValues =
+            getPageValues(CONFIG_PAGE);
+
+        const kept =
+            keepFieldsInConfig(configValues, fields);
+
+        // getPageValues คืน object ตัวจริงของหน้า → ตัดคีย์ทิ้งในที่เดิม
+        Object.keys(configValues).forEach(function (field) {
+
+            if (!Object.prototype.hasOwnProperty.call(kept, field)) {
+                delete configValues[field];
+            }
+        });
+
+        if (config.getLocks && config.setLocks) {
+
+            config.setLocks(
+                keepFieldsInConfig(
+                    config.getLocks(),
+                    fields
+                )
+            );
+        }
+
+        if (config.getPlaceholders && config.setPlaceholders) {
+
+            config.setPlaceholders(
+                keepFieldsInConfig(
+                    config.getPlaceholders(),
+                    fields
+                )
+            );
+        }
+
+        if (config.getTableSchemas && config.setTableSchemas) {
+
+            config.setTableSchemas(
+                keepFieldsInConfig(
+                    config.getTableSchemas(),
+                    fields
+                )
+            );
+        }
+    }
+
+    async function onOpenLayout(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        if (!scope.TemplateLayoutDialog) {
+
+            alert(
+                'ไม่พบหน้าจัดตำแหน่ง (ไฟล์ components/templateLayoutDialog.js)'
+            );
+
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            const record =
+                await scope.Db.get(
+                    recordId
+                );
+
+            if (!record) {
+
+                alert(
+                    'ไม่พบ template นี้ (อาจถูกลบไปแล้ว)'
+                );
+
+                await refreshTemplateList();
+
+                return;
+            }
+
+            const bytes =
+                record.docx instanceof Uint8Array
+                    ? record.docx
+                    : new Uint8Array(
+                        record.docx
+                    );
+
+            const xml =
+                await readDocumentXml(
+                    bytes
+                );
+
+            scope.TemplateLayoutDialog.open({
+
+                name:
+                    record.name || '',
+
+                bytes:
+                    bytes,
+
+                xml:
+                    xml,
+
+                // เก็บในฐานข้อมูล แล้วคืน byte ของไฟล์ใหม่ไปเรนเดอร์ต่อ
+                save:
+                    async function (newXml) {
+
+                        return await saveLayoutEdits(
+                            record,
+                            newXml
+                        );
+                    },
+
+                // ดาวน์โหลดไฟล์ที่แก้แล้วไปตรวจก่อน (ไม่แตะฐานข้อมูล)
+                download:
+                    async function (newXml) {
+
+                        await downloadLayoutEdits(
+                            record,
+                            newXml
+                        );
+                    }
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            alert(
+                'เปิดหน้าจัดตำแหน่งไม่สำเร็จ: ' +
+                (error && error.message
+                    ? error.message
+                    : error)
+            );
+        }
+    }
+
+    // แทน word/document.xml ด้วย xml ที่แก้จากหน้าจัดตำแหน่ง
+    // แล้วได้ byte ของ .docx ใหม่ (ไฟล์อื่นใน zip เดิมถูกเก็บครบ)
+    async function zipDocumentXml(bytes, xml) {
+
+        const zip =
+            await JSZip.loadAsync(
+                bytes
+            );
+
+        zip.file(
+            'word/document.xml',
+            xml
+        );
+
+        return await zip.generateAsync({
+            type: 'uint8array'
+        });
+    }
+
+    // บันทึกผลจากหน้าจัดตำแหน่งลงฐานข้อมูล
+    //
+    // ค่า type / ล็อกตำแหน่ง / placeholder / ตาราง ของ field ที่ยังมีอยู่ถูกเก็บไว้
+    // (เหมือนตอนอัปโหลดไฟล์ทับ) — field ที่หายไปจากการแก้ข้อความถูกตัดทิ้ง
+    async function saveLayoutEdits(record, newXml) {
+
+        const bytes =
+            await zipDocumentXml(
+                record.docx,
+                newXml
+            );
+
+        const fields =
+            scope.Extract.extractFields(
+                newXml
+            );
+
+        const types =
+            keepFieldsInConfig(record.types, fields);
+
+        const locks =
+            keepFieldsInConfig(record.locks, fields);
+
+        const placeholders =
+            keepFieldsInConfig(record.placeholders, fields);
+
+        const tables =
+            keepFieldsInConfig(record.tables, fields);
+
+        await ensureDb();
+
+        await scope.Db.save({
+
+            id:
+                record.id,
+
+            name:
+                record.name,
+
+            fileName:
+                record.file_name,
+
+            docx:
+                bytes,
+
+            fields:
+                fields,
+
+            types:
+                types,
+
+            locks:
+                locks,
+
+            placeholders:
+                placeholders,
+
+            tables:
+                tables
+        });
+
+        // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
+        // (กดบันทึกซ้ำ/ดาวน์โหลดในหน้าจัดตำแหน่งครั้งถัดไปจะต่อจากไฟล์ล่าสุด)
+        record.docx = bytes;
+        record.fields = fields;
+        record.types = types;
+        record.locks = locks;
+        record.placeholders = placeholders;
+        record.tables = tables;
+
+        // ถ้าแม่แบบนี้กำลังเปิดแก้ไขอยู่ในหน้า "ตั้งค่าแม่แบบ"
+        // state ในหน่วยความจำต้องตรงกับไฟล์ใหม่ด้วย
+        if (
+            state.templateId === record.id &&
+            currentPage === CONFIG_PAGE
+        ) {
+
+            state.docxBytes = bytes;
+            state.xml = newXml;
+            state.fields = fields;
+
+            keepConfigForFields(
+                fields,
+                getComponent(CONFIG_PAGE)
+            );
+
+            fillForm(CONFIG_PAGE);
+            resetInteractionState();
+        }
+
+        setDbStatus(
+            'แก้ข้อความจากหน้าจัดตำแหน่งแล้ว: ' +
+            record.name
+        );
+
+        await refreshTemplateList();
+
+        return bytes;
+    }
+
+    // ดาวน์โหลดไฟล์ .docx ที่แก้จากหน้าจัดตำแหน่ง (ไม่บันทึกในฐานข้อมูล)
+    async function downloadLayoutEdits(record, newXml) {
+
+        const bytes =
+            await zipDocumentXml(
+                record.docx,
+                newXml
+            );
+
+        const base =
+            String(
+                record.file_name ||
+                record.name ||
+                'document.docx'
+            ).replace(/\.docx$/i, '');
+
+        downloadBlob(
+            new Blob(
+                [bytes],
+                {
+                    type:
+                        'application/vnd.openxmlformats-officedocument' +
+                        '.wordprocessingml.document'
+                }
+            ),
+            base + '-edited.docx'
+        );
     }
 
     // ──────────────────────────────────────────────────────────────

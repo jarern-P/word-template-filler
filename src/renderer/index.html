@@ -148,6 +148,10 @@
     <!-- jszip ถูก vendor ไว้ในโปรเจกต์ ไม่ต้องพึ่ง CDN -->
     <script src="./vendor/jszip.min.js"></script>
 
+    <!-- docx-preview เรนเดอร์ .docx ให้เห็นเหมือนเปิดใน Word (หน้าจัดตำแหน่ง)
+         ใช้ JSZip จาก global จึงต้องโหลดหลัง jszip -->
+    <script src="./vendor/docx-preview.min.js"></script>
+
     <!--
         พจนานุกรมไทย (.dic/.aff ที่ dictionary/) ถูกแปลงเป็น JS ตอน dev/build
         ใช้ <script> เพราะ .exe เปิดหน้าด้วย file:// แล้ว fetch ไฟล์ในเครื่องไม่ได้
@@ -172,6 +176,7 @@
     <script src="./components/historyPage.js"></script>
     <script src="./components/masterLookup.js"></script>
     <script src="./components/previewDialog.js"></script>
+    <script src="./components/templateLayoutDialog.js"></script>
     <script src="./components/datePicker.js"></script>
     <script src="./components/selectMenu.js"></script>
     <script src="./components/suggestMenu.js"></script>
