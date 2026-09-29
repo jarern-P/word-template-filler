@@ -14,6 +14,8 @@
     // - ดาวน์โหลด: ได้ไฟล์ต้นฉบับที่เก็บไว้ (ยังไม่ถูกแทนค่า)
     // - อัปโหลดทับ: เอาไฟล์ที่แก้ไขนอกแอปมาทับไฟล์เดิม (มี confirm ก่อนทับใน app.js)
     // - input file ถูกซ่อน เพราะเปิดผ่านปุ่มเพื่อให้เข้าชุดกับปุ่มอื่น
+    //   (ตอน "แก้ไข" แม่แบบที่บันทึกไว้ ปุ่มนี้เป็นทางเดียวที่ใช้เปลี่ยนไฟล์
+    //   เพราะช่องเลือกไฟล์ด้านบนของ editor ถูกซ่อน — ดู setFilePickerVisible)
     // ปุ่มทั้งหมด (รวม Save Template และ Clear) ถูกรวมเป็นแถวเดียวโดย FormPage
     // (ดู actionsRow ใน FormPage.create) จึงไม่ต้องมี div.form-actions ของตัวเอง
     const ACTIONS_HTML = [
@@ -257,7 +259,7 @@
         listHTML: LIST_HTML,
         modalId: 'templateModal',
         editorTitle: 'ตั้งค่า Type ของแต่ละ Field',
-        emptyMessage: 'ยังไม่ได้เลือกไฟล์ — เลือกไฟล์ .docx ด้านบน หรือกด "แก้ไข" จากรายการ'
+        emptyMessage: 'ยังไม่ได้เลือกไฟล์ .docx — เลือกจากช่องด้านบน หรือกด "แก้ไข" จากรายการ'
     });
 
     // เรียกจาก app.js ตอนกด "+ สร้างแม่แบบใหม่" — เริ่มจาก editor ว่าง
@@ -267,7 +269,25 @@
         if (scope.App && scope.App.resetAll) {
             scope.App.resetAll();
         }
+
+        // สร้างแม่แบบใหม่ = ยังไม่มีไฟล์ในมือ จึงต้องมีช่องเลือกไฟล์ .docx
+        setFilePickerVisible(true);
     };
+
+    // ── ช่องเลือกไฟล์ .docx ด้านบนของ editor ──
+    //
+    // ตอน "แก้ไข" แม่แบบที่บันทึกไว้ มีไฟล์อยู่ในมือแล้ว จึงซ่อนช่องนี้
+    // เพื่อไม่ให้เลือกไฟล์ใหม่แล้วกลายเป็นสร้างแม่แบบใหม่โดยไม่ตั้งใจ
+    // (ใช้ปุ่ม "อัปโหลดไฟล์ใหม่ทับไฟล์เดิม" แทน)
+    // app.js เรียก true ตอนล้างค่า/เริ่มแม่แบบใหม่ และเรียก false ตอนโหลดแม่แบบมาแก้ไข
+    function setFilePickerVisible(visible) {
+        const input = document.getElementById('fileInput');
+        const box = input && input.parentNode;
+
+        if (box) box.hidden = !visible;
+    }
+
+    page.setFilePickerVisible = setFilePickerVisible;
 
     // ── ส่วนที่ใช้เฉพาะหน้านี้ ──
 

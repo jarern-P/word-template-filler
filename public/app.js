@@ -2606,6 +2606,13 @@
             // กด "แก้ไข" จากรายการของหน้า Template Configuration = เปิด editor ในโมดัล
             if (currentPage === CONFIG_PAGE) {
 
+                // แม่แบบที่โหลดมามีไฟล์ต้นฉบับอยู่แล้ว จึงซ่อนช่องเลือกไฟล์ .docx
+                // ด้านบนของ editor — เปลี่ยนไฟล์ใช้ปุ่ม "อัปโหลดไฟล์ใหม่ทับไฟล์เดิม"
+                if (config.setFilePickerVisible) {
+
+                    config.setFilePickerVisible(false);
+                }
+
                 scope.PageModal.open('templateModal');
             }
 
@@ -4308,9 +4315,19 @@
 
         clearPageState();
 
-        getComponent(
-            currentPage
-        ).resetFileInput();
+        const component =
+            getComponent(
+                currentPage
+            );
+
+        component.resetFileInput();
+
+        // ล้างค่าแล้วเริ่มแม่แบบใหม่ = ยังไม่มีไฟล์ในมือ
+        // หน้า Template Configuration จึงต้องมีช่องเลือกไฟล์ .docx กลับมา
+        if (component.setFilePickerVisible) {
+
+            component.setFilePickerVisible(true);
+        }
 
         applyMeta(
             currentPage
