@@ -922,6 +922,91 @@
         });
     }
 
+    // ระยะห่างที่เว้นจากขอบข้อความ (px) ตอนเลื่อนรูปหนีข้อความ
+    const TEXT_CLEARANCE = 2;
+
+    // รูปหัวกระดาษ (ตราสัญลักษณ์) ถูก anchor ให้ยื่นลงมาทับบรรทัดแรกได้
+    // (offset ติดลบจากย่อหน้าชื่อเรื่อง) ซึ่งเป็นรูป JPEG ทึบ จึงบังข้อความ
+    // เลื่อนรูปที่อยู่ "หน้าข้อความ" ไปทางซ้ายให้พ้นขอบซ้ายของข้อความที่มันทับ
+    // โดยยังอยู่ในหน้ากระดาษ (ระยะขอบซ้ายของเอกสารกว้างพอ)
+    function avoidCoveringText() {
+        if (!host) return;
+
+        const images = Array.from(host.querySelectorAll('article img'));
+
+        if (images.length === 0) return;
+
+        // กล่องข้อความของเนื้อเรื่อง (ไม่รวมย่อหน้าในกล่องข้อความ/ตาราง svg)
+        const textRects = [];
+
+        host.querySelectorAll('article p').forEach(function (p) {
+            if (p.closest('svg')) return;
+
+            const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, null);
+            let node;
+
+            while ((node = walker.nextNode())) {
+                if (!node.nodeValue || !node.nodeValue.trim()) continue;
+
+                const range = document.createRange();
+                range.selectNodeContents(node);
+
+                let rects;
+
+                try {
+                    rects = range.getClientRects();
+                } catch (error) {
+                    continue;
+                }
+
+                for (let i = 0; i < rects.length; i++) {
+                    const rect = rects[i];
+
+                    if (rect.width > 1 && rect.height > 1) textRects.push(rect);
+                }
+            }
+        });
+
+        if (textRects.length === 0) return;
+
+        images.forEach(function (img) {
+            const wrapper = img.closest('div');
+            if (!wrapper) return;
+
+            // รูปที่ตั้งให้อยู่หลังข้อความแล้ว — ข้อความทับรูปอยู่ ไม่ต้องย้าย
+            if (wrapper.style.zIndex === '-1') return;
+
+            const rect = img.getBoundingClientRect();
+            if (!(rect.width > 0) || !(rect.height > 0)) return;
+
+            const page = pageGeometry(wrapper);
+            if (!page) return;
+
+            const scale = page.scale || 1;
+
+            // ขอบซ้ายของข้อความที่รูปนี้ทับอยู่
+            let textLeft = Infinity;
+
+            textRects.forEach(function (t) {
+                const w = Math.min(rect.right, t.right) - Math.max(rect.left, t.left);
+                const h = Math.min(rect.bottom, t.bottom) - Math.max(rect.top, t.top);
+
+                if (w > 1 && h > 1) textLeft = Math.min(textLeft, t.left);
+            });
+
+            if (textLeft === Infinity) return;
+
+            const textLeftPage = (textLeft - page.rect.left) / scale;
+            const width = rect.width / scale;
+            const target = textLeftPage - TEXT_CLEARANCE - width;
+
+            // ไม่มีที่ทางซ้าย (จะหลุดออกนอกกระดาษ) = ปล่อยไว้ตามเดิม
+            if (target < 0) return;
+
+            wrapper.style.left = target.toFixed(2) + 'px';
+        });
+    }
+
     // ระยะขอบเดิมของกล่อง VML ก่อนถูกย้ายฐาน
     // เก็บไว้ที่ data-* เพราะฟังก์ชันนี้ถูกเรียกซ้ำ (หลังเรนเดอร์, หลังฟอนต์โหลดเสร็จ,
     // ตอนย่อ/ขยาย) ถ้าอ่าน margin ที่ตัวเองเขียนไว้จะบวกซ้ำทุกครั้ง
@@ -1087,6 +1172,9 @@
 
             positionVmlTextBoxes();
         }
+
+        // รูปหัวกระดาษที่ยื่นลงมาทับบรรทัดแรก — เลื่อนให้พ้นข้อความ
+        avoidCoveringText();
 
         positionTables();
     }
