@@ -22,8 +22,6 @@
     'use strict';
 
     const FIELD_PATTERN = /\{\{\s*([a-zA-Z0-9_ก-๙]+)\s*\}\}/g;
-    // จำนวนย่อหน้าที่ไล่หาคู่ที่ตรงกันข้างหน้า (มากไป = ช้าลง, น้อยไป = จับคู่พลาด)
-    const MATCH_LOOKAHEAD = 8;
 
     const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
     const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
@@ -227,12 +225,18 @@
     // จับคู่ย่อหน้าในเอกสารที่เรนเดอร์แล้ว กับ w:p ใน word/document.xml
     // ──────────────────────────────────────────────────────────────
 
-    // ข้อความสำหรับเทียบ (ตัดช่องว่างซ้ำ + แท็บที่ตัวเรนเดอร์วาดเป็นอักขระอื่น)
+    // ข้อความสำหรับเทียบ — เอาเฉพาะ "ตัวอักษรที่พิมพ์ได้"
+    //
+    // ฝั่ง XML (listParagraphTexts) เก็บแต่ข้อความใน <w:t> ส่วนแท็บ (<w:tab/>)
+    // และสัญลักษณ์ (<w:sym/>) ไม่ถูกนับ แต่ฝั่งเรนเดอร์ docx-preview วาดแท็บเป็น
+    // \u2003 และวาด <w:sym/> เป็นตัวอักษร Private Use Area (กล่อง/เครื่องหมายถูก)
+    // ถ้าเทียบตรงตัวจะไม่ตรงตั้งแต่ย่อหน้าแรก ๆ ที่มีช่องทำเครื่องหมาย
+    // แล้วจับคู่เพี้ยนต่อกันเป็นทอด ๆ จนแก้ข้อความไม่ได้
     function normalizeText(text) {
         return String(text == null ? '' : text)
-            .replace(/[\u00A0\u2003]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+            .replace(/[\uE000-\uF8FF]/g, '')      // PUA (สัญลักษณ์ที่ตัวเรนเดอร์วาด)
+            .replace(/\u2003/g, '')                // แท็บที่ตัวเรนเดอร์วาด
+            .replace(/\s+/g, '');                  // ช่องว่างทั้งหมด
     }
 
     // ย่อหน้าของเนื้อเรื่อง — หัว/ท้ายกระดาษและเชิงอรรถอยู่นอก <article>
@@ -265,59 +269,101 @@
         return text;
     }
 
-    // หาคู่ที่ตรงกันข้างหน้า (ข้อความว่างจับคู่ไม่ได้ เพราะมีหลายย่อหน้าเหมือนกัน)
-    function findAhead(list, value, from) {
-        if (!value) return -1;
+    // หาลำดับย่อหน้าที่ตรงกันเป๊ะ (ข้อความไม่ว่าง) ด้วย LCS
+    // คืนรายการ [indexXml, indexDom] เรียงจากน้อยไปมาก
+    // (ใช้เป็นจุดยึดของการจัดแนว เหมือน diff)
+    function lcsMatches(xmlNorm, nodeNorm) {
+        const n = xmlNorm.length;
+        const m = nodeNorm.length;
+        const width = m + 1;
+        const dp = new Int32Array((n + 1) * width);
 
-        const limit = Math.min(list.length, from + MATCH_LOOKAHEAD);
+        for (let i = n - 1; i >= 0; i--) {
+            for (let j = m - 1; j >= 0; j--) {
+                const index = i * width + j;
+                const skipXml = dp[(i + 1) * width + j];
+                const skipDom = dp[i * width + (j + 1)];
 
-        for (let i = from; i < limit; i++) {
-            if (list[i] === value) return i;
+                // ย่อหน้าว่างจับคู่ไม่ได้ (มีหลายย่อหน้าเหมือนกัน)
+                const same = xmlNorm[i] !== '' && xmlNorm[i] === nodeNorm[j];
+
+                dp[index] = same
+                    ? dp[(i + 1) * width + (j + 1)] + 1
+                    : (skipXml >= skipDom ? skipXml : skipDom);
+            }
         }
 
-        return -1;
+        const matches = [];
+        let i = 0;
+        let j = 0;
+
+        while (i < n && j < m) {
+            if (xmlNorm[i] !== '' && xmlNorm[i] === nodeNorm[j]) {
+                matches.push([i, j]);
+                i++;
+                j++;
+            } else if (dp[(i + 1) * width + j] >= dp[i * width + (j + 1)]) {
+                i++;
+            } else {
+                j++;
+            }
+        }
+
+        return matches;
     }
 
-    // ไล่จับคู่ทีละย่อหน้า — ไม่ตรงให้ลองหาคู่จริงข้างหน้า
-    // (บางย่อหน้าถูกข้าม หรือถูกแยกเป็นสอง <p> ตอนขึ้นหน้าใหม่)
+    // จับคู่ย่อหน้าด้วยการจัดแนวแบบ diff:
+    //   1) จุดยึด = ย่อหน้าที่ข้อความตรงกันเป๊ะ (LCS)
+    //   2) ช่วงระหว่างจุดยึดจับคู่กันตามตำแหน่ง (ย่อหน้าที่ 1 ของช่วงคู่กับที่ 1)
+    // เดิมใช้การไล่หาคู่ข้างหน้าแบบจำกัดระยะ ทำให้พอเจอย่อหน้า
+    // ที่ต่างกัน (เช่นมีสัญลักษณ์ช่องทำเครื่องหมาย) หลายอันติดกัน จับคู่เพี้ยนต่อกัน
+    // เป็นทอด ๆ และล็อกย่อหน้าจริงไปทั้งช่วง
     function pairParagraphs(xmlTexts, nodes) {
         const pairs = new Map();
         const xmlNorm = xmlTexts.map(normalizeText);
         const nodeTexts = nodes.map(renderedText);
         const nodeNorm = nodeTexts.map(normalizeText);
 
-        let i = 0;
-        let j = 0;
+        function pairByPosition(xmlFrom, xmlTo, nodeFrom, nodeTo) {
+            const count = Math.min(xmlTo - xmlFrom, nodeTo - nodeFrom);
 
-        while (i < xmlNorm.length && j < nodeNorm.length) {
-            if (xmlNorm[i] === nodeNorm[j]) {
-                pairs.set(nodes[j], {
-                    index: i,
-                    xmlText: xmlTexts[i],
-                    domText: nodeTexts[j]
+            for (let k = 0; k < count; k++) {
+                const xmlIndex = xmlFrom + k;
+                const nodeIndex = nodeFrom + k;
+
+                // "ย่อหน้าว่าง" กับ "ย่อหน้ามีข้อความ" จับคู่กันไม่ได้ — ตัวเรนเดอร์
+                // อาจข้ามหรือเพิ่มย่อหน้า ทำให้ตำแหน่งเยื้องกัน ถ้าจับคู่แล้วแก้
+                // ข้อความจะไปเขียนผิดย่อหน้า (ปล่อยให้ล็อกไว้ปลอดภัยกว่า)
+                const xmlEmpty = xmlNorm[xmlIndex] === '';
+                const nodeEmpty = nodeNorm[nodeIndex] === '';
+
+                if (xmlEmpty !== nodeEmpty) continue;
+
+                pairs.set(nodes[nodeIndex], {
+                    index: xmlIndex,
+                    xmlText: xmlTexts[xmlIndex],
+                    domText: nodeTexts[nodeIndex]
                 });
-
-                i++;
-                j++;
-                continue;
             }
-
-            const nextDom = findAhead(nodeNorm, xmlNorm[i], j + 1);
-            const nextXml = findAhead(xmlNorm, nodeNorm[j], i + 1);
-
-            const domGap = nextDom === -1 ? Infinity : nextDom - j;
-            const xmlGap = nextXml === -1 ? Infinity : nextXml - i;
-
-            // ไม่มีคู่ให้ไล่ต่อ → ข้ามทั้งสองฝั่งแล้วไปต่อ
-            if (domGap === Infinity && xmlGap === Infinity) {
-                i++;
-                j++;
-                continue;
-            }
-
-            if (domGap <= xmlGap) j = nextDom;
-            else i = nextXml;
         }
+
+        let xmlCursor = 0;
+        let nodeCursor = 0;
+
+        lcsMatches(xmlNorm, nodeNorm).forEach(function (match) {
+            pairByPosition(xmlCursor, match[0], nodeCursor, match[1]);
+
+            pairs.set(nodes[match[1]], {
+                index: match[0],
+                xmlText: xmlTexts[match[0]],
+                domText: nodeTexts[match[1]]
+            });
+
+            xmlCursor = match[0] + 1;
+            nodeCursor = match[1] + 1;
+        });
+
+        pairByPosition(xmlCursor, xmlNorm.length, nodeCursor, nodeNorm.length);
 
         return pairs;
     }
@@ -623,20 +669,18 @@
         return true;
     }
 
-    // อ่าน wp:anchor ของรูปทุกอันที่ถูกวาดจริงตามลำดับในเอกสาร
-    // (ช่องที่เป็น null = รูปแบบ inline หรือไม่มีข้อมูลตำแหน่ง)
-    function anchorList(xml) {
+    // wp:anchor ของวัตถุลอยทุกอันตามลำดับในเอกสาร
+    //
+    // เอกสารเก็บวัตถุลอยไว้ทั้งแบบ DrawingML (mc:Choice) และ VML (mc:Fallback)
+    // ตำแหน่งจริงคือ "wp:anchor" เสมอ — ส่วนสไตล์ VML ที่เรนเดอร์จริง (margin/
+    // mso-position-*) บางอันไม่ตรงกับ wp:anchor (เช่น left:0 ตรง ๆ)
+    // จึงใช้ wp:anchor เป็นแหล่งตำแหน่ง แล้วจับคู่กับที่วาดจริงตามลำดับ
+    function shapeAnchors(xml) {
         const doc = parseXml(xml);
 
         if (!doc) return null;
 
-        return Array.from(doc.getElementsByTagNameNS(W_NS, 'drawing'))
-            .filter(isRenderedNode)
-            .map(function (drawing) {
-                const anchors = drawing.getElementsByTagNameNS(WP_NS, 'anchor');
-
-                return anchors.length > 0 ? readAnchor(anchors[0]) : null;
-            });
+        return Array.from(doc.getElementsByTagNameNS(WP_NS, 'anchor')).map(readAnchor);
     }
 
     // อ่านระยะเยื้องของตารางทุกอันที่ถูกวาดจริง (px, null = ไม่ได้ระบุ)
@@ -709,11 +753,14 @@
         };
     }
 
-    // ที่ครอบรูปแต่ละรูป (ทั้ง inline และ anchor) เรียงตามลำดับในเอกสาร
-    // renderDrawing ติด text-indent: 0px ให้ทุกตัว จึงใช้เป็นเครื่องหมายได้
-    function drawingWrappers() {
-        return Array.from(host.querySelectorAll('article div'))
+    // ที่ครอบวัตถุลอยที่ถูกวาดจริง เรียงตามลำดับในเอกสาร
+    // - กล่องข้อความ/รูปแบบ VML (mc:Fallback) = <svg>
+    // - รูปแบบ DrawingML = <div> ที่ renderDrawing ติด text-indent: 0px
+    function shapeContainers() {
+        return Array.from(host.querySelectorAll('article svg, article div'))
             .filter(function (node) {
+                if (node.localName === 'svg') return true;
+
                 return String(node.getAttribute('style') || '')
                     .indexOf('text-indent: 0px') !== -1;
             });
@@ -814,6 +861,7 @@
         return null;
     }
 
+    // วางวัตถุลอย (รูประหว่างบรรทัด/ลอย กล่องข้อความ) ตาม wp:anchor ของเอกสาร
     function positionAnchors(anchors, wrappers) {
         // วัดตำแหน่งเดิมและวางแผนก่อน แล้วค่อยย้ายทีเดียว
         // (ย้ายรูปแรกทันทีจะทำให้ย่อหน้าถัดไปขยับ แล้ววัดรูปถัดไปผิด)
@@ -864,6 +912,11 @@
             item.wrapper.style.left = item.left.toFixed(2) + 'px';
             item.wrapper.style.top = item.top.toFixed(2) + 'px';
 
+            // left/top คิดจาก wp:anchor แล้ว — margin ของ docx-preview/VML
+            // ต้องล้างทิ้ง ไม่ให้บวกซ้ำเป็นระยะเพิ่ม
+            item.wrapper.style.marginLeft = '0px';
+            item.wrapper.style.marginTop = '0px';
+
             // รูปที่ตั้งให้อยู่หลังข้อความ (behindDoc) ต้องอยู่หลังเนื้อเรื่องจริง
             item.wrapper.style.zIndex = item.behind ? '-1' : 'auto';
         });
@@ -892,6 +945,30 @@
         ).exec(styleText);
 
         return match ? match[1].toLowerCase() : '';
+    }
+
+    // ค่า left/top ที่ VML ประกาศไว้เอง (เช่น "left:0")
+    // เก็บค่าเดิมไว้ที่ data-* เพราะฟังก์ชันนี้ถูกเรียกซ้ำ (หลังเรนเดอร์/หลังฟอนต์/
+    // ตอนย่อ-ขยาย) ถ้าอ่านค่าที่ตัวเองเขียนไว้จะเพี้ยน
+    function vmlDeclared(svg, axis) {
+        const key = axis === 'left' ? 'vmlDeclaredLeft' : 'vmlDeclaredTop';
+
+        if (svg.dataset[key] === undefined) {
+            svg.dataset[key] = svg.style[axis] || '';
+        }
+
+        return svg.dataset[key];
+    }
+
+    // อ้างอิงจากย่อหน้า/บรรทัด ("ข้อความ") ไม่ใช่จากหน้า/ขอบกระดาษ
+    function isTextRelative(value) {
+        return (
+            value === 'text' ||
+            value === 'paragraph' ||
+            value === 'char' ||
+            value === 'character' ||
+            value === 'line'
+        );
     }
 
     // กล่องข้อความแบบ VML (w:pict) — docx-preview คัดสไตล์ VML มาใช้ตรง ๆ
@@ -923,9 +1000,6 @@
             if (vertical === 'page') top = 0;
             else if (vertical === 'margin') top = page.padTop;
 
-            // ไม่ได้อ้างจากหน้า/ขอบกระดาษ = อ้างจากย่อหน้าอยู่แล้ว ปล่อยไว้
-            if (left === null && top === null) return;
-
             if (left !== null) {
                 svg.style.left = '0px';
                 svg.style.marginLeft = (left + marginLeft) + 'px';
@@ -935,7 +1009,33 @@
                 svg.style.top = '0px';
                 svg.style.marginTop = (top + marginTop) + 'px';
             }
+
+            // เอกสารบางอันตั้ง left/top เป็น 0 ตรง ๆ (เช่น "left:0")
+            // เบราว์เซอร์จะวางจากขอบซ้ายบนของหน้า (position:absolute) แทนที่จะ
+            // อ้างจากคอลัมน์ข้อความ กล่องที่มี margin ติดลบจึงหลุดออกนอกกระดาษ
+            //
+            // อ้างอิงที่ถูกคือ "คอลัมน์" (ขอบซ้ายของเนื้อเรื่อง = padLeft/padTop)
+            // โดย wp:anchor ของกล่องเดียวกันระบุ relativeFrom="column" + posOffset
+            // เท่ากับ margin ใน VML พอดี
+            reanchorDeclaredBox(svg, page, horizontal, 'left');
+            reanchorDeclaredBox(svg, page, vertical, 'top');
         });
+    }
+
+    // ย้ายฐานของกล่องที่อ้างจากข้อความ/คอลัมน์ เมื่อ VML ประกาศ left/top ไว้ตรง ๆ
+    // (ตั้ง left/top ใหม่ = ขอบเนื้อเรื่องของหน้า + ค่าที่เอกสารระบุ)
+    function reanchorDeclaredBox(svg, page, relative, axis) {
+        if (!isTextRelative(relative)) return;
+
+        const declared = vmlDeclared(svg, axis);
+        if (declared === '') return;
+
+        const value = parseFloat(declared);
+        if (!isFinite(value)) return;
+
+        const origin = axis === 'left' ? page.padLeft : page.padTop;
+
+        svg.style[axis] = (origin + value).toFixed(2) + 'px';
     }
 
     // ตาราง — ใส่ระยะเยื้องตาม w:tblInd ของเอกสาร (ดู tableIndents)
@@ -968,22 +1068,26 @@
     function fixRenderedLayout() {
         if (!current || !current.xml || !host) return;
 
-        const anchors = anchorList(current.xml);
-        const wrappers = drawingWrappers();
+        const anchors = shapeAnchors(current.xml);
+        const containers = shapeContainers();
 
-        // จำนวนไม่ตรง = จับคู่รูปมั่นใจไม่ได้ จึงไม่แตะเลย (ปลอดภัยกว่าแก้ผิดรูป)
-        if (anchors && anchors.length > 0) {
-            if (anchors.length === wrappers.length) {
-                positionAnchors(anchors, wrappers);
-            } else {
+        // จำนวนตรงกัน = จับคู่ทีละอันตามลำดับในเอกสารได้ จึงวางตาม wp:anchor
+        // (รวมกล่องข้อความ VML ที่ VML style เองอาจไม่ตรงกับ wp:anchor)
+        if (anchors && anchors.length > 0 && anchors.length === containers.length) {
+            positionAnchors(anchors, containers);
+        } else {
+            // จับคู่ไม่ครบ = ไม่กล้าแก้วัตถุผิดอัน ใช้วิธีย้ายฐานกล่อง VML แบบเดิม
+            if (anchors && anchors.length > 0) {
                 console.warn(
-                    'จัดตำแหน่งรูป: จำนวนรูปในไฟล์ (' + anchors.length +
-                    ') ไม่ตรงกับที่แสดง (' + wrappers.length + ') จึงไม่ปรับตำแหน่ง'
+                    'จัดตำแหน่งวัตถุลอย: จำนวนในไฟล์ (' + anchors.length +
+                    ') ไม่ตรงกับที่แสดง (' + containers.length +
+                    ') จึงใช้การย้ายฐานเฉพาะกล่องข้อความ'
                 );
             }
+
+            positionVmlTextBoxes();
         }
 
-        positionVmlTextBoxes();
         positionTables();
     }
 
