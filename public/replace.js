@@ -1169,6 +1169,250 @@
         return new XMLSerializer().serializeToString(doc);
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // หน้าจัดตำแหน่ง: เขียนรูปแบบข้อความ (ตัวหนา / ตัวเอียง / ขีดเส้นใต้)
+    //
+    // ต่างจาก setParagraphTexts ที่แก้ข้อความล้วน (และเก็บ run เดิมครบอยู่แล้ว)
+    // ตัวนี้ใช้เมื่อผู้ใช้กดปุ่มจัดรูปแบบบนหน้าจอ (Ctrl+B / ปุ่มบนแถบเครื่องมือ)
+    //
+    // หลักการ:
+    // - รับการเปลี่ยนแปลงเป็น "ช่วงอักขระ" ของข้อความย่อหน้า แล้ว "ตัด run" ที่มี
+    //   ข้อความทับช่วงนั้น ตามขอบเขตที่รูปแบบเปลี่ยน — run ที่ตัดออกใหม่คัด rPr เดิม
+    //   มาทั้งก้อน ฟอนต์/ขนาด/สี/ระยะ ของ run เดิมจึงคงอยู่ (ไม่สร้าง run ใหม่ทั้งย่อหน้า)
+    // - เขียน w:b / w:i / w:u เฉพาะ run ที่รูปแบบต่างจาก "ค่าก่อนแก้" ของช่วงนั้น
+    //   (ถ้าค่าก่อนแก้เป็นเท็จเพราะสไตล์ของย่อหน้าทำให้หนา ก็เขียน w:b val="0" ให้จริง)
+    // - run ที่ไม่ใช่ข้อความ (w:tab / w:sym / รูป) และอิลิเมนต์อื่น ไม่ถูกแตะเลย
+    // - ต้องเรียกหลัง setParagraphTexts (ข้อความย่อหน้าตรงกันแล้ว) offset จึงตรงกัน
+    // - ย่อหน้าที่ตัด run ไม่ปลอดภัย (hyperlink / bookmark / ฟิลด์ / กล่องข้อความซ้อน)
+    //   จะถูกข้าม แล้วรายงานกลับให้หน้าจอเตือน (ดู skipped)
+    // ──────────────────────────────────────────────────────────────
+
+    function directChild(node, name) {
+        for (const child of Array.from(node.childNodes)) {
+            if (child.nodeType === 1 && child.localName === name) return child;
+        }
+
+        return null;
+    }
+
+    // ช่วงข้อความของ run ที่ "ตัดได้" (run ข้อความล้วน = มีแต่ w:rPr กับ w:t)
+    // คืน null เมื่อย่อหน้านี้ตัด run ได้ไม่ปลอดภัย
+    function paragraphSegments(paragraph) {
+        // กล่องข้อความซ้อนอยู่ในย่อหน้า → ข้อความสองชั้น ไล่ offset ไม่ตรง
+        if (paragraph.getElementsByTagNameNS(W_NS, 'p').length > 0) return null;
+
+        const segments = [];
+        let offset = 0;
+
+        for (const child of Array.from(paragraph.childNodes)) {
+            if (child.nodeType !== 1) continue;
+
+            const name = child.localName;
+
+            if (name === 'pPr' || name === 'sectPr') continue;
+
+            // hyperlink / bookmark / field / smartTag ฯลฯ — ไม่กล้าแตะโครง
+            if (name !== 'r') return null;
+
+            let text = '';
+            let plain = true;
+
+            for (const node of Array.from(child.childNodes)) {
+                if (node.nodeType !== 1) continue;
+
+                if (node.localName === 't') {
+                    text += node.textContent || '';
+                    continue;
+                }
+
+                if (node.localName === 'rPr') continue;
+
+                // w:tab / w:sym / รูป อยู่ใน run เดียวกับข้อความ = ตัด run นี้ไม่ได้
+                plain = false;
+            }
+
+            // run ที่ไม่มีข้อความ (tab/สัญลักษณ์/รูป) ไม่ถูกนับและไม่ถูกแตะ
+            if (text === '') continue;
+
+            if (!plain) return null;
+
+            segments.push({
+                run: child,
+                text: text,
+                start: offset,
+                end: offset + text.length
+            });
+
+            offset += text.length;
+        }
+
+        return segments.length > 0 ? segments : null;
+    }
+
+    // เขียน w:b / w:i / w:u ลง rPr
+    // value = รูปแบบที่ผู้ใช้เห็นบนหน้าจอ, base = รูปแบบเดิมของย่อหน้า
+    // เท่ากัน = ไม่ต้องเขียน (สืบทอดจาก rPr ที่คัดมา/สไตล์ของย่อหน้า)
+    function applyRunFlag(doc, props, name, value, base) {
+        if (value === base) return;
+
+        const existing = directChild(props, name);
+        const node = existing || el(doc, name);
+
+        if (name === 'u') {
+            setVal(node, 'val', value ? 'single' : 'none');
+        } else {
+            setVal(node, 'val', value ? '1' : '0');
+        }
+
+        if (!existing) insertRunProp(props, node);
+    }
+
+    // รูปแบบเป้าหมายของช่วงหนึ่ง (change = ช่วงที่รูปแบบเปลี่ยน)
+    function formatOfChange(change) {
+        return {
+            bold: change.bold === true,
+            italic: change.italic === true,
+            underline: change.underline === true
+        };
+    }
+
+    // ค่าที่เขียนไม่เหมือนเดิมจริง (อย่างน้อยหนึ่งรูปแบบ)
+    function changeDiffers(change) {
+        return (change.bold === true) !== (change.wasBold === true)
+            || (change.italic === true) !== (change.wasItalic === true)
+            || (change.underline === true) !== (change.wasUnderline === true);
+    }
+
+    // ช่วงย่อยของ run ที่รูปแบบเท่ากัน — คืน null เมื่อ run นี้ไม่ต้องแก้
+    function splitSegment(segment, changes) {
+        const bounds = [segment.start, segment.end];
+
+        changes.forEach(function (change) {
+            const start = Math.max(change.start, segment.start);
+            const end = Math.min(change.end, segment.end);
+
+            if (end <= start) return;
+
+            bounds.push(start, end);
+        });
+
+        if (bounds.length === 2) return null;
+
+        const points = bounds
+            .filter(function (value, index, list) { return list.indexOf(value) === index; })
+            .sort(function (a, b) { return a - b; });
+
+        const pieces = [];
+
+        for (let i = 0; i < points.length - 1; i++) {
+            const start = points[i];
+            const end = points[i + 1];
+
+            if (end <= start) continue;
+
+            const change = changes.find(function (item) {
+                return item.start <= start && item.end >= end;
+            }) || null;
+
+            pieces.push({
+                text: segment.text.slice(start - segment.start, end - segment.start),
+                change: change && changeDiffers(change) ? change : null
+            });
+        }
+
+        return pieces.some(function (piece) { return piece.change; }) ? pieces : null;
+    }
+
+    // run ใหม่ 1 ก้อน — คัด rPr เดิมของ run ต้นทางมาทั้งก้อน แล้วเขียนเฉพาะรูปแบบที่เปลี่ยน
+    // ค่าก่อนแก้ (was*) ต่างจากค่าเป้าหมายเสมอ จึงเขียนค่าจริงลงไปทั้งเปิดและปิด
+    // (การ "เอาตัวหนาออก" ในย่อหน้าที่หนาจากสไตล์ จึงเขียน w:b val="0" ได้ถูกต้อง)
+    function buildFormatRun(doc, run, piece) {
+        const element = run.cloneNode(true);
+        const props = directChild(element, 'rPr') || el(doc, 'rPr');
+
+        if (piece.change) {
+            applyRunFlag(doc, props, 'b', piece.change.bold === true, piece.change.wasBold === true);
+            applyRunFlag(doc, props, 'i', piece.change.italic === true, piece.change.wasItalic === true);
+            applyRunFlag(doc, props, 'u', piece.change.underline === true, piece.change.wasUnderline === true);
+        }
+
+        // ตัดข้อความเดิมออกทั้งหมด แล้วใส่ข้อความของช่วงนี้แทน
+        Array.from(element.childNodes).forEach(function (child) {
+            if (child.nodeType === 1 && child.localName === 't') element.removeChild(child);
+        });
+
+        if (props.parentNode !== element) element.insertBefore(props, element.firstChild);
+
+        const text = el(doc, 't');
+        setText(text, piece.text);
+        element.appendChild(text);
+
+        return element;
+    }
+
+    // edits = [ { index, changes: [ change ] } ]
+    //   index   = ลำดับ w:p ในเอกสาร (ตาม listParagraphTexts)
+    //   change  = { start, end, bold, italic, underline, wasBold, wasItalic, wasUnderline }
+    //             start/end = ช่วงอักขระในข้อความย่อหน้า (นับจาก 0)
+    //             was*      = รูปแบบที่เห็นก่อนแก้ (ใช้เทียบว่าต้องเขียนค่าจริงหรือปล่อยเดิม)
+    //
+    // คืน { xml, skipped } — skipped = ลำดับย่อหน้าที่เขียนไม่ได้ (ย่อหน้ายังไม่ถูกแก้)
+    function setParagraphFormats(xml, edits) {
+        const skipped = [];
+
+        if (!xml || !edits || edits.length === 0) {
+            return { xml: xml, skipped: skipped };
+        }
+
+        const doc = parseDocument(xml);
+
+        if (!doc) {
+            console.error('XML Parse Error: ไม่สามารถจัดรูปแบบข้อความในเอกสารได้');
+            return { xml: xml, skipped: edits.map(function (edit) { return edit.index; }) };
+        }
+
+        const paragraphs = Array.from(doc.getElementsByTagNameNS(W_NS, 'p'));
+
+        edits.forEach(function (edit) {
+            const paragraph = paragraphs[edit.index];
+
+            if (!paragraph) return;
+
+            const changes = (edit.changes || []).filter(function (change) {
+                return change && change.end > change.start && changeDiffers(change);
+            });
+
+            if (changes.length === 0) return;
+
+            const segments = paragraphSegments(paragraph);
+
+            if (!segments) {
+                skipped.push(edit.index);
+                return;
+            }
+
+            segments.forEach(function (segment) {
+                const pieces = splitSegment(segment, changes);
+
+                if (!pieces) return;
+
+                const parent = segment.run.parentNode;
+                const next = segment.run.nextSibling;
+
+                pieces.forEach(function (piece) {
+                    parent.insertBefore(buildFormatRun(doc, segment.run, piece), next);
+                });
+
+                parent.removeChild(segment.run);
+            });
+        });
+
+        return {
+            xml: new XMLSerializer().serializeToString(doc),
+            skipped: skipped
+        };
+    }
+
     let lastWarnings = [];
     let lastApplied = [];
 
@@ -1241,6 +1485,10 @@
 
         // แทนข้อความย่อหน้าที่ระบุ (เก็บรูปแบบของ run ที่ไม่ถูกแก้)
         setParagraphTexts: setParagraphTexts,
+
+        // แทนรูปแบบข้อความย่อหน้า (ตัวหนา/เอียง/ขีดเส้นใต้) — หน้าจัดตำแหน่ง
+        // ตัด run ตามขอบเขตที่รูปแบบเปลี่ยน โดยคง rPr เดิมของแต่ละ run ไว้
+        setParagraphFormats: setParagraphFormats,
 
         // ตัววัดสำรอง (ใช้อ้างอิงเมื่อแอปวัดด้วยฟอนต์จริงไม่ได้)
         defaultMeasure: defaultMeasure,

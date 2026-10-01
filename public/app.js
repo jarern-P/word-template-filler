@@ -1492,6 +1492,12 @@
                         recordId
                     );
 
+                } else if (action === 'copy') {
+
+                    onCopyTemplate(
+                        recordId
+                    );
+
                 } else if (
                     action === 'delete'
                 ) {
@@ -1847,7 +1853,7 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 error && error.expected
                     ? error.message
                     : 'ไม่สามารถอ่านไฟล์ DOCX ได้'
@@ -1879,14 +1885,14 @@
     // ตัวอย่างสร้างจาก xml ต้นฉบับ (แทน {{field}} เองในหน้าตัวอย่าง) จึงรู้ว่าค่าไหน
     // "ยังไม่ได้กรอก" ซึ่งเป็นสิ่งสำคัญที่สุดที่ต้องเห็นก่อนดาวน์โหลด
     // แต่ยังประมวลผล Replace จริงหนึ่งรอบ เพื่อรายงานผล "ล็อกตำแหน่ง" ให้เห็นก่อนด้วย
-    function onPreview() {
+    async function onPreview() {
 
         if (
             !state.loaded ||
             !state.xml
         ) {
 
-            alert(
+            await scope.AppDialog.alert(
                 'ยังไม่มีเอกสารให้ดูตัวอย่าง'
             );
 
@@ -2001,7 +2007,7 @@
             !state.docxBytes
         ) {
 
-            alert(
+            await scope.AppDialog.alert(
                 'ไม่มีเอกสารให้ดาวน์โหลด'
             );
 
@@ -2077,7 +2083,7 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 'ดาวน์โหลดไม่สำเร็จ'
             );
         }
@@ -2091,7 +2097,7 @@
             !state.docxBytes
         ) {
 
-            alert(
+            await scope.AppDialog.alert(
                 'ยังไม่มีไฟล์ template ให้ดาวน์โหลด'
             );
 
@@ -2145,7 +2151,7 @@
                 'error'
             );
 
-            alert(
+            await scope.AppDialog.alert(
                 'ดาวน์โหลดไม่สำเร็จ: ' + error.message
             );
         }
@@ -2187,13 +2193,14 @@
                 ? 'template "' + templateName + '"'
                 : 'ไฟล์ที่กำลังตั้งค่าอยู่';
 
-        if (!window.confirm(
+        if (!(await scope.AppDialog.confirm(
             'ยืนยันการแทนที่ไฟล์?\n\n' +
             'ไฟล์ต้นฉบับของ ' + target + ' จะถูกทับด้วย "' +
             (file.name || 'ไฟล์ใหม่') + '" ทันที\n' +
             'ค่า type และ "ล็อกตำแหน่ง" ของ field ที่มีอยู่ทั้งสองไฟล์จะถูกเก็บไว้\n' +
-            'ต้องการดำเนินการต่อหรือไม่?'
-        )) {
+            'ต้องการดำเนินการต่อหรือไม่?',
+            { title: 'ยืนยันการแทนที่ไฟล์', okText: 'แทนที่ไฟล์', danger: true }
+        ))) {
             return;
         }
 
@@ -2261,7 +2268,7 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 error && error.expected
                     ? error.message
                     : 'ไม่สามารถอ่านไฟล์ DOCX ได้'
@@ -2276,7 +2283,7 @@
             !state.docxBytes
         ) {
 
-            alert(
+            await scope.AppDialog.alert(
                 'ยังไม่ได้เลือกไฟล์ template'
             );
 
@@ -2384,7 +2391,7 @@
                 'error'
             );
 
-            alert(
+            await scope.AppDialog.alert(
                 'บันทึกไม่สำเร็จ: ' +
                 error.message
             );
@@ -2431,7 +2438,7 @@
 
             if (!record) {
 
-                alert(
+                await scope.AppDialog.alert(
                     'ไม่พบ template นี้ (อาจถูกลบไปแล้ว)'
                 );
 
@@ -2564,7 +2571,7 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 'โหลด template ไม่สำเร็จ'
             );
         }
@@ -2577,9 +2584,10 @@
         }
 
         if (
-            !window.confirm(
-                'ต้องการลบ template นี้ใช่ไหม?'
-            )
+            !(await scope.AppDialog.confirm(
+                'ต้องการลบ template นี้ใช่ไหม?',
+                { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+            ))
         ) {
             return;
         }
@@ -2612,8 +2620,125 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 'ลบไม่สำเร็จ: ' +
+                error.message
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // คัดลอกแม่แบบ (หน้ารายการแม่แบบ → ปุ่ม "คัดลอก")
+    //
+    // สร้างรายการใหม่จากของเดิมทั้งชุด (ไฟล์ .docx + type + ล็อกตำแหน่ง +
+    // placeholder + โครงตาราง) แล้วตั้งชื่อเป็น "ชื่อ (สำเนา)"
+    // โดยไม่แตะแม่แบบต้นฉบับ
+    // ──────────────────────────────────────────────────────────────
+
+    // ชื่อสำเนาที่ยังไม่ซ้ำกับแม่แบบที่มีอยู่ (กันชื่อซ้ำจนแยกรายการไม่ออก)
+    function copyTemplateName(baseName) {
+
+        const base =
+            String(baseName || '').trim() || 'แม่แบบ';
+
+        const used = {};
+
+        (templateRecords || []).forEach(function (item) {
+            used[String(item.name || '')] = true;
+        });
+
+        let name = base + ' (สำเนา)';
+        let index = 2;
+
+        while (used[name]) {
+            name = base + ' (สำเนา ' + index + ')';
+            index++;
+        }
+
+        return name;
+    }
+
+    async function onCopyTemplate(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            const record =
+                await scope.Db.get(
+                    recordId
+                );
+
+            if (!record) {
+
+                await scope.AppDialog.alert(
+                    'ไม่พบ template นี้ (อาจถูกลบไปแล้ว)'
+                );
+
+                await refreshTemplateList();
+
+                return;
+            }
+
+            const name =
+                copyTemplateName(record.name);
+
+            const bytes =
+                record.docx instanceof Uint8Array
+                    ? record.docx
+                    : new Uint8Array(
+                        record.docx
+                    );
+
+            await scope.Db.save({
+
+                // id = 0 → สร้างรายการใหม่ (ดู db-worker.cjs)
+                id:
+                    0,
+
+                name:
+                    name,
+
+                fileName:
+                    record.file_name || '',
+
+                docx:
+                    bytes,
+
+                fields:
+                    record.fields || [],
+
+                types:
+                    record.types || {},
+
+                locks:
+                    record.locks || {},
+
+                placeholders:
+                    record.placeholders || {},
+
+                tables:
+                    record.tables || {}
+            });
+
+            setDbStatus(
+                'คัดลอกแม่แบบแล้ว: ' + name
+            );
+
+            await refreshTemplateList();
+
+            resetInteractionState();
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'คัดลอกไม่สำเร็จ: ' +
                 error.message
             );
         }
@@ -2710,7 +2835,7 @@
 
         if (!scope.TemplateLayoutDialog) {
 
-            alert(
+            await scope.AppDialog.alert(
                 'ไม่พบหน้าจัดตำแหน่ง (ไฟล์ components/templateLayoutDialog.js)'
             );
 
@@ -2728,7 +2853,7 @@
 
             if (!record) {
 
-                alert(
+                await scope.AppDialog.alert(
                     'ไม่พบ template นี้ (อาจถูกลบไปแล้ว)'
                 );
 
@@ -2785,7 +2910,7 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 'เปิดหน้าจัดตำแหน่งไม่สำเร็จ: ' +
                 (error && error.message
                     ? error.message
@@ -3079,7 +3204,11 @@
     async function onRenameMasterGroup(groupId, currentName) {
 
         const value =
-            window.prompt('ชื่อกลุ่มใหม่', currentName || '');
+            await scope.AppDialog.prompt(
+                'ระบุชื่อกลุ่มใหม่',
+                currentName || '',
+                { title: 'เปลี่ยนชื่อกลุ่ม' }
+            );
 
         if (value === null) {
             return;
@@ -3127,10 +3256,11 @@
 
     async function onDeleteMasterGroup(groupId) {
 
-        if (!window.confirm(
+        if (!(await scope.AppDialog.confirm(
             'ต้องการลบกลุ่มนี้ใช่ไหม?\n\n' +
-            'ลบได้เฉพาะกลุ่มที่ไม่มีข้อมูลหลักใช้อยู่'
-        )) {
+            'ลบได้เฉพาะกลุ่มที่ไม่มีข้อมูลหลักใช้อยู่',
+            { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+        ))) {
             return;
         }
 
@@ -3213,7 +3343,11 @@
     async function onRenameMasterSubgroup(groupId, subgroupId, currentName) {
 
         const value =
-            window.prompt('ชื่อกลุ่มย่อยใหม่', currentName || '');
+            await scope.AppDialog.prompt(
+                'ระบุชื่อกลุ่มย่อยใหม่',
+                currentName || '',
+                { title: 'เปลี่ยนชื่อกลุ่มย่อย' }
+            );
 
         if (value === null) {
             return;
@@ -3260,10 +3394,11 @@
 
     async function onDeleteMasterSubgroup(subgroupId) {
 
-        if (!window.confirm(
+        if (!(await scope.AppDialog.confirm(
             'ต้องการลบกลุ่มย่อยนี้ใช่ไหม?\n\n' +
-            'ลบได้เฉพาะกลุ่มย่อยที่ไม่มีข้อมูลหลักใช้อยู่'
-        )) {
+            'ลบได้เฉพาะกลุ่มย่อยที่ไม่มีข้อมูลหลักใช้อยู่',
+            { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+        ))) {
             return;
         }
 
@@ -3496,9 +3631,10 @@
         }
 
         if (
-            !window.confirm(
-                'ต้องการลบคำนี้ใช่ไหม?'
-            )
+            !(await scope.AppDialog.confirm(
+                'ต้องการลบคำนี้ใช่ไหม?',
+                { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+            ))
         ) {
             return;
         }
@@ -3938,9 +4074,10 @@
         }
 
         if (
-            !window.confirm(
-                'ต้องการลบรายการนี้ใช่ไหม?'
-            )
+            !(await scope.AppDialog.confirm(
+                'ต้องการลบรายการนี้ใช่ไหม?',
+                { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+            ))
         ) {
             return;
         }
@@ -4028,9 +4165,10 @@
             getComponent(HISTORY_PAGE);
 
         if (
-            !window.confirm(
-                'ต้องการล้างประวัติการกรอกทั้งหมดใช่ไหม?'
-            )
+            !(await scope.AppDialog.confirm(
+                'ต้องการล้างประวัติการกรอกทั้งหมดใช่ไหม?',
+                { title: 'ยืนยันการล้างประวัติ', okText: 'ล้างทั้งหมด', danger: true }
+            ))
         ) {
             return;
         }
@@ -4356,15 +4494,16 @@
                 return;
             }
 
-            if (!window.confirm(
+            if (!(await scope.AppDialog.confirm(
                 'พบ ' + list.length + ' แถวในไฟล์ "' +
                 (file.name || '') + '"\n\n' +
                 'ระบบจะอัปเดตกลุ่มย่อยของรายการเดิม ' +
                 '(จับคู่ด้วย Code Group + Name) ' +
                 'ส่วนรายการใหม่จะถูกเพิ่ม ' +
                 'และข้ามรายการที่ซ้ำกันในไฟล์\n' +
-                'ต้องการนำเข้าหรือไม่?'
-            )) {
+                'ต้องการนำเข้าหรือไม่?',
+                { title: 'ยืนยันการนำเข้า Excel', okText: 'นำเข้า' }
+            ))) {
 
                 master.setExcelStatus('ยกเลิกการนำเข้า');
                 return;
@@ -4524,9 +4663,10 @@
         }
 
         if (
-            !window.confirm(
-                'ต้องการลบข้อมูล Master นี้ใช่ไหม?'
-            )
+            !(await scope.AppDialog.confirm(
+                'ต้องการลบข้อมูล Master นี้ใช่ไหม?',
+                { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+            ))
         ) {
             return;
         }
@@ -4564,7 +4704,7 @@
 
             console.error(error);
 
-            alert(
+            await scope.AppDialog.alert(
                 'ลบไม่สำเร็จ: ' +
                 error.message
             );

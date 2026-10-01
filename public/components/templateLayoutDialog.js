@@ -17,11 +17,44 @@
 // - หัว/ท้ายกระดาษและเชิงอรรถแสดงให้เห็น แต่แก้ไม่ได้ (ไม่ใช่เนื้อเรื่อง)
 // - กด Enter เพิ่มย่อหน้าใหม่ไม่ได้ (w:p ใหม่ต้องสร้างใน Word แล้วอัปโหลดทับ)
 //
+// การจัดรูปแบบข้อความ (ตัวหนา / ตัวบาง / ตัวเอียง / ขีดเส้นใต้):
+// - ทำกับข้อความที่เลือกในย่อหน้าที่แก้ได้ (Ctrl+B / Ctrl+I / Ctrl+U หรือปุ่มบนแถบ)
+// - ตอนบันทึกจะเทียบรูปแบบที่เห็นบนหน้าจอกับตอนเรนเดอร์ แล้วเขียน w:b / w:i / w:u
+//   กลับลงเฉพาะช่วงที่เปลี่ยน ผ่าน Replace.setParagraphFormats
+//   การตัด run ใหม่คง rPr เดิมไว้ (ฟอนต์/ขนาด/สี/ระยะ ไม่เพี้ยน)
+//
+// สัญลักษณ์ (w:sym) และแท็บ (w:tab) ของเอกสาร:
+// - ตัวเรนเดอร์วาดเป็นอักขระ Private Use Area / \u2003 ซึ่งไม่มีอักขระจริงในเอกสาร
+//   จึงล็อกชิ้นเหล่านี้ไม่ให้แก้หรือลบ และตัดอักขระเหล่านั้นออกตอนเขียนข้อความกลับ
+//   (ถ้าเขียนกลับเป็นตัวอักษรจริง เครื่องหมายถูก/กล่องสี่เหลี่ยมจะเพี้ยนและซ้อนกัน)
+//
+// การขึ้นหน้าใหม่:
+// - docx-preview แยกหน้ากระดาษตาม w:br type="page", w:lastRenderedPageBreak,
+//   w:pageBreakBefore และการเปลี่ยน section — หน้ากระดาษที่ 2 ขึ้นไปจะติดป้าย
+//   "ขึ้นหน้าใหม่" ให้เห็นตรงกับที่ Word ตัดหน้า (ดู style.css)
+//
 // ไฟล์/ฐานข้อมูลเป็นเรื่องของ app.js — ที่นี่แค่เรียก payload.save / payload.download
 (function (scope) {
     'use strict';
 
     const FIELD_PATTERN = /\{\{\s*([a-zA-Z0-9_ก-๙]+)\s*\}\}/g;
+
+    // อักขระที่ docx-preview วาดขึ้นเอง — ไม่มีอยู่ใน w:t ของเอกสาร
+    // (สัญลักษณ์ w:sym → อักขระ Private Use Area, แท็บ w:tab → em space)
+    // ตอนเขียนข้อความกลับต้องตัดออก ไม่งั้นจะกลายเป็น "ตัวอักษรจริง" ใน Word
+    // แล้วสัญลักษณ์/แท็บเดิมที่ยังอยู่ในเอกสารจะซ้อนขึ้นมาอีกชิ้น
+    const RENDERED_ONLY = /[\uE000-\uF8FF\u2003]/g;
+
+    // ปุ่มบนแถบเครื่องมือ → คำสั่งจัดรูปแบบของ contentEditable
+    const FORMAT_BUTTONS = {
+        layoutBoldBtn: 'bold',
+        layoutItalicBtn: 'italic',
+        layoutUnderlineBtn: 'underline',
+        layoutThinBtn: 'thin'
+    };
+
+    // ชื่อ highlight ของ CSS Custom Highlight API (ไฮไลต์ {{...}} เป็นสีเหลือง)
+    const FIELD_HIGHLIGHT = 'layout-field';
 
     const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
     const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
@@ -31,6 +64,15 @@
 
     // 1 twip = 1/1440 นิ้ว, 1 px = 1/96 นิ้ว → 1440 / 96 = 15 twips ต่อ px
     const TWIPS_PER_PX = 15;
+
+    // ระยะชดเชยแนวตั้ง (px) ของวัตถุที่อ้างจาก "ย่อหน้า/บรรทัด"
+    //
+    // Word วัดระยะแนวตั้งจากบรรทัดแรกของย่อหน้า ส่วน CSS วัดจากขอบบนของกล่องย่อหน้า
+    // (ต่างกันที่ half-leading ของ line-height) ค่านี้ตั้งเทียบกับเอกสารราชการจริง
+    // (ดู commit 85fe65f "add top position -10") — อย่าแก้โดยไม่เทียบกับไฟล์จริง
+    //
+    // วัตถุที่อ้างจากหน้า/ขอบกระดาษ ไม่ใช้ค่านี้ เพราะคำนวณจากกล่องหน้าตรง ๆ อยู่แล้ว
+    const PARAGRAPH_TOP_CORRECTION_PX = 10;
 
     // อ่าน word/document.xml เป็น DOM (คืน null ถ้า XML เสีย)
     function parseXml(xml) {
@@ -48,7 +90,13 @@
         '    </div>',
         '    <div class="layout-toolbar">',
         '        <label class="layout-toggle"><input type="checkbox" id="layoutEditToggle" checked> แก้ไขข้อความ</label>',
-        '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldToggle" checked> ไฮไลต์ {{field}}</label>',
+        '        <div class="layout-format" role="toolbar" aria-label="จัดรูปแบบข้อความ">',
+        '            <button type="button" id="layoutBoldBtn" class="layout-fmt" title="ตัวหนา (Ctrl+B) — กดซ้ำเพื่อกลับเป็นตัวบาง"><strong>B</strong></button>',
+        '            <button type="button" id="layoutThinBtn" class="layout-fmt" title="ตัวบาง — เอาตัวหนาออกจากข้อความที่เลือก">ตัวบาง</button>',
+        '            <button type="button" id="layoutItalicBtn" class="layout-fmt" title="ตัวเอียง (Ctrl+I)"><em>I</em></button>',
+        '            <button type="button" id="layoutUnderlineBtn" class="layout-fmt" title="ขีดเส้นใต้ (Ctrl+U)"><u>U</u></button>',
+        '        </div>',
+        '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldToggle" checked> ไฮไลต์ {{}} สีเหลือง</label>',
         '        <label class="layout-toggle">ย่อ/ขยาย',
         '            <select id="layoutZoom">',
         '                <option value="fit" selected>พอดีความกว้าง</option>',
@@ -60,7 +108,7 @@
         '                <option value="2">200%</option>',
         '            </select>',
         '        </label>',
-        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · หัว/ท้ายกระดาษแก้ไม่ได้</span>',
+        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
         '        <span id="layoutStatus" class="layout-status"></span>',
         '        <div class="layout-actions">',
         '            <button type="button" id="layoutResetBtn" class="plain">ย้อนกลับ</button>',
@@ -81,6 +129,9 @@
     let statusEl = null;     // ข้อความสถานะบนแถบเครื่องมือ
     let current = null;      // { payload, xml, bytes, pairs, statusKind }
     let renderToken = 0;     // กันผลการเรนเดอร์รอบเก่ามาทับรอบใหม่
+    let touched = new Set(); // ย่อหน้าที่ถูกแก้ตั้งแต่เรนเดอร์ครั้งล่าสุด
+    let highlightTimer = 0;  // กันการไฮไลต์ {{}} ถี่เกินไประหว่างพิมพ์
+    let layoutTimer = 0;     // กันการจัดตำแหน่งรูป/กล่องข้อความถี่เกินไประหว่างพิมพ์
 
     function el(id) {
         return document.getElementById(id);
@@ -119,6 +170,9 @@
         renderToken++;
 
         if (current) current.pairs = new Map();
+
+        // ลบไฮไลต์ {{}} ออกจากทะเบียนของเอกสาร (range อ้าง node ที่จะถูกล้าง)
+        clearFieldHighlight();
     }
 
     // payload = { name, bytes, xml, save(newXml) -> Promise<newBytes>, download(newXml) }
@@ -217,7 +271,11 @@
             });
         }
 
+        // เรนเดอร์รอบใหม่ = เริ่มนับการแก้ใหม่ทั้งหมด
+        touched = new Set();
+
         prepareEditing();
+        applyFieldHighlight();
         setStatus('');
     }
 
@@ -267,6 +325,271 @@
 
         walk(node);
         return text;
+    }
+
+    // ข้อความของย่อหน้าสำหรับ "แก้/บันทึก" — ตัดอักขระที่ตัวเรนเดอร์วาดเองออก
+    // (สัญลักษณ์ w:sym และแท็บ w:tab ไม่มีอักขระในเอกสาร ถ้าเขียนกลับจะเพี้ยน)
+    function cleanText(text) {
+        return String(text == null ? '' : text).replace(RENDERED_ONLY, '');
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // รูปแบบข้อความที่เห็นบนหน้าจอ (ตัวหนา / ตัวเอียง / ขีดเส้นใต้)
+    //
+    // docx-preview เขียนรูปแบบเป็นสไตล์ในบรรทัด (font-weight: bold,
+    // font-style: italic, text-decoration: underline) ไม่ได้ใช้ <b>/<i>/<u>
+    // จึงต้องอ่านจาก computed style ของชิ้นที่ครอบข้อความนั้น
+    // ──────────────────────────────────────────────────────────────
+
+    function isBold(element) {
+        const weight = window.getComputedStyle(element).fontWeight;
+
+        if (!weight) return false;
+
+        if (weight === 'bold' || weight === 'bolder') return true;
+
+        const numeric = Number(weight);
+
+        return isFinite(numeric) && numeric >= 600;
+    }
+
+    function isItalic(element) {
+        return window.getComputedStyle(element).fontStyle === 'italic';
+    }
+
+    function isUnderlined(element) {
+        const style = window.getComputedStyle(element);
+
+        return String(style.textDecorationLine || style.textDecoration || '')
+            .indexOf('underline') !== -1;
+    }
+
+    // อักขระ PUA ที่ตัวเรนเดอร์วาดแทน w:sym (ไม่มีอักขระจริงในเอกสาร)
+    function symbolOf(element) {
+        if (!element || element.localName !== 'span') return null;
+
+        const text = element.textContent || '';
+
+        if (text.length !== 1) return null;
+
+        const code = text.charCodeAt(0);
+
+        if (!(code >= 0xE000 && code <= 0xF8FF)) return null;
+
+        return {
+            char: code,
+            font: element.style.fontFamily || ''
+        };
+    }
+
+    // แท็บ w:tab — ตัวเรนเดอร์วาดเป็น em space ใน <span>
+    function isTabSpan(element) {
+        return !!element
+            && element.localName === 'span'
+            && element.textContent === '\u2003';
+    }
+
+    // ชิ้นของเอกสารที่ไม่มีอักขระจริง — ห้ามแก้/ลบ
+    function isSpecialSpan(element) {
+        return isTabSpan(element) || symbolOf(element) !== null;
+    }
+
+    // ล็อกสัญลักษณ์/แท็บของเอกสาร (ไม่ให้พิมพ์ทับหรือลบ) พร้อมอธิบายว่าคืออะไร
+    // - สัญลักษณ์ที่ฟอนต์ไม่ครบจะเห็นเป็นกล่อง — tooltip บอกว่าเป็นสัญลักษณ์อะไร
+    function decorateSpecials() {
+        if (!host) return;
+
+        host.querySelectorAll('article span').forEach(function (span) {
+            const symbol = symbolOf(span);
+            const tab = isTabSpan(span);
+
+            if (!symbol && !tab) return;
+
+            span.classList.add('layout-special');
+            span.contentEditable = 'false';
+            span.setAttribute('spellcheck', 'false');
+
+            span.title = symbol
+                ? 'สัญลักษณ์ของเอกสาร (' + (symbol.font || 'symbol font') +
+                    ' รหัส ' + symbol.char.toString(16).toUpperCase() +
+                    ') — แก้จากที่นี่ไม่ได้'
+                : 'แท็บ (ระยะจัดแนวของเอกสาร) — แก้จากที่นี่ไม่ได้';
+        });
+    }
+
+    // รูปแบบของ "ทุกอักขระ" ในย่อหน้า — รวมช่วงที่รูปแบบเดียวกันไว้ด้วยกัน
+    // ชิ้นที่ไม่ใช่ข้อความ (แท็บ/สัญลักษณ์/รูป) ถูกข้าม จึงตรงกับข้อความของย่อหน้า
+    // ในเอกสาร (ดู listParagraphTexts) ทำให้เทียบ offset กันได้ตรง ๆ
+    function domFormatRuns(node) {
+        const runs = [];
+
+        function push(text, element) {
+            if (!text) return;
+
+            const bold = isBold(element);
+            const italic = isItalic(element);
+            const underline = isUnderlined(element);
+            const last = runs[runs.length - 1];
+
+            if (last && last.bold === bold && last.italic === italic
+                && last.underline === underline) {
+                last.text += text;
+                return;
+            }
+
+            runs.push({
+                text: text,
+                bold: bold,
+                italic: italic,
+                underline: underline
+            });
+        }
+
+        (function walk(current) {
+            for (let i = 0; i < current.childNodes.length; i++) {
+                const child = current.childNodes[i];
+
+                if (child.nodeType === 3) {
+                    push(cleanText(child.textContent || ''), child.parentNode);
+                    continue;
+                }
+
+                if (child.nodeType !== 1) continue;
+
+                // กล่องข้อความซ้อน / ขึ้นบรรทัดใหม่ / แท็บ / สัญลักษณ์ = ไม่นับอักขระ
+                if (child.localName === 'p') continue;
+                if (child.localName === 'br') continue;
+                if (isSpecialSpan(child)) continue;
+
+                walk(child);
+            }
+        })(node);
+
+        return runs;
+    }
+
+    // รูปแบบของแต่ละอักขระ (index = ตำแหน่งในข้อความย่อหน้า)
+    function flagsPerChar(runs) {
+        const flags = [];
+
+        runs.forEach(function (run) {
+            for (let i = 0; i < run.text.length; i++) {
+                flags.push({
+                    bold: run.bold,
+                    italic: run.italic,
+                    underline: run.underline
+                });
+            }
+        });
+
+        return flags;
+    }
+
+    // ช่วงที่ต่างของข้อความก่อน/หลัง (ตัดหัว-ท้ายที่เหมือนกันออก)
+    function textDiff(before, after) {
+        let start = 0;
+        const limit = Math.min(before.length, after.length);
+
+        while (start < limit && before.charAt(start) === after.charAt(start)) start++;
+
+        let endBefore = before.length;
+        let endAfter = after.length;
+
+        while (
+            endBefore > start &&
+            endAfter > start &&
+            before.charAt(endBefore - 1) === after.charAt(endAfter - 1)
+        ) {
+            endBefore--;
+            endAfter--;
+        }
+
+        return { start: start, endBefore: endBefore, endAfter: endAfter };
+    }
+
+    // รวมช่วงที่ติดกันและมี "รูปแบบเป้าหมาย/รูปแบบเดิม" เหมือนกันเข้าด้วยกัน
+    function mergeChange(changes, index, flag, reference) {
+        const last = changes[changes.length - 1];
+
+        if (
+            last &&
+            last.end === index &&
+            last.bold === flag.bold &&
+            last.italic === flag.italic &&
+            last.underline === flag.underline &&
+            last.wasBold === !!reference.bold &&
+            last.wasItalic === !!reference.italic &&
+            last.wasUnderline === !!reference.underline
+        ) {
+            last.end = index + 1;
+            return;
+        }
+
+        changes.push({
+            start: index,
+            end: index + 1,
+            bold: flag.bold,
+            italic: flag.italic,
+            underline: flag.underline,
+            wasBold: !!reference.bold,
+            wasItalic: !!reference.italic,
+            wasUnderline: !!reference.underline
+        });
+    }
+
+    // ช่วงที่รูปแบบเปลี่ยน (เทียบกับที่เห็นตอนเรนเดอร์) — ใช้เป็นข้อมูลเขียน w:b/w:i/w:u
+    //
+    // ค่าก่อนแก้ (was*) มาจากตอนเรนเดอร์ จึงรวมรูปแบบที่มาจากสไตล์ของย่อหน้า
+    // การ "เอาตัวหนาออก" ในย่อหน้าที่หนาจากสไตล์จึงเขียน w:b val="0" ได้จริง
+    function formatChanges(pair, node, text) {
+        // ข้อความบนหน้าจอไม่ตรงกับต้นฉบับ (เช่นมีเลขเชิงอรรถ/ฟิลด์)
+        // → offset ไม่ตรงกัน ไม่กล้าเขียนรูปแบบกลับ
+        if (!pair.formatSafe) return [];
+
+        if (pair.domRuns.length === 0) return [];
+
+        const beforeRuns = pair.domRuns;
+        const afterRuns = domFormatRuns(node);
+        const beforeText = beforeRuns.map(function (run) { return run.text; }).join('');
+        const afterText = afterRuns.map(function (run) { return run.text; }).join('');
+
+        // อักขระที่ได้จากการไล่ DOM ต้องเท่ากับข้อความที่ใช้ตอนเก็บการแก้ไข
+        if (afterText !== text) return [];
+
+        const beforeFlags = flagsPerChar(beforeRuns);
+        const afterFlags = flagsPerChar(afterRuns);
+        const diff = textDiff(beforeText, afterText);
+        const delta = afterText.length - beforeText.length;
+        const changes = [];
+
+        for (let i = 0; i < afterText.length; i++) {
+            let reference = null;
+
+            if (i < diff.start) {
+                reference = beforeFlags[i];
+            } else if (i >= diff.endAfter) {
+                reference = beforeFlags[i - delta];
+            } else {
+                // อักขระที่พิมพ์ใหม่ — เทียบกับอักขระที่อยู่ก่อนหน้า (ถ้าไม่มีก็ตัวแรก)
+                reference = beforeFlags[diff.start > 0 ? diff.start - 1 : 0];
+            }
+
+            const flag = afterFlags[i];
+
+            if (!flag || !reference) continue;
+
+            if (
+                flag.bold === !!reference.bold &&
+                flag.italic === !!reference.italic &&
+                flag.underline === !!reference.underline
+            ) {
+                continue;
+            }
+
+            mergeChange(changes, i, flag, reference);
+        }
+
+        return changes;
     }
 
     // หาลำดับย่อหน้าที่ตรงกันเป๊ะ (ข้อความไม่ว่าง) ด้วย LCS
@@ -402,11 +725,24 @@
 
         nodes.forEach(function (node) {
             const pair = pairs.get(node);
-            const text = renderedText(node);
+            const text = cleanText(renderedText(node));
             const fields = fieldNames(text);
 
             node.classList.add('layout-para');
             node.setAttribute('spellcheck', 'false');
+
+            if (pair) {
+                // ข้อความ + รูปแบบตอนเรนเดอร์ = ฐานสำหรับเทียบว่าอะไรถูกแก้
+                // (ข้อความเก็บแบบ "ตัดอักขระที่ตัวเรนเดอร์วาดเอง" ให้ตรงกับ w:t)
+                pair.domText = text;
+                pair.xmlText = xmlTexts[pair.index];
+                pair.domRuns = domFormatRuns(node);
+
+                // เขียนรูปแบบกลับได้เฉพาะเมื่อ offset ตรงกับต้นฉบับเป๊ะ
+                // (ย่อหน้าที่มีกล่องข้อความซ้อน/อักขระที่ไม่ตรง จะแก้ได้แต่ข้อความ)
+                pair.formatSafe = text === pair.xmlText
+                    && node.querySelector('p') === null;
+            }
 
             // ไฮไลต์ย่อหน้าที่มี {{field}} — ช่วยหาตำแหน่งของ field ในเอกสาร
             if (fields.length > 0) {
@@ -437,6 +773,9 @@
             }
         });
 
+        decorateSpecials();
+        refreshFormatButtons();
+
         if (lockedCount > 0) {
             setStatus(
                 'มี ' + lockedCount + ' ย่อหน้าที่แก้ไม่ได้ในหน้านี้ (ดูคำอธิบายเมื่อชี้เมาส์)',
@@ -451,35 +790,52 @@
     // เก็บการแก้ไข / บันทึก
     // ──────────────────────────────────────────────────────────────
 
-    // ย่อหน้าที่ข้อความไม่เหมือนตอนเรนเดอร์ = ย่อหน้าที่ผู้ใช้แก้
+    // การแก้ของย่อหน้าหนึ่ง — คืน null เมื่อย่อหน้านี้ไม่ได้ถูกแก้
     // (นับเฉพาะข้อความของย่อหน้านั้นเอง ไม่รวมของกล่องข้อความที่ซ้อนอยู่)
-    function collectEdits() {
-        const edits = [];
+    function paragraphEdit(pair, node) {
+        const text = cleanText(renderedText(node));
+        const textChanged = text !== pair.domText;
+        const changes = formatChanges(pair, node, text);
+
+        if (!textChanged && changes.length === 0) return null;
+
+        return {
+            text: textChanged ? { index: pair.index, text: text } : null,
+            format: changes.length > 0 ? { index: pair.index, changes: changes } : null
+        };
+    }
+
+    // onlyTouched = ตรวจเฉพาะย่อหน้าที่เพิ่งถูกแก้ (ตอนพิมพ์ — เร็ว)
+    // ส่วนตอนบันทึกตรวจทั้งหมด (กันพลาด)
+    function collectEdits(onlyTouched) {
+        const texts = [];
+        const formats = [];
 
         current.pairs.forEach(function (pair, node) {
-            const text = renderedText(node);
+            if (onlyTouched && !touched.has(node)) return;
 
-            if (text === pair.domText) return;
+            const edit = paragraphEdit(pair, node);
 
-            edits.push({
-                index: pair.index,
-                text: text
-            });
+            if (!edit) return;
+
+            if (edit.text) texts.push(edit.text);
+            if (edit.format) formats.push(edit.format);
         });
 
-        return edits;
+        return { texts: texts, formats: formats };
     }
 
     function updateDirty() {
         if (!current) return;
 
-        const changed = collectEdits().length;
+        const edits = collectEdits(true);
+        const changed = edits.texts.length + edits.formats.length;
         const saveBtn = el('layoutSaveBtn');
 
         if (saveBtn) {
             saveBtn.disabled = changed === 0;
             saveBtn.title = changed === 0
-                ? 'ยังไม่มีการแก้ไขข้อความ'
+                ? 'ยังไม่มีการแก้ไข'
                 : 'บันทึกทับไฟล์ต้นฉบับของแม่แบบ';
         }
 
@@ -490,6 +846,23 @@
         }
     }
 
+    // ย่อหน้าที่โฟกัส/อักขระอยู่ (สำหรับปุ่มจัดรูปแบบ และการนับว่าแก้ย่อหน้าไหน)
+    function paragraphOf(node) {
+        const element = node && node.nodeType === 1
+            ? node
+            : (node ? node.parentNode : null);
+
+        if (!element || !element.closest) return null;
+
+        const paragraph = element.closest('.layout-para');
+
+        return paragraph && paragraph.contentEditable === 'true' ? paragraph : null;
+    }
+
+    function touchParagraph(paragraph) {
+        if (paragraph) touched.add(paragraph);
+    }
+
     function setBusy(busy) {
         ['layoutSaveBtn', 'layoutDownloadBtn', 'layoutResetBtn'].forEach(function (id) {
             const btn = el(id);
@@ -497,27 +870,54 @@
         });
 
         // บันทึกเสร็จ = ปุ่มกลับมาตามจำนวนย่อหน้าที่แก้ค้างอยู่
-        if (!busy) updateDirty();
+        if (!busy) {
+            updateDirty();
+            refreshFormatButtons();
+        }
+    }
+
+    // รวมการแก้ทั้งหมดลงใน xml (ข้อความก่อน แล้วค่อยรูปแบบ — offset จึงตรงกัน)
+    // คืน { xml, skipped } — skipped = ย่อหน้าที่จัดรูปแบบกลับไม่ได้
+    function writeEdits(xml, edits) {
+        const withTexts = scope.Replace.setParagraphTexts(xml, edits.texts);
+
+        return scope.Replace.setParagraphFormats(withTexts, edits.formats);
+    }
+
+    function editSummary(edits) {
+        const parts = [];
+
+        if (edits.texts.length > 0) {
+            parts.push('ข้อความ ' + edits.texts.length + ' ย่อหน้า');
+        }
+
+        if (edits.formats.length > 0) {
+            parts.push('รูปแบบ ' + edits.formats.length + ' ย่อหน้า');
+        }
+
+        return parts.join(' · ');
     }
 
     async function save() {
         if (!current || !current.payload.save) return;
 
-        const edits = collectEdits();
+        const edits = collectEdits(false);
+        const changed = edits.texts.length + edits.formats.length;
 
-        if (edits.length === 0) {
-            setStatus('ยังไม่มีการแก้ไขข้อความ');
+        if (changed === 0) {
+            setStatus('ยังไม่มีการแก้ไข');
             return;
         }
 
         const name = current.payload.name || 'แม่แบบนี้';
 
-        if (!window.confirm(
+        if (!(await scope.AppDialog.confirm(
             'บันทึกทับไฟล์ต้นฉบับของ "' + name + '"?\n\n' +
-            'แก้ข้อความ ' + edits.length + ' ย่อหน้า ลงในไฟล์ .docx ที่เก็บไว้\n' +
+            'บันทึก: ' + editSummary(edits) + '\n' +
             'ค่า type / ล็อกตำแหน่ง / placeholder / ตาราง ของ field ที่ยังมีอยู่จะถูกเก็บไว้\n' +
-            'ต้องการบันทึกหรือไม่?'
-        )) {
+            'ต้องการบันทึกหรือไม่?',
+            { title: 'ยืนยันการบันทึก', okText: 'บันทึก' }
+        ))) {
             return;
         }
 
@@ -525,14 +925,23 @@
         setStatus('กำลังบันทึก...');
 
         try {
-            const xml = scope.Replace.setParagraphTexts(current.xml, edits);
-            const bytes = await current.payload.save(xml);
+            const result = writeEdits(current.xml, edits);
+            const bytes = await current.payload.save(result.xml);
 
-            current.xml = xml;
+            current.xml = result.xml;
 
             await renderDocx(bytes || current.bytes);
 
-            setStatus('บันทึกแล้ว — แก้ไป ' + edits.length + ' ย่อหน้า', 'ok');
+            const skipped = result.skipped.length;
+
+            setStatus(
+                'บันทึกแล้ว — ' + editSummary(edits) +
+                (skipped > 0
+                    ? ' · ข้ามการจัดรูปแบบ ' + skipped +
+                        ' ย่อหน้าที่มีกล่องข้อความ/ฟิลด์ (แก้ใน Word แทน)'
+                    : ''),
+                skipped > 0 ? 'warn' : 'ok'
+            );
 
         } catch (error) {
             console.error(error);
@@ -545,15 +954,13 @@
     async function download() {
         if (!current || !current.payload.download) return;
 
-        const edits = collectEdits();
+        const edits = collectEdits(false);
 
         // ดาวน์โหลด = เอาไฟล์ที่แก้แล้วไปตรวจก่อน (ไม่บันทึกในฐานข้อมูล)
-        const xml = edits.length > 0
-            ? scope.Replace.setParagraphTexts(current.xml, edits)
-            : current.xml;
+        const result = writeEdits(current.xml, edits);
 
         try {
-            await current.payload.download(xml);
+            await current.payload.download(result.xml);
             setStatus('ดาวน์โหลดไฟล์ที่แก้แล้วแล้ว', 'ok');
         } catch (error) {
             console.error(error);
@@ -899,10 +1306,16 @@
             // ไม่ได้ระบุตำแหน่งทั้งสองแกน = ปล่อยตามที่เรนเดอร์
             if (left === null && top === null) return;
 
+            // ชดเชยแนวตั้งเฉพาะวัตถุที่อ้างจากย่อหน้า/บรรทัด (ดู PARAGRAPH_TOP_CORRECTION_PX)
+            // วัตถุที่อ้างจากหน้า/ขอบกระดาษคำนวณจากกล่องหน้าตรง ๆ อยู่แล้ว
+            const correction = top !== null && isParagraphRelative(anchor.vertical)
+                ? PARAGRAPH_TOP_CORRECTION_PX
+                : 0;
+
             plan.push({
                 wrapper: wrapper,
                 left: left === null ? currentLeft : left,
-                top: top === null ? currentTop : top,
+                top: (top === null ? currentTop : top) - correction,
                 behind: anchor.behindDoc
             });
         });
@@ -910,8 +1323,7 @@
         plan.forEach(function (item) {
             item.wrapper.style.position = 'absolute';
             item.wrapper.style.left = item.left.toFixed(2) + 'px';
-            // item.wrapper.style.top = item.top.toFixed(2) + 'px';
-            item.wrapper.style.top = (item.top - 10).toFixed(2) + 'px';
+            item.wrapper.style.top = item.top.toFixed(2) + 'px';
 
             // left/top คิดจาก wp:anchor แล้ว — margin ของ docx-preview/VML
             // ต้องล้างทิ้ง ไม่ให้บวกซ้ำเป็นระยะเพิ่ม
@@ -959,6 +1371,17 @@
         }
 
         return svg.dataset[key];
+    }
+
+    // แกนที่อ้างจากย่อหน้า/บรรทัด/ตัวอักษร (ค่าเริ่มต้นของแกนแนวตั้งตามสเปก)
+    function isParagraphRelative(side) {
+        if (!side) return false;
+
+        const relative = side.relativeFrom || 'paragraph';
+
+        return relative === 'paragraph'
+            || relative === 'line'
+            || relative === 'character';
     }
 
     // อ้างอิงจากย่อหน้า/บรรทัด ("ข้อความ") ไม่ใช่จากหน้า/ขอบกระดาษ
@@ -1104,12 +1527,193 @@
 
             node.contentEditable = editable ? 'true' : 'false';
         });
+
+        refreshFormatButtons();
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ไฮไลต์ {{...}} เป็นสีเหลือง
+    //
+    // ใช้ CSS Custom Highlight API (::highlight(layout-field) ใน style.css)
+    // → ไม่ต้องห่อ span ในเอกสารเลย ตำแหน่งข้อความ/caret จึงไม่ขยับ
+    // ถ้าเบราว์เซอร์ไม่รองรับ จะเหลือแค่เงาที่ขอบซ้ายของย่อหน้าที่มี field
+    // ──────────────────────────────────────────────────────────────
+
+    function fieldRanges() {
+        const ranges = [];
+
+        if (!host) return ranges;
+
+        bodyParagraphs().forEach(function (paragraph) {
+            const walker = document.createTreeWalker(
+                paragraph,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+
+            let node;
+
+            while ((node = walker.nextNode()) !== null) {
+                const text = node.textContent || '';
+                const regex = new RegExp(FIELD_PATTERN.source, 'g');
+                let match;
+
+                while ((match = regex.exec(text)) !== null) {
+                    const range = document.createRange();
+
+                    range.setStart(node, match.index);
+                    range.setEnd(node, match.index + match[0].length);
+                    ranges.push(range);
+                }
+            }
+        });
+
+        return ranges;
+    }
+
+    function highlightSupported() {
+        return !!(scope.CSS && scope.CSS.highlights && scope.Highlight);
+    }
+
+    function clearFieldHighlight() {
+        if (highlightSupported()) scope.CSS.highlights.delete(FIELD_HIGHLIGHT);
     }
 
     function applyFieldHighlight() {
         const toggle = el('layoutFieldToggle');
+        const on = !!(toggle && toggle.checked);
 
-        host.classList.toggle('show-fields', !!(toggle && toggle.checked));
+        if (!host) return;
+
+        // เงาที่ขอบซ้ายของย่อหน้าที่มี field — ใช้หาตำแหน่งได้ง่ายทั้งสองโหมด
+        host.classList.toggle('show-fields', on);
+
+        if (!highlightSupported()) {
+            host.classList.toggle('show-fields-plain', on);
+            return;
+        }
+
+        scope.CSS.highlights.delete(FIELD_HIGHLIGHT);
+
+        if (!on) return;
+
+        const highlight = new scope.Highlight();
+
+        fieldRanges().forEach(function (range) {
+            highlight.addRange(range);
+        });
+
+        scope.CSS.highlights.set(FIELD_HIGHLIGHT, highlight);
+    }
+
+    // ระหว่างพิมพ์ข้อความ ตัว {{}} ถูกพิมพ์/ลบทีละตัว — ไฮไลต์ต้องตามให้ทัน
+    // (หน่วงเล็กน้อย เพื่อไม่ให้คำนวณใหม่ทุกคีย์)
+    function scheduleFieldHighlight() {
+        window.clearTimeout(highlightTimer);
+
+        highlightTimer = window.setTimeout(applyFieldHighlight, 120);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ปุ่มจัดรูปแบบข้อความ (ตัวหนา / ตัวบาง / ตัวเอียง / ขีดเส้นใต้)
+    // ──────────────────────────────────────────────────────────────
+
+    // ข้อความที่เลือกอยู่ต้องอยู่ในย่อหน้าที่แก้ได้จึงจัดรูปแบบได้
+    // (paragraphOf คืน null เมื่อย่อหน้าถูกล็อกหรือแก้ข้อความถูกปิด)
+    function activeParagraph() {
+        const selection = window.getSelection();
+
+        if (!selection || selection.rangeCount === 0) return null;
+
+        return paragraphOf(selection.anchorNode);
+    }
+
+    function formatState(command) {
+        try {
+            return document.queryCommandState(command) === true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    // ปุ่มสว่างตามสถานะของข้อความที่เลือก (ตัวบาง = ยังไม่หนา)
+    function refreshFormatButtons() {
+        const enabled = activeParagraph() !== null;
+        const bold = enabled && formatState('bold');
+
+        const states = {
+            layoutBoldBtn: bold,
+            layoutThinBtn: enabled && !bold,
+            layoutItalicBtn: enabled && formatState('italic'),
+            layoutUnderlineBtn: enabled && formatState('underline')
+        };
+
+        Object.keys(states).forEach(function (id) {
+            const button = el(id);
+
+            if (!button) return;
+
+            button.disabled = !enabled;
+            button.classList.toggle('active', states[id]);
+        });
+    }
+
+    // คำสั่งจัดรูปแบบของ contentEditable — ผลลัพธ์เป็น <b>/<i>/<u>
+    // ตอนบันทึกจะอ่านรูปแบบที่เห็นบนหน้าจอกลับเป็น w:b / w:i / w:u
+    function applyFormat(command) {
+        const paragraph = activeParagraph();
+
+        if (!paragraph) {
+            setStatus('เลือกข้อความในเอกสารก่อนจึงจัดรูปแบบได้', 'warn');
+            refreshFormatButtons();
+            return;
+        }
+
+        if (command === 'thin') {
+            // ตัวบาง = เอาตัวหนาออก (ถ้าข้อความที่เลือกหนาอยู่)
+            if (!formatState('bold')) {
+                setStatus('ข้อความที่เลือกเป็นตัวบางอยู่แล้ว', 'warn');
+                refreshFormatButtons();
+                return;
+            }
+
+            document.execCommand('bold', false, null);
+        } else {
+            document.execCommand(command, false, null);
+        }
+
+        touchParagraph(paragraph);
+        scheduleFieldHighlight();
+        scheduleLayoutFix();
+        refreshFormatButtons();
+        updateDirty();
+    }
+
+    // คีย์ลัด Ctrl+B / Ctrl+I / Ctrl+U เหมือน Word
+    function onFormatKeydown(event) {
+        if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+
+        const key = String(event.key || '').toLowerCase();
+        const command = key === 'b' ? 'bold'
+            : key === 'i' ? 'italic'
+                : key === 'u' ? 'underline'
+                    : null;
+
+        if (!command) return;
+
+        const paragraph = activeParagraph();
+
+        if (!paragraph) return;
+
+        event.preventDefault();
+        document.execCommand(command, false, null);
+
+        touchParagraph(paragraph);
+        scheduleFieldHighlight();
+        scheduleLayoutFix();
+        refreshFormatButtons();
+        updateDirty();
     }
 
     // กด Enter เพิ่มย่อหน้าใหม่ไม่ได้ — w:p ใหม่ต้องสร้างใน Word
@@ -1129,6 +1733,24 @@
             'แล้วใช้ "อัปโหลดไฟล์ใหม่ทับไฟล์เดิม"',
             'warn'
         );
+    }
+
+    // พิมพ์แล้วย่อหน้าเปลี่ยนความสูง = รูป/กล่องข้อความที่อ้างจากย่อหน้านั้น
+    // ต้องถูกจัดตำแหน่งใหม่ให้ตามไปด้วย ไม่ให้ค้างอยู่ที่เดิมแล้วทับข้อความ
+    function scheduleLayoutFix() {
+        window.clearTimeout(layoutTimer);
+
+        layoutTimer = window.setTimeout(function () {
+            if (current && current.xml) fixRenderedLayout();
+        }, 200);
+    }
+
+    // พิมพ์ในเอกสาร — นับว่าย่อหน้าไหนถูกแก้ + อัปเดตไฮไลต์ {{}} + จัดตำแหน่งใหม่
+    function onInput(event) {
+        touchParagraph(paragraphOf(event.target));
+        scheduleFieldHighlight();
+        scheduleLayoutFix();
+        updateDirty();
     }
 
     // วางเป็นข้อความล้วน — วางจาก Word จะพา span/สไตล์ขยะเข้ามาในเอกสาร
@@ -1172,6 +1794,23 @@
         const fieldToggle = el('layoutFieldToggle');
         if (fieldToggle) fieldToggle.addEventListener('change', applyFieldHighlight);
 
+        // ปุ่มจัดรูปแบบข้อความ — mousedown preventDefault สำคัญมาก
+        // ถ้าไม่กันไว้ การคลิกปุ่มจะย้ายโฟกัสออกจากข้อความที่เลือก
+        // แล้วคำสั่งจัดรูปแบบจะไม่มีข้อความให้ทำ
+        Object.keys(FORMAT_BUTTONS).forEach(function (id) {
+            const button = el(id);
+
+            if (!button) return;
+
+            button.addEventListener('mousedown', function (event) {
+                event.preventDefault();
+            });
+
+            button.addEventListener('click', function () {
+                applyFormat(FORMAT_BUTTONS[id]);
+            });
+        });
+
         const zoomSelect = el('layoutZoom');
         if (zoomSelect) zoomSelect.addEventListener('change', applyZoom);
 
@@ -1196,9 +1835,17 @@
             });
         }
 
-        host.addEventListener('input', updateDirty);
+        host.addEventListener('input', onInput);
         host.addEventListener('keydown', onKeydown);
+        host.addEventListener('keydown', onFormatKeydown);
         host.addEventListener('paste', onPaste);
+
+        // เลือกข้อความใหม่ = อัปเดตสถานะปุ่มจัดรูปแบบ
+        document.addEventListener('selectionchange', function () {
+            if (!overlay.classList.contains('open')) return;
+
+            refreshFormatButtons();
+        });
 
         document.addEventListener('keydown', function (event) {
             if (event.key !== 'Escape') return;

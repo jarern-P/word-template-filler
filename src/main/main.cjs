@@ -1195,7 +1195,26 @@ ipcMain.handle(
 
 ipcMain.handle(
     "file:save",
-    async function (_event, payload) {
+    async function (event, payload) {
+
+        // หน้าต่างที่เป็นเจ้าของกล่อง "บันทึกเป็น"
+        //
+        // ต้องส่งเป็นหน้าต่างเจ้าของ (parent) ของ dialog และคืนโฟกัสให้หลังปิด
+        // ถ้าไม่ทำ บน Windows หลังปิดกล่องบันทึกของ OS ผู้ใช้จะพิมพ์ต่อในแอปไม่ได้
+        // ต้องคลิกสลับไปหน้าต่างอื่นแล้วกลับมา — อาการเดียวกับ alert/confirm
+        const owner =
+            BrowserWindow.fromWebContents(event.sender);
+
+        const refocus = () => {
+
+            if (
+                owner &&
+                !owner.isDestroyed() &&
+                !owner.isMinimized()
+            ) {
+                owner.focus();
+            }
+        };
 
         try {
 
@@ -1220,17 +1239,24 @@ ipcMain.handle(
                 );
             }
 
+            const options = {
+                title: "บันทึกเอกสาร",
+                defaultPath: fileName,
+                filters: [
+                    {
+                        name: "Word Document",
+                        extensions: ["docx"]
+                    }
+                ]
+            };
+
             const result =
-                await dialog.showSaveDialog({
-                    title: "บันทึกเอกสาร",
-                    defaultPath: fileName,
-                    filters: [
-                        {
-                            name: "Word Document",
-                            extensions: ["docx"]
-                        }
-                    ]
-                });
+                owner && !owner.isDestroyed()
+                    ? await dialog.showSaveDialog(owner, options)
+                    : await dialog.showSaveDialog(options);
+
+            // ปิดกล่องแล้วคืนโฟกัสให้หน้าต่างแอปทันที (ก่อนเขียนไฟล์)
+            refocus();
 
             // ผู้ใช้กด Cancel
             if (result.canceled) {
@@ -1270,6 +1296,8 @@ ipcMain.handle(
                 "file:save error:",
                 error
             );
+
+            refocus();
 
             return {
                 ok: false,

@@ -34,9 +34,9 @@
         '        <h2>แม่แบบ ที่บันทึกไว้</h2>',
         '        <button id="templateNewBtn" type="button" class="plain"' +
             ' data-modal-open="templateModal">+ สร้างแม่แบบใหม่</button>',
-        '    </div>',
-        '    <p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น' +
-            ' หรือ "จัดตำแหน่ง" เพื่อดูเอกสารจริงแล้วแก้ข้อความ/จัดตำแหน่ง</p>',
+        '    </div>',        '<p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น' +
+            ' หรือ "จัดตำแหน่ง" เพื่อดูเอกสารจริงแล้วแก้ข้อความ/จัดตำแหน่ง' +
+            ' · "คัดลอก" เพื่อสร้างสำเนาของแม่แบบ</p>',
         '    <p id="dbStatus" class="db-status"></p>',
         '    <ul id="savedList" class="saved-list"></ul>',
         '</section>'
@@ -242,6 +242,17 @@
         layoutBtn.dataset.action = 'layout';
         layoutBtn.dataset.id = String(record.id);
 
+        // คัดลอก = ได้แม่แบบใหม่ที่ใช้ไฟล์/type/ล็อกตำแหน่ง/placeholder/ตารางชุดเดิม
+        // ใช้เมื่ออยากเริ่มจากของเดิมแล้วแก้บางจุด โดยไม่แตะแม่แบบต้นฉบับ
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'plain';
+        copyBtn.textContent = 'คัดลอก';
+        copyBtn.title =
+            'สร้างแม่แบบใหม่ที่เป็นสำเนาของแม่แบบนี้ (ไฟล์และค่าตั้งต่าง ๆ ชุดเดิม)';
+        copyBtn.dataset.action = 'copy';
+        copyBtn.dataset.id = String(record.id);
+
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'danger';
@@ -251,6 +262,7 @@
 
         actions.appendChild(layoutBtn);
         actions.appendChild(loadBtn);
+        actions.appendChild(copyBtn);
         actions.appendChild(deleteBtn);
 
         item.appendChild(info);

@@ -2769,6 +2769,160 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   ปุ่มจัดรูปแบบข้อความในหน้าจัดตำแหน่ง (ตัวหนา/ตัวบาง/เอียง/ขีดเส้นใต้)
+   ────────────────────────────────────────────────────────────── */
+
+.layout-format {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+}
+
+.layout-format .layout-fmt {
+    margin-top: 0;
+    min-width: 34px;
+    padding: 5px 10px;
+    font-size: 13px;
+    line-height: 1;
+    box-shadow: none;
+}
+
+/* ปุ่มที่สถานะตรงกับข้อความที่เลือกอยู่ */
+.layout-format .layout-fmt.active {
+    color: #fff;
+    background: linear-gradient(135deg, var(--pink-400), var(--pink-600));
+    border-color: transparent;
+}
+
+/* ไฮไลต์เฉพาะข้อความ {{...}} ด้วย CSS Custom Highlight API
+   (ไม่มีการห่อ span ในเอกสาร → ตำแหน่งข้อความและ caret ไม่ขยับ) */
+::highlight(layout-field) {
+    background-color: #fff08a;
+    color: var(--ink);
+}
+
+/* สัญลักษณ์ (w:sym) และแท็บ (w:tab) ของเอกสาร — แก้ไม่ได้ (ดู decorateSpecials) */
+.layout-preview .layout-special {
+    cursor: not-allowed;
+}
+
+.layout-preview .layout-special:hover {
+    background: #fff3c4;
+}
+
+/* เบราว์เซอร์ไม่รองรับ Custom Highlight API — เตือนด้วยพื้นหลังทั้งย่อหน้า */
+.layout-preview.show-fields-plain .layout-field-para {
+    background: linear-gradient(180deg, rgba(255, 240, 138, 0.55), rgba(255, 240, 138, 0));
+}
+
+/* ──────────────────────────────────────────────────────────────
+   จุดขึ้นหน้าใหม่ตาม Word
+
+   docx-preview แยกหน้ากระดาษเป็น <section class="docx"> หน้าละอัน
+   (จาก w:br type="page", w:lastRenderedPageBreak, w:pageBreakBefore,
+   และการเปลี่ยน section) — ติดป้ายให้เห็นว่าตรงไหนคือการขึ้นหน้าใหม่
+   ────────────────────────────────────────────────────────────── */
+
+.layout-preview .docx-wrapper > section.docx + section.docx {
+    margin-top: 40px;
+}
+
+.layout-preview .docx-wrapper > section.docx + section.docx::before {
+    content: "ขึ้นหน้าใหม่ (ตามที่ Word ตัดหน้า)";
+    position: absolute;
+    top: -28px;
+    left: 0;
+    right: 0;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: var(--ink-soft);
+    text-align: center;
+    background: var(--surface);
+    border: 1px dashed var(--pink-200);
+    border-radius: var(--radius-sm);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   กล่องข้อความของแอปเอง (แจ้งเตือน / ยืนยัน / กรอกข้อความ)
+   ใช้แทน window.alert / confirm / prompt
+   ของเดิมเป็นหน้าต่างของ OS ที่ดึงโฟกัส พอปิดแล้วพิมพ์ต่อไม่ได้
+   ────────────────────────────────────────────────────────────── */
+
+.app-dialog {
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.app-dialog.open {
+    display: flex;
+}
+
+.app-dialog-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(75, 58, 68, 0.3);
+    backdrop-filter: blur(3px);
+}
+
+.app-dialog-box {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    max-width: 460px;
+    padding: 20px 22px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+}
+
+.app-dialog-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+.app-dialog-title:empty {
+    display: none;
+}
+
+.app-dialog-message {
+    margin: 0;
+    max-height: 60vh;
+    overflow-y: auto;
+    font-size: 14px;
+    color: var(--ink);
+    /* ข้อความที่เขียนติดกันหลายบรรทัด (มี \n) ต้องขึ้นบรรทัดใหม่ตามนั้น */
+    white-space: pre-line;
+}
+
+.app-dialog-message.empty {
+    display: none;
+}
+
+.app-dialog-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.app-dialog-buttons button {
+    margin-top: 0;
+}
+
+/* ──────────────────────────────────────────────────────────────
    หน้าต่างแคบ: ย้าย sidebar ขึ้นด้านบน
    ────────────────────────────────────────────────────────────── */
 
