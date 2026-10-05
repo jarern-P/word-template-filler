@@ -17,7 +17,7 @@
 // - หัว/ท้ายกระดาษและเชิงอรรถแสดงให้เห็น แต่แก้ไม่ได้ (ไม่ใช่เนื้อเรื่อง)
 // - กด Enter เพิ่มย่อหน้าใหม่ไม่ได้ (w:p ใหม่ต้องสร้างใน Word แล้วอัปโหลดทับ)
 //
-// การจัดรูปแบบข้อความ (ตัวหนา / ตัวบาง / ตัวเอียง / ขีดเส้นใต้):
+// การจัดรูปแบบข้อความ (ตัวหนา / ตัวเอียง / ขีดเส้นใต้):
 // - ทำกับข้อความที่เลือกในย่อหน้าที่แก้ได้ (Ctrl+B / Ctrl+I / Ctrl+U หรือปุ่มบนแถบ)
 // - ตอนบันทึกจะเทียบรูปแบบที่เห็นบนหน้าจอกับตอนเรนเดอร์ แล้วเขียน w:b / w:i / w:u
 //   กลับลงเฉพาะช่วงที่เปลี่ยน ผ่าน Replace.setParagraphFormats
@@ -27,6 +27,16 @@
 // - ตัวเรนเดอร์วาดเป็นอักขระ Private Use Area / \u2003 ซึ่งไม่มีอักขระจริงในเอกสาร
 //   จึงล็อกชิ้นเหล่านี้ไม่ให้แก้หรือลบ และตัดอักขระเหล่านั้นออกตอนเขียนข้อความกลับ
 //   (ถ้าเขียนกลับเป็นตัวอักษรจริง เครื่องหมายถูก/กล่องสี่เหลี่ยมจะเพี้ยนและซ้อนกัน)
+//
+// รูปทรง (shape):
+// - Word เก็บรูปทรงไว้สองชุดใน mc:AlternateContent (Choice = wps:wsp ที่ Word ใช้,
+//   Fallback = VML ที่ docx-preview วาด) — docx-preview ไม่รู้จัก wps:wsp จึงข้าม
+//   สไตล์จริง (สีพื้น/เส้นขอบ/ความหนาเส้น) จึงต้องอ่านจากสาขา Choice มาใส่ให้
+//   (ดู renderShapes) ถ้าจำนวนรูปทรงในไฟล์กับบนจอกันไม่ตรง จะไม่แก้เลยและเตือน
+// - รองรับรูปทรงกล่อง (rect / roundRect / ellipse) และเส้นตรง (line)
+// - ซอง SVG ที่ตัวเรนเดอร์วัดขนาดไม่สำเร็จ (width/height = 0 — เจอกับ v:line ที่สไตล์
+//   VML ไม่บอก width/height) ต้องตั้งขนาดจาก bbox ของเนื้อหา ไม่งั้นรูปทรงหายทั้งอัน
+//   (ดู sizeShapeFromContent)
 //
 // การขึ้นหน้าใหม่:
 // - docx-preview แยกหน้ากระดาษตาม w:br type="page", w:lastRenderedPageBreak,
@@ -39,6 +49,39 @@
 
     const FIELD_PATTERN = /\{\{\s*([a-zA-Z0-9_ก-๙]+)\s*\}\}/g;
 
+    // นามสเปซที่ใช้ตอนอ่านรูปทรง (shape) จาก word/document.xml
+    const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+    const WPS_NS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape';
+    const MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006';
+
+    // สีมาตรฐานของธีม Office — ใช้เมื่อรูปทรงอ้าง schemeClr / sysClr แทนรหัสสีตรง ๆ
+    const THEME_COLORS = {
+        dk1: '#000000',
+        tx1: '#000000',
+        lt1: '#FFFFFF',
+        bg1: '#FFFFFF',
+        dk2: '#44546A',
+        tx2: '#44546A',
+        lt2: '#E7E6E6',
+        bg2: '#E7E6E6',
+        accent1: '#4472C4',
+        accent2: '#ED7D31',
+        accent3: '#A5A5A5',
+        accent4: '#FFC000',
+        accent5: '#5B9BD5',
+        accent6: '#70AD47',
+        hlink: '#0563C1',
+        folHlink: '#954F72'
+    };
+
+    // ชนิดรูปทรงที่วาดเป็น "กล่อง" ได้ด้วยขอบ/พื้นของซอง SVG (ค่าคือ border-radius)
+    const BOX_GEOMETRY = {
+        rect: '',
+        roundRect: '8px',
+        ellipse: '50%',
+        oval: '50%'
+    };
+
     // อักขระที่ docx-preview วาดขึ้นเอง — ไม่มีอยู่ใน w:t ของเอกสาร
     // (สัญลักษณ์ w:sym → อักขระ Private Use Area, แท็บ w:tab → em space)
     // ตอนเขียนข้อความกลับต้องตัดออก ไม่งั้นจะกลายเป็น "ตัวอักษรจริง" ใน Word
@@ -49,8 +92,7 @@
     const FORMAT_BUTTONS = {
         layoutBoldBtn: 'bold',
         layoutItalicBtn: 'italic',
-        layoutUnderlineBtn: 'underline',
-        layoutThinBtn: 'thin'
+        layoutUnderlineBtn: 'underline'
     };
 
     // ชื่อ highlight ของ CSS Custom Highlight API (ไฮไลต์ {{...}} เป็นสีเหลือง)
@@ -91,8 +133,7 @@
         '    <div class="layout-toolbar">',
         '        <label class="layout-toggle"><input type="checkbox" id="layoutEditToggle" checked> แก้ไขข้อความ</label>',
         '        <div class="layout-format" role="toolbar" aria-label="จัดรูปแบบข้อความ">',
-        '            <button type="button" id="layoutBoldBtn" class="layout-fmt" title="ตัวหนา (Ctrl+B) — กดซ้ำเพื่อกลับเป็นตัวบาง"><strong>B</strong></button>',
-        '            <button type="button" id="layoutThinBtn" class="layout-fmt" title="ตัวบาง — เอาตัวหนาออกจากข้อความที่เลือก">ตัวบาง</button>',
+        '            <button type="button" id="layoutBoldBtn" class="layout-fmt" title="ตัวหนา (Ctrl+B) — กดอีกครั้งเพื่อเลิกหนา"><strong>B</strong></button>',
         '            <button type="button" id="layoutItalicBtn" class="layout-fmt" title="ตัวเอียง (Ctrl+I)"><em>I</em></button>',
         '            <button type="button" id="layoutUnderlineBtn" class="layout-fmt" title="ขีดเส้นใต้ (Ctrl+U)"><u>U</u></button>',
         '        </div>',
@@ -1090,6 +1131,213 @@
         return Array.from(doc.getElementsByTagNameNS(WP_NS, 'anchor')).map(readAnchor);
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // รูปทรง (shape) — กล่อง / เส้น
+    //
+    // Word เก็บรูปทรงไว้ 2 ชุดใน mc:AlternateContent
+    //   mc:Choice   = w:drawing/wp:anchor/wps:wsp ← ที่ Word ใช้วาดจริง
+    //                 (มี prstGeom = ชนิดรูปทรง, solid／noFill = สีพื้น, a:ln = เส้นขอบ)
+    //   mc:Fallback = w:pict/v:shape|v:rect|v:line ← ที่ docx-preview วาด
+    //
+    // docx-preview รู้จักแต่ pic:pic จึงข้าม wps:wsp ทั้งก้อน — ข้อความในกล่องยัง
+    // แสดง (มาจากสาขา VML) แต่สาขา VML ที่ Word สร้างมาอาจบอกว่า
+    // filled="f" stroked="f" = โปร่งใส → กล่องที่มีสีพื้น/เส้นขอบจริงใน Word หายไป
+    // (เห็นแต่ข้อความลอย ๆ) และเส้น v:line ไม่มีสี → มองไม่เห็นเลย
+    //
+    // ตรงนี้จึงอ่านสไตล์จริงจากสาขา Choice แล้วใส่ให้ซอง SVG ที่ตัวเรนเดอร์สร้างไว้
+    // จับคู่ตามลำดับในเอกสาร — จำนวนไม่ตรง = ไม่กล้าแก้ ปล่อยไว้แล้วเตือน
+    // ──────────────────────────────────────────────────────────────
+
+    function elementChild(node, name) {
+        for (const child of Array.from(node.childNodes)) {
+            if (child.nodeType === 1 && child.localName === name) return child;
+        }
+
+        return null;
+    }
+
+    // สีจาก DrawingML — คืน null เมื่อปิดสีไว้ (a:noFill) หรือไม่ระบุ
+    // ตรวจ noFill/solidFill เฉพาะลูกโดยตรง เพราะ a:ln มี solidFill/noFill เป็นของตัวเอง
+    function drawingColor(container) {
+        if (!container) return null;
+
+        if (elementChild(container, 'noFill')) return null;
+
+        const solid = elementChild(container, 'solidFill');
+
+        if (!solid) return null;
+
+        const srgb = solid.getElementsByTagNameNS(A_NS, 'srgbClr')[0];
+
+        if (srgb) return '#' + String(srgb.getAttribute('val') || '').replace(/^#/, '');
+
+        const scheme = solid.getElementsByTagNameNS(A_NS, 'schemeClr')[0];
+
+        if (scheme) return THEME_COLORS[scheme.getAttribute('val')] || null;
+
+        const system = solid.getElementsByTagNameNS(A_NS, 'sysClr')[0];
+
+        if (system) {
+            const last = system.getAttribute('lastClr');
+
+            if (last) return '#' + String(last).replace(/^#/, '');
+
+            return system.getAttribute('val') === 'window' ? '#FFFFFF' : '#000000';
+        }
+
+        return null;
+    }
+
+    // สไตล์รูปทรงทุกอันจากสาขา Choice เรียงตามลำดับในเอกสาร
+    // (เฉพาะรูปทรงที่ Word เก็บเป็น wps:wsp — รูปภาพถูกข้าม)
+    function shapeStyles(xml) {
+        const doc = parseXml(xml);
+
+        if (!doc) return null;
+
+        const list = [];
+
+        Array.from(doc.getElementsByTagNameNS(MC_NS, 'AlternateContent')).forEach(
+            function (alternate) {
+                const choice = elementChild(alternate, 'Choice');
+                const wsp = choice
+                    ? choice.getElementsByTagNameNS(WPS_NS, 'wsp')[0]
+                    : null;
+
+                if (!wsp) return;
+
+                const props = wsp.getElementsByTagNameNS(WPS_NS, 'spPr')[0];
+                const geom = props
+                    ? props.getElementsByTagNameNS(A_NS, 'prstGeom')[0]
+                    : null;
+                const line = props
+                    ? props.getElementsByTagNameNS(A_NS, 'ln')[0]
+                    : null;
+                const rawWidth = line ? Number(line.getAttribute('w')) : 0;
+
+                list.push({
+                    geometry: geom ? String(geom.getAttribute('prst') || '') : '',
+                    fill: props ? drawingColor(props) : null,
+                    lineColor: line ? drawingColor(line) : null,
+                    // ค่าตั้งต้นของเส้นใน DrawingML = 9525 EMU (1px)
+                    lineWidth: isFinite(rawWidth) && rawWidth > 0
+                        ? rawWidth / EMU_PER_PX
+                        : 1
+                });
+            }
+        );
+
+        return list;
+    }
+
+    // ซอง SVG ของรูปทรงที่ตัวเรนเดอร์วาดไว้ เรียงตามลำดับในเอกสาร
+    // ตัด svg ที่เป็น "รูปภาพ" (VML image) ออก เพราะไม่ใช่รูปทรง
+    function vmlShapeSvgs() {
+        return Array.from(host.querySelectorAll('article svg'))
+            .filter(function (svg) {
+                return svg.querySelector('image') === null;
+            });
+    }
+
+    // ตั้งขนาดซอง SVG จากเนื้อหาข้างใน เมื่อตัวเรนเดอร์วัดไม่ได้
+    //
+    // ตัวเรนเดอร์ตั้ง width/height ให้ซอง SVG ใน requestAnimationFrame ด้วย getBBox()
+    // ของลูกตัวแรก แต่ตอนเปิดหน้าจัดตำแหน่ง getBBox() คืน 0 (กล่องเพิ่งเข้า DOM
+    // / ตอนวัดยังไม่ถูกจัดวาง) → width/height เป็น 0 ค้างไว้
+    //
+    // กล่องข้อความยังรอดเพราะสไตล์ VML มี width/height เป็น pt อยู่ในตัว
+    // แต่ v:line ไม่มี → ซองเป็น 0×0 → เส้นถูกตัดหายทั้งเส้น
+    function sizeShapeFromContent(element) {
+        if (!element.getBBox) return;
+
+        const content = element.firstElementChild;
+
+        if (!content || !content.getBBox) return;
+
+        const width = Number(element.getAttribute('width'));
+        const height = Number(element.getAttribute('height'));
+
+        // ตัวเรนเดอร์วัดได้แล้ว = ใช้ค่านั้น ไม่ต้องยุ่ง
+        if (width > 0 && height > 0) return;
+
+        let box = null;
+
+        try {
+            box = content.getBBox();
+        } catch (error) {
+            return;
+        }
+
+        if (!box || !(box.width > 0 || box.height > 0)) return;
+
+        // เหมือนกับที่ตัวเรนเดอร์ทำ: ขอบซอง = bbox.x + ความกว้าง (attribute นี้ถูก
+        // สไตล์ width ของ VML ทับอยู่แล้วสำหรับกล่องข้อความ จึงไม่ทำให้กล่องเดิมเปลี่ยน)
+        element.setAttribute('width', String(Math.ceil(box.x + box.width)));
+        element.setAttribute('height', String(Math.ceil(box.y + box.height)));
+    }
+
+    function applyShapeStyle(element, style) {
+        // ขนาดซองต้องมาก่อน ไม่งั้นรูปทรงที่ไม่มีสไตล์ width (เส้น) จะมองไม่เห็น
+        sizeShapeFromContent(element);
+
+        // เส้น — ตัวเรนเดอร์วาด <line> ไว้แล้วแต่ไม่มีสี (VML ไม่ได้บอกสี)
+        if (style.geometry === 'line') {
+            const line = element.querySelector('line');
+
+            if (!line) return;
+
+            const color = style.lineColor || '#000000';
+
+            line.setAttribute('stroke', color);
+            line.setAttribute('stroke-width', Math.max(style.lineWidth, 1).toFixed(2));
+
+            // กันส่วนปลายเส้นถูกตัดเผื่อกรณีขนาดซองยังไม่พอดี
+            element.style.overflow = 'visible';
+            return;
+        }
+
+        const radius = BOX_GEOMETRY[style.geometry];
+
+        if (radius === undefined) return;   // ชนิดอื่นยังไม่รองรับ — ปล่อยตามเดิม
+
+        if (style.fill) element.style.background = style.fill;
+
+        if (style.lineColor) {
+            // Word วาดเส้นขอบ "ในกรอบ" ของรูปทรง — border-box จึงไม่ทำกล่องโตขึ้น
+            element.style.boxSizing = 'border-box';
+            element.style.border =
+                Math.max(style.lineWidth, 1).toFixed(2) + 'px solid ' + style.lineColor;
+        }
+
+        if (radius) element.style.borderRadius = radius;
+    }
+
+    // ใส่สีพื้น/เส้นขอบจากสาขา DrawingML ให้รูปทรงที่แสดงอยู่
+    function renderShapes() {
+        if (!current || !current.xml || !host) return;
+
+        const styles = shapeStyles(current.xml);
+
+        if (!styles || styles.length === 0) return;
+
+        const shapes = vmlShapeSvgs();
+
+        // จำนวนไม่ตรง = จับคู่รูปทรงมั่นใจไม่ได้ จึงไม่แตะเลย (ปลอดภัยกว่าแก้ผิดรูปทรง)
+        if (shapes.length !== styles.length) {
+            console.warn(
+                'จัดรูปแบบรูปทรง: จำนวนในไฟล์ (' + styles.length +
+                ') ไม่ตรงกับที่แสดง (' + shapes.length +
+                ') จึงไม่ปรับสีพื้น/เส้นขอบ'
+            );
+
+            return;
+        }
+
+        styles.forEach(function (style, index) {
+            applyShapeStyle(shapes[index], style);
+        });
+    }
+
     // อ่านระยะเยื้องของตารางทุกอันที่ถูกวาดจริง (px, null = ไม่ได้ระบุ)
     //
     // docx-preview อ่าน w:tblInd ผิดแบบ — parseIndentation ของมันไปอ่าน
@@ -1513,6 +1761,10 @@
         }
 
         positionTables();
+
+        // รูปทรง (กล่อง/เส้น) — ใส่สีพื้น/เส้นขอบจากสาขา DrawingML
+        // ทำหลังจัดตำแหน่ง เพราะใช้ขนาดกล่องที่ตัวเรนเดอร์ตั้งไว้
+        renderShapes();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1616,7 +1868,7 @@
     }
 
     // ──────────────────────────────────────────────────────────────
-    // ปุ่มจัดรูปแบบข้อความ (ตัวหนา / ตัวบาง / ตัวเอียง / ขีดเส้นใต้)
+    // ปุ่มจัดรูปแบบข้อความ (ตัวหนา / ตัวเอียง / ขีดเส้นใต้)
     // ──────────────────────────────────────────────────────────────
 
     // ข้อความที่เลือกอยู่ต้องอยู่ในย่อหน้าที่แก้ได้จึงจัดรูปแบบได้
@@ -1637,14 +1889,13 @@
         }
     }
 
-    // ปุ่มสว่างตามสถานะของข้อความที่เลือก (ตัวบาง = ยังไม่หนา)
+    // ปุ่มสว่างตามสถานะของข้อความที่เลือก (B = หนา)
     function refreshFormatButtons() {
         const enabled = activeParagraph() !== null;
         const bold = enabled && formatState('bold');
 
         const states = {
             layoutBoldBtn: bold,
-            layoutThinBtn: enabled && !bold,
             layoutItalicBtn: enabled && formatState('italic'),
             layoutUnderlineBtn: enabled && formatState('underline')
         };
@@ -1670,18 +1921,7 @@
             return;
         }
 
-        if (command === 'thin') {
-            // ตัวบาง = เอาตัวหนาออก (ถ้าข้อความที่เลือกหนาอยู่)
-            if (!formatState('bold')) {
-                setStatus('ข้อความที่เลือกเป็นตัวบางอยู่แล้ว', 'warn');
-                refreshFormatButtons();
-                return;
-            }
-
-            document.execCommand('bold', false, null);
-        } else {
-            document.execCommand(command, false, null);
-        }
+        document.execCommand(command, false, null);
 
         touchParagraph(paragraph);
         scheduleFieldHighlight();
