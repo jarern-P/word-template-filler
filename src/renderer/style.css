@@ -2782,13 +2782,26 @@ body.table-ratio-dragging .table-ratio-handle {
     overflow: visible;
 }
 
-/* ย่อหน้าที่แก้ได้ — บอกด้วยกรอบจาง ๆ ตอนชี้เมาส์/โฟกัส */
-.layout-preview .layout-para[contenteditable="true"]:hover {
+/* ช่องแก้ไขหลัก — เอกสารทั้งหมดเป็นช่อง input เดียว (ไม่แบ่งกรอบต่อย่อหน้า)
+   บอกด้วยกรอบจาง ๆ ตอนชี้เมาส์/โฟกัส */
+.layout-preview .layout-edit[contenteditable="true"]:hover {
+    outline: 1px dashed var(--pink-300);
+    outline-offset: -1px;
+}
+
+.layout-preview .layout-edit[contenteditable="true"]:focus {
+    outline: 2px solid var(--pink-400);
+    outline-offset: -1px;
+}
+
+/* กล่องข้อความ — ยกเว้นเดียวที่แยกเป็นช่องของตัวเอง (1 กล่อง = 1 ช่อง) */
+.layout-preview .layout-text-box {
     outline: 1px dashed var(--pink-300);
     outline-offset: 2px;
 }
 
-.layout-preview .layout-para[contenteditable="true"]:focus {
+.layout-preview .layout-text-box[contenteditable="true"]:hover,
+.layout-preview .layout-text-box[contenteditable="true"]:focus {
     outline: 2px solid var(--pink-400);
     outline-offset: 2px;
 }

@@ -775,6 +775,38 @@ async function renderDocx(bytes) {
         return names;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // กล่องข้อความ (text box) — 1 กล่อง = 1 ช่องแก้ไข
+    //
+    // เอกสารทั้งหมดรวมเป็นช่อง input เดียว (ดู prepareEditing)
+    // ยกเว้นกล่องข้อความที่ยังแยกเป็นกล่องของตัวเองตามแบบ docx
+    //
+    // docx-preview วาดกล่องข้อความเป็น <p> หลายอันเรียงใน <foreignObject>
+    // จึงห่อ <p> ของทั้งกล่องด้วย <div> หนึ่งอัน → 1 กล่อง = 1 ช่อง
+    // (ตั้ง contentEditable ที่ตัว foreignObject เองไม่ได้ — SVG element ไม่รับ)
+    // ──────────────────────────────────────────────────────────────
+    function textboxRegion(paragraph) {
+        const foreign = paragraph.closest ? paragraph.closest('foreignObject') : null;
+
+        if (!foreign) return null;
+
+        const existing = Array.from(foreign.children).find(function (child) {
+            return child.dataset && child.dataset.layoutTextBox === '1';
+        });
+
+        if (existing) return existing;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'layout-text-box layout-edit';
+        wrapper.dataset.layoutTextBox = '1';
+        wrapper.contentEditable = 'false';
+
+        while (foreign.firstChild) wrapper.appendChild(foreign.firstChild);
+        foreign.appendChild(wrapper);
+
+        return wrapper;
+    }
+
     function prepareEditing() {
         const nodes = bodyParagraphs();
 
@@ -793,10 +825,20 @@ async function renderDocx(bytes) {
         const editable = editOn();
         let lockedCount = 0;
 
+        // ── ช่องแก้ไขหลัก — ทั้งเอกสารเป็นช่อง input เดียว ──
+        // ย่อหน้าทั่วไปจึงไม่ได้ช่องของตัวเอง (ไม่ตั้ง contentEditable ต่อรายการ)
+        // สืบทอดจากช่องนี้แทน — ยกเว้นกล่องข้อความที่มีช่องของตัวเอง
+        const canvas = host.querySelector('.docx-wrapper') || host;
+        canvas.classList.add('layout-edit');
+        canvas.contentEditable = editable ? 'true' : 'false';
+
         nodes.forEach(function (node) {
             const pair = pairs.get(node);
             const text = cleanText(renderedText(node));
             const fields = fieldNames(text);
+
+            // ย่อหน้าในกล่องข้อความ = อยู่ในช่องของกล่อง (1 กล่อง = 1 ช่อง)
+            const region = textboxRegion(node);
 
             node.classList.add('layout-para');
             node.setAttribute('spellcheck', 'false');
@@ -836,11 +878,20 @@ async function renderDocx(bytes) {
                 return;
             }
 
-            node.contentEditable = editable ? 'true' : 'false';
+            // ย่อหน้าทั่วไปไม่ตั้ง contentEditable — สืทธิ์แก้ไขสืบทอดจากช่องหลัก
+            // (ช่องของกล่องข้อความถูกตั้งทีหลัง ดูด้านล่าง)
+            if (region === null && !editable) {
+                node.contentEditable = 'false';
+            }
 
             if (fields.length > 0) {
                 node.title = 'field: ' + fields.join(', ');
             }
+        });
+
+        // ช่องของกล่องข้อความ — 1 กล่อง = 1 ช่อง แยกจากช่องหลัก
+        host.querySelectorAll('[data-layout-text-box]').forEach(function (region) {
+            region.contentEditable = editable ? 'true' : 'false';
         });
 
         decorateSpecials();
@@ -926,7 +977,29 @@ async function renderDocx(bytes) {
 
         const paragraph = element.closest('.layout-para');
 
-        return paragraph && paragraph.contentEditable === 'true' ? paragraph : null;
+        if (!paragraph) return null;
+
+        // อยู่ในกล่องข้อความ → ย่อหน้าต้องอยู่ "ใน" กล่องนั้น
+        // (ไม่งั้นจะได้ย่อหน้าแม่ที่ครอบกล่อง ซึ่งไม่ใช่ย่อหน้าที่พิมพ์อยู่)
+        const box = element.closest('[data-layout-text-box]');
+
+        if (box && !box.contains(paragraph)) return null;
+
+        // ย่อหน้าทั่วไปไม่มี contenteditable ของตัวเอง (สืทธิ์จากช่องหลัก)
+        // จึงใช้ค่าที่ใช้งานจริง ไม่ใช่ค่าใน attribute
+        return paragraph.isContentEditable ? paragraph : null;
+    }
+
+    // ย่อหน้าที่อักขระ (caret) อยู่จริง
+    //
+    // event.target ของ input ใน contenteditable คือ "ตัวช่อง" (editing host)
+    // ไม่ใช่ <p> ที่พิมพ์อยู่ — ถ้าใช้ event.target จะไปนับย่อหน้าแม่ผิด
+    function caretParagraph() {
+        const selection = document.getSelection();
+
+        return selection && selection.anchorNode
+            ? paragraphOf(selection.anchorNode)
+            : null;
     }
 
     function touchParagraph(paragraph) {
@@ -1802,11 +1875,21 @@ async function renderDocx(bytes) {
 
     function applyEditToggle() {
         const editable = editOn();
+        const canvas = host ? host.querySelector('.docx-wrapper') : null;
 
-        host.querySelectorAll('.layout-para').forEach(function (node) {
-            if (node.classList.contains('layout-para-locked')) return;
+        // ช่องแก้ไขหลัก = ทั้งเอกสารช่องเดียว
+        if (canvas) canvas.contentEditable = editable ? 'true' : 'false';
 
-            node.contentEditable = editable ? 'true' : 'false';
+        // ช่องของกล่องข้อความ (1 กล่อง = 1 ช่อง)
+        if (host) {
+            host.querySelectorAll('[data-layout-text-box]').forEach(function (region) {
+                region.contentEditable = editable ? 'true' : 'false';
+            });
+        }
+
+        // ย่อหน้าที่จับคู่ไม่ได้ = แก้ไม่ได้เสมอ
+        document.querySelectorAll('.layout-para-locked').forEach(function (node) {
+            node.contentEditable = 'false';
         });
 
         refreshFormatButtons();
@@ -2193,11 +2276,12 @@ function scheduleFieldHighlight() {
     function onKeydown(event) {
         if (event.key !== 'Enter') return;
 
-        const paragraph = event.target && event.target.closest
-            ? event.target.closest('.layout-para')
+        // ทั้งเอกสารเป็นช่องเดียว → เจอ .layout-edit ก็ถือว่าอยู่ในช่องแก้ไข
+        const region = event.target && event.target.closest
+            ? event.target.closest('.layout-para, .layout-edit')
             : null;
 
-        if (!paragraph || paragraph.contentEditable !== 'true') return;
+        if (!region || !region.isContentEditable) return;
 
         event.preventDefault();
 
@@ -2220,7 +2304,7 @@ function scheduleFieldHighlight() {
 
     // พิมพ์ในเอกสาร — นับว่าย่อหน้าไหนถูกแก้ + อัปเดตไฮไลต์ {{}} + จัดตำแหน่งใหม่
     function onInput(event) {
-        touchParagraph(paragraphOf(event.target));
+        touchParagraph(caretParagraph() || paragraphOf(event.target));
         scheduleFieldHighlight();
         scheduleLayoutFix();
         updateDirty();
@@ -2228,11 +2312,11 @@ function scheduleFieldHighlight() {
 
     // วางเป็นข้อความล้วน — วางจาก Word จะพา span/สไตล์ขยะเข้ามาในเอกสาร
     function onPaste(event) {
-        const paragraph = event.target && event.target.closest
-            ? event.target.closest('.layout-para')
+        const region = event.target && event.target.closest
+            ? event.target.closest('.layout-para, .layout-edit')
             : null;
 
-        if (!paragraph || paragraph.contentEditable !== 'true') return;
+        if (!region || !region.isContentEditable) return;
 
         event.preventDefault();
 
