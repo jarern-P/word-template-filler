@@ -252,73 +252,97 @@
     // เรนเดอร์เอกสาร
     // ──────────────────────────────────────────────────────────────
 
-    async function renderDocx(bytes) {
-        if (!host) return;
+async function renderDocx(bytes) {
+    if (!host) return;
 
-        const token = ++renderToken;
+    const token = ++renderToken;
 
-        if (bytes) current.bytes = bytes;
+    if (bytes) {
+        current.bytes = bytes;
+    }
 
-        host.innerHTML = '';
-        applyFieldHighlight();
+    // ล้าง highlight เดิมก่อนล้าง DOM
+    // เพราะ Range เดิมอ้าง TextNode ที่กำลังจะถูกลบ
+    clearFieldHighlight();
 
-        if (!current.bytes) {
-            setStatus('ไม่พบไฟล์เอกสาร', 'error');
-            return;
-        }
+    // ล้าง DOM เดิม
+    host.innerHTML = '';
 
-        if (!scope.docx || !scope.docx.renderAsync) {
-            setStatus('โหลดไลบรารี docx-preview ไม่ได้ (ไฟล์ vendor หาย)', 'error');
-            return;
-        }
+    if (!current.bytes) {
+        setStatus('ไม่พบไฟล์เอกสาร', 'error');
+        return;
+    }
 
-        setStatus('กำลังเรนเดอร์เอกสาร...');
+    if (!scope.docx || !scope.docx.renderAsync) {
+        setStatus(
+            'โหลดไลบรารี docx-preview ไม่ได้ (ไฟล์ vendor หาย)',
+            'error'
+        );
+        return;
+    }
 
-        try {
-            await scope.docx.renderAsync(current.bytes, host, styleHost, {
+    setStatus('กำลังเรนเดอร์เอกสาร...');
+
+    try {
+        await scope.docx.renderAsync(
+            current.bytes,
+            host,
+            styleHost,
+            {
                 className: 'docx',
                 inWrapper: true,
-                // ตัดขึ้นหน้าใหม่ + ใช้ขนาดกระดาษ/ขอบจากไฟล์จริง
                 breakPages: true,
                 ignoreWidth: false,
                 ignoreHeight: false,
-                // หัว/ท้ายกระดาษ/เชิงอรรถแสดงให้เห็น แต่แก้ไม่ได้
                 renderHeaders: true,
                 renderFooters: true,
                 renderFootnotes: true,
                 useBase64URL: false
-            });
-        } catch (error) {
-            console.error(error);
-
-            if (token === renderToken) {
-                setStatus('เรนเดอร์เอกสารไม่สำเร็จ: ' + messageOf(error), 'error');
             }
+        );
+    } catch (error) {
+        console.error(error);
 
-            return;
+        if (token === renderToken) {
+            setStatus(
+                'เรนเดอร์เอกสารไม่สำเร็จ: ' + messageOf(error),
+                'error'
+            );
         }
 
-        // มีการปิด/เรนเดอร์ใหม่ระหว่างรอ = ทิ้งผลรอบนี้
-        if (token !== renderToken) return;
-
-        // วาดเสร็จแล้ว → ย่อ/ขยายให้พอดี แล้ววางรูปที่ลอย/กล่องข้อความ/ตารางให้ตรงตำแหน่ง
-        // (applyZoom เป็นคนเรียก fixRenderedLayout หลังตั้ง zoom แล้ว)
-        applyZoom();
-
-        // ฟอนต์โหลดเสร็จอาจขยับตำแหน่งข้อความ → รูปที่อ้างจากย่อหน้าต้องจัดใหม่
-        if (document.fonts && document.fonts.ready) {
-            document.fonts.ready.then(function () {
-                if (token === renderToken) fixRenderedLayout();
-            });
-        }
-
-        // เรนเดอร์รอบใหม่ = เริ่มนับการแก้ใหม่ทั้งหมด
-        touched = new Set();
-
-        prepareEditing();
-        applyFieldHighlight();
-        setStatus('');
+        return;
     }
+
+    // ถ้าระหว่าง render มีการเปิด/ปิด หรือ render รอบใหม่
+    // ไม่เอาผลของรอบเก่ามาใช้
+    if (token !== renderToken) return;
+
+    // ตั้ง zoom และจัดตำแหน่ง Shape / TextBox / Table
+    applyZoom();
+
+    // รอฟอนต์โหลดครบก่อน เพราะ font metric มีผลกับตำแหน่ง
+    // ของข้อความและวัตถุที่อ้างจาก paragraph
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () {
+            if (token === renderToken) {
+                fixRenderedLayout();
+            }
+        });
+    }
+
+    // render รอบใหม่ = reset touched
+    touched = new Set();
+
+    // จับคู่ paragraph + เตรียม contentEditable
+    prepareEditing();
+
+    // สำคัญ:
+    // ต้องเรียกหลัง docx-preview render เสร็จและหลัง prepareEditing()
+    // เพราะ fieldRanges() ต้องอ่าน TextNode จริงจาก DOM
+    applyFieldHighlight();
+
+    setStatus('');
+}
 
     // ──────────────────────────────────────────────────────────────
     // จับคู่ย่อหน้าในเอกสารที่เรนเดอร์แล้ว กับ w:p ใน word/document.xml
@@ -1796,81 +1820,285 @@
     // ถ้าเบราว์เซอร์ไม่รองรับ จะเหลือแค่เงาที่ขอบซ้ายของย่อหน้าที่มี field
     // ──────────────────────────────────────────────────────────────
 
-    function fieldRanges() {
-        const ranges = [];
+function isDirectParagraphTextNode(node, paragraph) {
+    if (!node || !paragraph) return false;
 
-        if (!host) return ranges;
+    let parent = node.parentElement;
 
-        bodyParagraphs().forEach(function (paragraph) {
-            const walker = document.createTreeWalker(
-                paragraph,
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
-            );
+    while (parent && parent !== paragraph) {
+        // ถ้าเจอ <p> ก่อนถึง paragraph เป้าหมาย
+        // แปลว่า TextNode นี้อยู่ใน paragraph ซ้อน
+        // เช่น VML TextBox
+        if (parent.localName === 'p') {
+            return false;
+        }
 
-            let node;
+        parent = parent.parentElement;
+    }
 
-            while ((node = walker.nextNode()) !== null) {
-                const text = node.textContent || '';
-                const regex = new RegExp(FIELD_PATTERN.source, 'g');
-                let match;
+    return parent === paragraph;
+}
 
-                while ((match = regex.exec(text)) !== null) {
-                    const range = document.createRange();
+    // function fieldRanges() {
+    //     const ranges = [];
 
-                    range.setStart(node, match.index);
-                    range.setEnd(node, match.index + match[0].length);
-                    ranges.push(range);
-                }
+    //     if (!host) return ranges;
+
+    //     bodyParagraphs().forEach(function (paragraph) {
+    //         const walker = document.createTreeWalker(
+    //             paragraph,
+    //             NodeFilter.SHOW_TEXT,
+    //             null,
+    //             false
+    //         );
+
+    //         let node;
+
+    //         while ((node = walker.nextNode()) !== null) {
+    //             const text = node.textContent || '';
+    //             const regex = new RegExp(FIELD_PATTERN.source, 'g');
+    //             let match;
+
+    //             while ((match = regex.exec(text)) !== null) {
+    //                 const range = document.createRange();
+
+    //                 range.setStart(node, match.index);
+    //                 range.setEnd(node, match.index + match[0].length);
+    //                 ranges.push(range);
+    //             }
+    //         }
+    //     });
+
+    //     return ranges;
+    // }
+function fieldRanges() {
+    const ranges = [];
+
+    if (!host) return ranges;
+
+    bodyParagraphs().forEach(function (paragraph) {
+        const textNodes = [];
+
+        const walker = document.createTreeWalker(
+            paragraph,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+
+        let node;
+
+        // --------------------------------------------------
+        // เก็บ TextNode ของ paragraph นี้
+        //
+        // ต้องเก็บเฉพาะ TextNode ที่อยู่ใน paragraph ปัจจุบัน
+        // ไม่เอา <p> ที่ซ้อนอยู่ เช่น VML TextBox
+        // --------------------------------------------------
+        while ((node = walker.nextNode()) !== null) {
+            if (!isDirectParagraphTextNode(node, paragraph)) {
+                continue;
             }
-        });
 
-        return ranges;
-    }
+            const text = node.textContent || '';
 
-    function highlightSupported() {
-        return !!(scope.CSS && scope.CSS.highlights && scope.Highlight);
-    }
+            if (!text) {
+                continue;
+            }
 
-    function clearFieldHighlight() {
-        if (highlightSupported()) scope.CSS.highlights.delete(FIELD_HIGHLIGHT);
-    }
+            textNodes.push({
+                node: node,
+                text: text,
+                start: 0,
+                end: 0
+            });
+        }
 
-    function applyFieldHighlight() {
-        const toggle = el('layoutFieldToggle');
-        const on = !!(toggle && toggle.checked);
-
-        if (!host) return;
-
-        // เงาที่ขอบซ้ายของย่อหน้าที่มี field — ใช้หาตำแหน่งได้ง่ายทั้งสองโหมด
-        host.classList.toggle('show-fields', on);
-
-        if (!highlightSupported()) {
-            host.classList.toggle('show-fields-plain', on);
+        if (textNodes.length === 0) {
             return;
         }
 
-        scope.CSS.highlights.delete(FIELD_HIGHLIGHT);
+        // --------------------------------------------------
+        // รวม TextNode ทั้งหมดเป็น logical text เดียว
+        //
+        // ตัวอย่าง:
+        //
+        // <span>{{</span>
+        // <span>วันที่</span>
+        // <span>}}</span>
+        //
+        // จะกลายเป็น:
+        //
+        // {{วันที่}}
+        //
+        // ห้าม cleanText() ตรงนี้
+        // เพราะ cleanText() จะลบ \u2003 / PUA
+        // และทำให้ offset ของ Range ผิด
+        // --------------------------------------------------
+        let fullText = '';
+        let offset = 0;
 
-        if (!on) return;
+        textNodes.forEach(function (item) {
+            item.start = offset;
 
-        const highlight = new scope.Highlight();
+            fullText += item.text;
 
-        fieldRanges().forEach(function (range) {
-            highlight.addRange(range);
+            offset += item.text.length;
+
+            item.end = offset;
         });
 
-        scope.CSS.highlights.set(FIELD_HIGHLIGHT, highlight);
+        // --------------------------------------------------
+        // หา {{field}} จาก logical text
+        // --------------------------------------------------
+        const regex = new RegExp(FIELD_PATTERN.source, 'g');
+
+        let match;
+
+        while ((match = regex.exec(fullText)) !== null) {
+            const matchStart = match.index;
+            const matchEnd = matchStart + match[0].length;
+
+            let startNode = null;
+            let startOffset = 0;
+
+            let endNode = null;
+            let endOffset = 0;
+
+            // --------------------------------------------------
+            // แปลง offset ของ fullText
+            // กลับไปเป็น TextNode จริง
+            // --------------------------------------------------
+            for (const item of textNodes) {
+                // จุดเริ่มต้น
+                if (
+                    !startNode &&
+                    matchStart >= item.start &&
+                    matchStart < item.end
+                ) {
+                    startNode = item.node;
+                    startOffset = matchStart - item.start;
+                }
+
+                // จุดสิ้นสุด
+                if (
+                    !endNode &&
+                    matchEnd > item.start &&
+                    matchEnd <= item.end
+                ) {
+                    endNode = item.node;
+                    endOffset = matchEnd - item.start;
+                }
+
+                if (startNode && endNode) {
+                    break;
+                }
+            }
+
+            // --------------------------------------------------
+            // ป้องกัน Range ผิดพลาด
+            // --------------------------------------------------
+            if (!startNode || !endNode) {
+                continue;
+            }
+
+            try {
+                const range = document.createRange();
+
+                range.setStart(startNode, startOffset);
+                range.setEnd(endNode, endOffset);
+
+                ranges.push(range);
+            } catch (error) {
+                console.warn(
+                    'สร้าง field highlight range ไม่สำเร็จ',
+                    {
+                        field: match[0],
+                        error: error
+                    }
+                );
+            }
+        }
+    });
+
+    return ranges;
+}
+function highlightSupported() {
+    return !!(
+        scope.CSS &&
+        scope.CSS.highlights &&
+        scope.Highlight
+    );
+}
+
+    // function clearFieldHighlight() {
+    //     if (highlightSupported()) scope.CSS.highlights.delete(FIELD_HIGHLIGHT);
+    // }
+    function clearFieldHighlight() {
+        if (!highlightSupported()) return;
+
+        scope.CSS.highlights.delete(FIELD_HIGHLIGHT);
     }
+
+function applyFieldHighlight() {
+    const toggle = el('layoutFieldToggle');
+    const on = !!(toggle && toggle.checked);
+
+    if (!host) return;
+
+    // --------------------------------------------------
+    // class นี้ใช้สำหรับ fallback / แสดง indicator
+    // ของ paragraph ที่มี field
+    // --------------------------------------------------
+    host.classList.toggle('show-fields', on);
+
+    // --------------------------------------------------
+    // ล้าง highlight เดิมก่อนทุกครั้ง
+    // ป้องกัน Range เก่าค้าง
+    // --------------------------------------------------
+    clearFieldHighlight();
+
+    // --------------------------------------------------
+    // Browser ไม่รองรับ CSS Custom Highlight API
+    // --------------------------------------------------
+    if (!highlightSupported()) {
+        host.classList.toggle('show-fields-plain', on);
+        return;
+    }
+
+    host.classList.remove('show-fields-plain');
+
+    // ปิด highlight
+    if (!on) {
+        return;
+    }
+
+    const ranges = fieldRanges();
+
+    if (ranges.length === 0) {
+        return;
+    }
+
+    const highlight = new scope.Highlight();
+
+    ranges.forEach(function (range) {
+        highlight.add(range);
+    });
+
+    scope.CSS.highlights.set(
+        FIELD_HIGHLIGHT,
+        highlight
+    );
+}
 
     // ระหว่างพิมพ์ข้อความ ตัว {{}} ถูกพิมพ์/ลบทีละตัว — ไฮไลต์ต้องตามให้ทัน
     // (หน่วงเล็กน้อย เพื่อไม่ให้คำนวณใหม่ทุกคีย์)
-    function scheduleFieldHighlight() {
-        window.clearTimeout(highlightTimer);
+function scheduleFieldHighlight() {
+    window.clearTimeout(highlightTimer);
 
-        highlightTimer = window.setTimeout(applyFieldHighlight, 120);
-    }
+    highlightTimer = window.setTimeout(function () {
+        applyFieldHighlight();
+    }, 120);
+}
 
     // ──────────────────────────────────────────────────────────────
     // ปุ่มจัดรูปแบบข้อความ (ตัวหนา / ตัวเอียง / ขีดเส้นใต้)
