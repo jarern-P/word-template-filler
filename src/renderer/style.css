@@ -797,6 +797,28 @@ button.danger:hover {
     color: var(--ink-soft);
 }
 
+/* ──────────────────────────────────────────────────────────────
+   สวิตช์ไฮไลต์ {{}} สีเหลืองบนหน้ารายงาน
+   ติ๊ก = ตอนได้ไฟล์ .docx ข้อความที่ถูกแทนที่ค่ามี w:highlight สีเหลือง
+   ──────────────────────────────────────────────────────────── */
+.field-highlight-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.field-highlight-toggle input {
+    width: auto;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+
 .saved-templates {
     margin-top: 36px;
     padding-top: 22px;

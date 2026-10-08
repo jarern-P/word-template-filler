@@ -2,6 +2,21 @@
 (function (scope) {
     'use strict';
 
+    // ไฮไลต์ {{}} สีเหลือง (หน้ารายงาน)
+    //
+    // ติ๊ก = ตอนกด Download DOCX ข้อความที่ถูกแทนที่ค่าในไฟล์ผลลัพธ์
+    //        จะมี w:highlight สีเหลือง (สีพื้นหลังตัวอักษรตามที่ Word อ่าน)
+    // ไม่ติ๊ก = ไม่ใส่ highlight เลย
+    // ──────────────────────────────────────────────────────────────
+    const HIGHLIGHT_TOGGLE_ID = 'highlightFieldToggle';
+
+    const HIGHLIGHT_HTML = '\r\n' + [
+        '<label class="field-highlight-toggle" for="highlightFieldToggle">',
+        '    <input type="checkbox" id="highlightFieldToggle">',
+        '    ไฮไลต์ {{}} สีเหลือง',
+        '</label>'
+    ].join('\r\n');
+
     // เตือนเมื่อล็อกตำแหน่งไม่สมบูรณ์ เช่น ช่องว่างด้านหน้า field ไม่พอให้ลบ
     const FOOTER_HTML =
         '<p id="replaceWarning" class="replace-warning" style="display:none"></p>';
@@ -47,7 +62,7 @@
         showFileInput: false,
         // รวมปุ่ม ดูตัวอย่าง / Download DOCX / Clear ไว้แถวเดียวกันใต้ฟอร์ม
         actionsRow: true,
-        metaHTML: META_HTML,
+        metaHTML: META_HTML + HIGHLIGHT_HTML,
         actionsHTML: ACTIONS_HTML,
         footerHTML: FOOTER_HTML,
         emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปสร้างแม่แบบที่หน้า "ตั้งค่าแม่แบบ" ก่อน',
@@ -73,6 +88,49 @@
 
     // ปุ่มดูตัวอย่างไม่ใช้กลไกของ FormPage (ที่มีแต่ download/clear)
     // app.js จึงเรียกเฉพาะเมื่อ component มีเมธอดนี้ (ดู fillForm)
+    // ──────────────────────────────────────────────────────────────
+    // ไฮไลต์ {{}} สีเหลือง — คุมสวิตช์บนหน้ารายงาน
+    //
+    // หน้าถูกวาดใหม่ทั้งหมดทุกครั้งที่สลับหน้า (mainEl.innerHTML = ...)
+    // จึงต้องจำสถานะสวิตช์ไว้ในตัวแปร แล้วคืนกลับทุกครั้งที่วาดฟอร์ม
+    // ──────────────────────────────────────────────────────────────
+    let highlightOn = false;
+
+    function syncHighlightToggle() {
+        const toggle = document.getElementById(HIGHLIGHT_TOGGLE_ID);
+
+        if (toggle) toggle.checked = highlightOn;
+    }
+
+    // event ระดับ document — เพราะกล่องสวิตช์ถูกสร้างใหม่ทุกครั้งที่เปิดหน้า
+    function onHighlightEvent(event) {
+        const target = event.target;
+
+        if (target && target.id === HIGHLIGHT_TOGGLE_ID) {
+            highlightOn = !!target.checked;
+        }
+    }
+
+    document.addEventListener('change', onHighlightEvent);
+
+    // ค่าไว้ให้ app.js ใช้ตอนสร้างไฟล์ .docx (ดู fieldHighlightOn ใน app.js)
+    page.getFieldHighlight = function () {
+        return highlightOn;
+    };
+
+    // วาดฟอร์มใหม่ = DOM ถูกแทนที่ทั้งหมด → คืนสถานะสวิตช์
+    const baseRenderForm = page.renderForm;
+    page.renderForm = function (fields) {
+        baseRenderForm.call(page, fields);
+        syncHighlightToggle();
+    };
+
+    const baseShowEmptyState = page.showEmptyState;
+    page.showEmptyState = function () {
+        baseShowEmptyState.call(page);
+        syncHighlightToggle();
+    };
+
     page.showPreviewButton = function (show) {
         const btn = document.getElementById('previewBtn');
         if (btn) btn.style.display = show ? 'block' : 'none';

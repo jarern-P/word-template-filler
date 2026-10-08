@@ -481,7 +481,8 @@
                 ));
             }
 
-            edits.push({ start: match.start, end: match.end, text: value });
+            // field ใช้ระบุช่วงที่แทนค่า เพื่อไฮไลต์สีเหลืองเฉพาะช่วงนั้น (ดู applyEdits)
+            edits.push({ start: match.start, end: match.end, text: value, field: match.field });
 
             context.widthDelta += valueWidth - rawWidth;
             context.previousEnd = match.end;
@@ -496,7 +497,8 @@
 
     // แก้ข้อความตามแผน โดยเลื่อน offset ของ edit ถัดไปตามความยาวที่เปลี่ยนไป
     // ต้องเรียงจาก offset น้อยไปมาก (sort แบบ stable จึงรักษาลำดับ edit ที่ offset เท่ากัน)
-    function applyEdits(textNodes, edits) {
+    // ranges = ที่เก็บตำแหน่งสุดท้ายของช่วงที่แทนค่า (ใส่เมื่อติ๊กไฮไลต์สีเหลือง)
+    function applyEdits(textNodes, edits, ranges) {
         let shift = 0;
 
         edits.sort((a, b) => a.start - b.start);
@@ -506,29 +508,192 @@
             const length = edit.end - edit.start;
 
             if (applyEdit(textNodes, start, length, edit.text)) {
+                // start ตรงนี้คือตำแหน่งสุดท้ายในข้อความย่อหน้าแล้ว
+                // (edit ถัดไปจะอยู่ถัดไปในแนวเดียวกัน จึงไม่กระทบช่วงนี้)
+                if (ranges && edit.field !== undefined) {
+                    ranges.push({
+                        start: start,
+                        end: start + edit.text.length
+                    });
+                }
+
                 shift += edit.text.length - length;
             }
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ไฮไลต์สีเหลืองของค่าที่ถูกแทนที่ (w:highlight w:val="yellow")
+    //
+    // ผู้ใช้ติ๊ก "ไฮไลต์ {{}} สีเหลือง" บนหน้ารายงาน → ข้อความที่ถูกแทนที่ค่า
+    // ในไฟล์ .docx ผลลัพธ์จะมีพื้นหลังสีเหลืองตามที่ Word เข้าใจ
+    //
+    // ค่าที่แทนเข้าไปจะอยู่ใน run เดิมกับข้อความรอบ ๆ จึงต้องตัด run
+    // ให้ช่วงที่แทนค่าอยู่ใน run ของตัวเองก่อน แล้วจึงใส่ highlight
+    // (ตัดไม่ได้ เช่น run มี w:tab/w:br ปน → ไฮไลต์ทั้ง run แทน)
+    // ──────────────────────────────────────────────────────────────
+
+    // คัดลอก run เก็บเฉพาะ w:rPr แล้วใส่ข้อความใหม่
+    function cloneRunWithText(doc, run, text) {
+        const copy = run.cloneNode(false);
+        const props = run.getElementsByTagNameNS(W_NS, 'rPr')[0];
+
+        if (props) copy.appendChild(props.cloneNode(true));
+
+        const node = el(doc, 't');
+        setText(node, text);
+        copy.appendChild(node);
+
+        return copy;
+    }
+
+    // ตัด run ที่มี textNodes[index] ออกเป็นสอง run ที่ offset
+    // ตัดได้เฉพาะ run ที่มีแค่ w:rPr + w:t อันนี้ (กัน element อื่นใน run หาย)
+    function splitTextNodeAt(paragraph, index, offset) {
+        const nodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+        const node = nodes[index];
+
+        if (!node) return false;
+
+        const text = node.textContent || '';
+        if (offset <= 0 || offset >= text.length) return false;
+
+        const run = node.parentNode;
+        if (!run || run.localName !== 'r') return false;
+
+        const others = Array.from(run.childNodes).filter(function (child) {
+            if (child.nodeType !== 1) return false;
+            return !(child.localName === 'rPr' ||
+                (child.localName === 't' && child === node));
+        });
+
+        if (others.length > 0) return false;
+
+        const head = text.slice(0, offset);
+        const tail = text.slice(offset);
+
+        setText(node, head);
+        run.parentNode.insertBefore(
+            cloneRunWithText(paragraph.ownerDocument, run, tail),
+            run.nextSibling
+        );
+
+        return true;
+    }
+
+    // ตัด run ตามขอบช่วง [start, end) ให้ช่วงนั้นอยู่ใน w:t ของตัวเอง
+    // คืน true = ตัดครบ / false = มีสิ่งกีดขวาง (ผู้เรียกไฮไลต์แบบเหมาทั้ง run)
+    function isolateRange(paragraph, start, end) {
+        let nodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+        let parts = nodes.map(node => node.textContent || '');
+
+        const from = locateOffset(parts, start);
+        if (!from) return false;
+
+        if (from.offset > 0 &&
+            !splitTextNodeAt(paragraph, from.index, from.offset)) {
+            return false;
+        }
+
+        nodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+        parts = nodes.map(node => node.textContent || '');
+
+        const last = locateOffset(parts, end - 1);
+        if (!last) return false;
+
+        const tail = last.offset + 1;
+
+        if (tail < parts[last.index].length &&
+            !splitTextNodeAt(paragraph, last.index, tail)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    // ใส่ w:highlight w:val="yellow" ลงใน w:rPr ของ run ที่ข้อความนี้อยู่
+    function setRunHighlight(textNode, doc) {
+        let run = textNode.parentNode;
+
+        while (run && run.nodeType === 1 && run.localName !== 'r') {
+            run = run.parentNode;
+        }
+
+        if (!run || run.localName !== 'r') return;
+
+        let props = run.getElementsByTagNameNS(W_NS, 'rPr')[0];
+
+        if (!props) {
+            props = el(doc, 'rPr');
+            run.insertBefore(props, run.firstChild);
+        }
+
+        if (props.getElementsByTagNameNS(W_NS, 'highlight').length > 0) return;
+
+        const node = el(doc, 'highlight');
+        setVal(node, 'val', 'yellow');
+        insertRunProp(props, node);
+    }
+
+    // ไฮไลต์ทุกช่วงที่แทนค่าแล้ว
+    function highlightRanges(paragraph, ranges) {
+        if (!ranges || ranges.length === 0) return;
+
+        const doc = paragraph.ownerDocument;
+
+        ranges.forEach(function (range) {
+            // ค่าว่าง = ไม่มีข้อความให้ไฮไลต์
+            if (!(range.end > range.start)) return;
+
+            const clean = isolateRange(paragraph, range.start, range.end);
+
+            const nodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+            const parts = nodes.map(node => node.textContent || '');
+
+            let position = 0;
+
+            for (let i = 0; i < nodes.length; i++) {
+                const start = position;
+                const end = start + parts[i].length;
+                position = end;
+
+                if (end <= start) continue;
+
+                // ตัดได้ = เฉพาะ w:t ที่อยู่เต็ม ๆ ในช่วง / ตัดไม่ได้ = w:t ที่คาอยู่ในช่วงด้วย
+                const inside = clean
+                    ? (start >= range.start && end <= range.end)
+                    : (start < range.end && end > range.start);
+
+                if (inside) setRunHighlight(nodes[i], doc);
+            }
+        });
+    }
+
     // locked = field ที่ติ๊ก "ล็อกตำแหน่ง" ไว้ในหน้า Template Configuration
-    function replaceInParagraph(paragraph, regex, values, locked, warnings, applied) {
-        const textNodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
-        if (textNodes.length === 0) return;
+    function replaceInParagraph(paragraph, regex, values, locked, warnings, applied, highlight) {
+        if (paragraph.getElementsByTagNameNS(W_NS, 't').length === 0) return;
 
         let iterations = 0;
 
         while (iterations++ < MAX_ITERATIONS_PER_PARAGRAPH) {
+            // อ่านใหม่ทุกรอบ — ถ้ารอบก่อนหน้าไฮไลต์จนตัด run จะได้รายชื่อ node ครบ
+            const textNodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
             const parts = textNodes.map(node => node.textContent || '');
             const fullText = parts.join('');
 
             const matches = findMatches(regex, fullText);
             if (matches.length === 0) return;
 
+            const ranges = highlight ? [] : null;
+
             applyEdits(
                 textNodes,
-                buildEdits(textNodes, parts, fullText, matches, values, locked, warnings, applied)
+                buildEdits(textNodes, parts, fullText, matches, values, locked, warnings, applied),
+                ranges
             );
+
+            // ไฮไลต์หลัง applyEdits จบแล้ว — กลางทางการตัด run จะทำให้ textNodes เก่าใช้ไม่ได้
+            if (ranges) highlightRanges(paragraph, ranges);
         }
 
         console.warn('หยุดแทนค่าใน paragraph หนึ่งเพราะถึงขีดจำกัดรอบ');
@@ -1417,7 +1582,8 @@
     let lastApplied = [];
 
     // tables = { field: { columns, rows, rowSpans } } ของ field ที่เป็น type Table
-    function replaceFields(xml, values, lockedFields, tables) {
+    // highlight = true → ใส่ w:highlight สีเหลืองที่ข้อความซึ่งถูกแทนที่ค่า
+    function replaceFields(xml, values, lockedFields, tables, highlight) {
         lastWarnings = [];
         lastApplied = [];
 
@@ -1467,7 +1633,8 @@
                     scalarValues,
                     locked,
                     lastWarnings,
-                    lastApplied
+                    lastApplied,
+                    highlight === true
                 );
             }
         }

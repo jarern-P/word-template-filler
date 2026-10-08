@@ -1885,6 +1885,19 @@
     // ตัวอย่างสร้างจาก xml ต้นฉบับ (แทน {{field}} เองในหน้าตัวอย่าง) จึงรู้ว่าค่าไหน
     // "ยังไม่ได้กรอก" ซึ่งเป็นสิ่งสำคัญที่สุดที่ต้องเห็นก่อนดาวน์โหลด
     // แต่ยังประมวลผล Replace จริงหนึ่งรอบ เพื่อรายงานผล "ล็อกตำแหน่ง" ให้เห็นก่อนด้วย
+    // สวิตช์ "ไฮไลต์ {{}} สีเหลือง" บนหน้ารายงาน
+    // = ใส่ w:highlight สีเหลืองที่ข้อความที่ถูกแทนที่ค่า ในไฟล์ .docx ผลลัพธ์
+    function fieldHighlightOn() {
+
+        const component = getComponent(currentPage);
+
+        return !!(
+            component &&
+            component.getFieldHighlight &&
+            component.getFieldHighlight()
+        );
+    }
+
     async function onPreview() {
 
         if (
@@ -1923,7 +1936,8 @@
             state.xml,
             values,
             locks,
-            tables
+            tables,
+            fieldHighlightOn()
         );
 
         const notes = [];
@@ -2039,7 +2053,8 @@
                 state.xml,
                 values,
                 locks,
-                collectTables()
+                collectTables(),
+                fieldHighlightOn()
             );
 
         // ล็อกตำแหน่งได้ครบหรือไม่ + ปรับช่องว่างไปเท่าไร แจ้งบนหน้ารายงาน
