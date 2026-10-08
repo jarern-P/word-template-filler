@@ -446,7 +446,12 @@
 
             if (!symbol && !tab) return;
 
-            span.classList.add('layout-special');
+            // span.classList.add('layout-special');
+            if (isTabSpan(span)) {
+                span.classList.add('layout-special', 'layout-tab');
+            } else{
+                span.classList.add('layout-special', 'layout-symbol');
+            }
             span.contentEditable = 'false';
             span.setAttribute('spellcheck', 'false');
 

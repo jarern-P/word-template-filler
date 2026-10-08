@@ -2806,7 +2806,16 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* สัญลักษณ์ (w:sym) และแท็บ (w:tab) ของเอกสาร — แก้ไม่ได้ (ดู decorateSpecials) */
-.layout-preview .layout-special {
+/* .layout-preview .layout-special {
+    cursor: not-allowed;
+} */
+ .layout-preview .layout-tab {
+    display: inline-block;
+    width: 40px;
+    cursor: not-allowed;
+}
+
+.layout-preview .layout-symbol {
     cursor: not-allowed;
 }
 
