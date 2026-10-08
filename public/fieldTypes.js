@@ -253,14 +253,38 @@
             : '';
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Checkbox (ติ๊ก/ไม่ติ๊ก)
+    //
+    // ค่าที่เก็บในฟอร์มและในประวัติเป็น 'true'/'false' เสมอ (ช่องติ๊กต้องกู้
+    // สถานะกลับมาได้ — ดู FormPage.readControlValue / writeControlValue)
+    // แต่ในเอกสารต้องเห็นเป็นเครื่องหมาย ไม่ใช่คำว่า true/false
+    // จึงแปลงเฉพาะตอนเขียนลงเอกสาร: ติ๊ก = •, ไม่ติ๊ก = ☐
+    // ──────────────────────────────────────────────────────────────
+
+    const CHECKBOX_MARKS = { checked: '☑', unchecked: '☐' };
+
+    // ค่าที่นับว่า "ติ๊ก" — ชุดเดียวกับ FormPage.writeControlValue
+    function isCheckedValue(value) {
+        return value === true || value === 'true' || value === '1' || value === 'on';
+    }
+
     // แปลงค่าที่จะเขียนลงเอกสารตาม type
     // - date: ช่องวันที่เป็นข้อความที่จัดรูปแบบไว้แล้ว (เลือกด้วย dropdown ข้างช่อง)
     //         จึงใช้ค่าที่เห็นในช่องตรง ๆ (เห็นแบบไหน ลงเอกสารแบบนั้น)
     // - currency: modes = { <field>: 'number'|'text' } กำหนดว่า field ไหนเขียนเป็นตัวเลข/comma หรือตัวหนังสือ
+    // - checkbox: ติ๊ก =  / ไม่ติ๊ก = ☐ (ค่าที่เก็บในฟอร์มยังเป็น true/false ตามเดิม)
     function formatValue(type, value, modes, field) {
         if (type === 'currency') {
             return formatCurrency(value, modes ? modes[field] : undefined);
         }
+
+        if (type === 'checkbox') {
+            return isCheckedValue(value)
+                ? CHECKBOX_MARKS.checked
+                : CHECKBOX_MARKS.unchecked;
+        }
+
         return value;
     }
 
@@ -1091,6 +1115,30 @@
         return wrapper;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Checkbox (ติ๊ก/ไม่ติ๊ก)
+    //
+    // <input type="checkbox"> แสดง placeholder ไม่ได้ (ไม่มี UI ให้)
+    // จึงแสดงข้อความ placeholder เดียวกับ type อื่นเป็นข้อความกำกับข้างช่อง
+    // (ข้อความที่ตั้งไว้ที่หน้า Template Configuration — ดู placeholderText)
+    // ──────────────────────────────────────────────────────────────
+    function createCheckboxControl(field, options) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-control checkbox-field';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.dataset.field = field;
+
+        const hint = document.createElement('span');
+        hint.className = 'checkbox-hint';
+        hint.textContent = placeholderText(field, options, '');
+
+        wrapper.appendChild(input);
+        wrapper.appendChild(hint);
+        return wrapper;
+    }
+
     // สร้าง control ของหน้ารายงานตาม type ที่ตั้งไว้
     // options.lookup = true → ช่องข้อความธรรมดาได้ปุ่มค้นหา Master Data
     function createFieldControl(value, field, options) {
@@ -1119,12 +1167,14 @@
             return textarea;
         }
 
+        if (type.input === 'checkbox') {
+            return createCheckboxControl(field, opts);
+        }
+
         const input = document.createElement('input');
         input.type = type.input;
         input.dataset.field = field;
-        if (type.input !== 'checkbox') {
-            input.placeholder = placeholderText(field, opts, '');
-        }
+        input.placeholder = placeholderText(field, opts, '');
 
         if (type.input === 'text' && opts.lookup) {
             return wrapWithLookup(input, field);
