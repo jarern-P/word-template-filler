@@ -1196,6 +1196,20 @@ button.danger:hover {
     min-width: 0;
 }
 
+/* checkbox — ช่องติ๊ก + ข้อความ placeholder กำกับข้าง ๆ
+   (input type=checkbox แสดง placeholder เองไม่ได้ — ดู createCheckboxControl)
+   ใช้สีเดียวกับ placeholder ของช่องอื่น เพื่อให้อ่านเป็นข้อความตัวอย่าง */
+.checkbox-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+.checkbox-field .checkbox-hint {
+    font-size: 14px;
+    color: var(--ink-faint);
+}
+
 .lookup-btn,
 .date-format-btn {
     display: inline-flex;
