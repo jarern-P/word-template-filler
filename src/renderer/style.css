@@ -2795,9 +2795,19 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* กล่องข้อความ — ยกเว้นเดียวที่แยกเป็นช่องของตัวเอง (1 กล่อง = 1 ช่อง) */
+/* ย้าย .layout-text-box ให้เค้าโครง (row) ตรงกับโวลุ่ม .docx-wrapper/
+   .section.docx และป้องกันไม่ให้กล่องนี้ยื่นเกินโบล็อกเนื้อหา */
 .layout-preview .layout-text-box {
     outline: 1px dashed var(--pink-300);
     outline-offset: 2px;
+    text-indent: 0;
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    overscroll-behavior: contain;
 }
 
 .layout-preview .layout-text-box[contenteditable="true"]:hover,
