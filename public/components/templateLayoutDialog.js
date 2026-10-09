@@ -27,6 +27,8 @@
 // - ตัวเรนเดอร์วาดเป็นอักขระ Private Use Area / \u2003 ซึ่งไม่มีอักขระจริงในเอกสาร
 //   จึงล็อกชิ้นเหล่านี้ไม่ให้แก้หรือลบ และตัดอักขระเหล่านั้นออกตอนเขียนข้อความกลับ
 //   (ถ้าเขียนกลับเป็นตัวอักษรจริง เครื่องหมายถูก/กล่องสี่เหลี่ยมจะเพี้ยนและซ้อนกัน)
+// - ความกว้างของแท็บไม่ใช่ค่าตายตัว แต่คำนวณจาก tab stop ของแม่แบบ
+//   (ดูหัวข้อ "ความกว้างแท็บ" ใต้ decorateSpecials)
 //
 // รูปทรง (shape):
 // - Word เก็บรูปทรงไว้สองชุดใน mc:AlternateContent (Choice = wps:wsp ที่ Word ใช้,
@@ -106,6 +108,9 @@
 
     // 1 twip = 1/1440 นิ้ว, 1 px = 1/96 นิ้ว → 1440 / 96 = 15 twips ต่อ px
     const TWIPS_PER_PX = 15;
+
+    // ค่าเริ่มต้นของ default tab stop เมื่อไฟล์ไม่ได้ระบุ (0.5 นิ้ว = 720 twip)
+    const DEFAULT_TAB_STOP_TWIPS = 720;
 
     // ระยะชดเชยแนวตั้ง (px) ของวัตถุที่อ้างจาก "ย่อหน้า/บรรทัด"
     //
@@ -317,6 +322,12 @@ async function renderDocx(bytes) {
     // ไม่เอาผลของรอบเก่ามาใช้
     if (token !== renderToken) return;
 
+    // ค่า tab stop ของแม่แบบ (default tab stop จาก word/settings.xml
+    // + tab stop ของ style จาก word/styles.xml) — ใช้ตอนคำนวณความกว้างแท็บ
+    current.tabSettings = await loadTabSettings(current.bytes);
+
+    if (token !== renderToken) return;
+
     // ตั้ง zoom และจัดตำแหน่ง Shape / TextBox / Table
     applyZoom();
 
@@ -335,6 +346,9 @@ async function renderDocx(bytes) {
 
     // จับคู่ paragraph + เตรียม contentEditable
     prepareEditing();
+
+    // ความกว้างแท็บตาม tab stop ของแม่แบบ (ต้องทำหลัง decorateSpecials)
+    applyTabStops();
 
     // สำคัญ:
     // ต้องเรียกหลัง docx-preview render เสร็จและหลัง prepareEditing()
@@ -484,6 +498,421 @@ async function renderDocx(bytes) {
                     ' รหัส ' + symbol.char.toString(16).toUpperCase() +
                     ') — แก้จากที่นี่ไม่ได้'
                 : 'แท็บ (ระยะจัดแนวของเอกสาร) — แก้จากที่นี่ไม่ได้';
+        });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ความกว้างแท็บ (w:tab) — กำหนดจาก tab stop ของแม่แบบ
+    //
+    // เดิมกำหนดความกว้างตายตัว (40px) ทำให้ข้อความหลังแท็บเพี้ยนจากที่ Word
+    // แสดง จึงอ่าน tab stop จากไฟล์ต้นฉบับ แล้วตั้งความกว้างให้แท็บจบพอดี
+    // ที่แท็บถัดไปตามที่ Word คำนวณ:
+    //   - w:tabs ของย่อหน้า (word/document.xml) และ w:tabs ของ style
+    //     ที่ย่อหน้าใช้ (word/styles.xml ถ่ายทอดผ่าน w:basedOn)
+    //     — ตาม Word tab stop ของ style ถูกสืบทอดมารวมกับของย่อหน้า
+    //       และ w:val="clear" ใช้ลบ tab stop ที่สืบทอดมา
+    //   - default tab stop (word/settings.xml ค่าเริ่มต้น 720 twip = 0.5 นิ้ว)
+    //     แท็บเริ่มต้นที่อยู่ทางซ้ายของ tab stop ที่ตั้งเองถูกล้างไป (ตาม Word)
+    //
+    // ตำแหน่ง tab stop วัดจาก “ขอบซ้ายของเนื้อหาหน้ากระดาษ” (เหมือน w:ind)
+    // จึงไม่ต้องปรับอะไรเพิ่มเมื่อย่อหน้ามีเยื้องซ้าย แล้วตั้งความกว้างของ
+    // <span class="layout-tab"> ให้จบพอดีที่ tab stop — วัดซ้ำทุกครั้งที่มีการ
+    // พิมพ์/ซูม/รอฟอนต์โหลด (เรียกผ่าน fixRenderedLayout)
+    // ──────────────────────────────────────────────────────────────
+
+    // อ่าน attribute แบบมี namespace (fallback ให้ไฟล์ที่ไม่ประกาศ xmlns:w)
+    function wAttr(node, name) {
+        if (!node || !node.getAttribute) return null;
+
+        let value = node.getAttributeNS ? node.getAttributeNS(W_NS, name) : null;
+
+        if (value == null || value === '') value = node.getAttribute('w:' + name);
+        if (value == null || value === '') value = node.getAttribute(name);
+
+        return value == null || value === '' ? null : value;
+    }
+
+    // เก็บ tab stop จาก <w:tabs> เข้า target = { stops, clears } (ตำแหน่งเป็น px)
+    function collectTabs(tabsElement, target) {
+        if (!tabsElement) return;
+
+        Array.from(tabsElement.children).forEach(function (tab) {
+            if (tab.localName !== 'tab') return;
+
+            const raw = wAttr(tab, 'pos');
+
+            if (raw == null || !isFinite(Number(raw))) return;
+
+            // twip → px (15 twip ต่อ px)
+            const pos = Number(raw) / TWIPS_PER_PX;
+            const value = wAttr(tab, 'val') || 'left';
+
+            if (value === 'clear') {
+                target.clears.push(pos);
+                return;
+            }
+
+            target.stops.push({
+                pos: pos,
+                type: value === 'center' || value === 'right' ? value : 'left',
+                leader: wAttr(tab, 'leader') || ''
+            });
+        });
+    }
+
+    // word/settings.xml → default tab stop (twip)
+    function parseDefaultTabStop(xml) {
+        const doc = xml ? parseXml(xml) : null;
+
+        if (!doc) return DEFAULT_TAB_STOP_TWIPS;
+
+        const node = doc.getElementsByTagNameNS(W_NS, 'defaultTabStop')[0];
+        const value = node ? Number(wAttr(node, 'val')) : 0;
+
+        return value > 0 ? value : DEFAULT_TAB_STOP_TWIPS;
+    }
+
+    // word/styles.xml → Map<styleId, { basedOn, stops, clears }>
+    // (tab stop ของ style ถูกย่อหน้าสืบทอดผ่าน w:basedOn แล้วรวมกับของย่อหน้า)
+    function parseStyleTabs(xml) {
+        const map = new Map();
+        const doc = xml ? parseXml(xml) : null;
+
+        if (!doc) return map;
+
+        Array.from(doc.getElementsByTagNameNS(W_NS, 'style')).forEach(function (style) {
+            const id = wAttr(style, 'styleId');
+
+            if (!id) return;
+
+            const pPr = elementChild(style, 'pPr');
+            const tabs = pPr ? elementChild(pPr, 'tabs') : null;
+            const basedOn = elementChild(style, 'basedOn');
+            const target = { stops: [], clears: [] };
+
+            collectTabs(tabs, target);
+
+            map.set(id, {
+                basedOn: basedOn ? wAttr(basedOn, 'val') : null,
+                stops: target.stops,
+                clears: target.clears
+            });
+        });
+
+        return map;
+    }
+
+    // อ่านค่าแท็บจากไฟล์ .docx ครั้งเดียวต่อการเปิด (ไม่มี JSZip = ใช้ค่ามาตรฐาน)
+    async function loadTabSettings(bytes) {
+        const settings = {
+            defaultTabStop: DEFAULT_TAB_STOP_TWIPS,
+            styles: new Map()
+        };
+
+        if (!bytes || typeof JSZip === 'undefined') return settings;
+
+        try {
+            const zip = await JSZip.loadAsync(bytes);
+            const settingsFile = zip.file('word/settings.xml');
+            const stylesFile = zip.file('word/styles.xml');
+
+            if (settingsFile) {
+                settings.defaultTabStop = parseDefaultTabStop(
+                    await settingsFile.async('string')
+                );
+            }
+
+            if (stylesFile) {
+                settings.styles = parseStyleTabs(await stylesFile.async('string'));
+            }
+        } catch (error) {
+            console.warn('อ่านค่า tab stop จากไฟล์ไม่ได้ (ใช้ค่ามาตรฐานแทน)', error);
+        }
+
+        return settings;
+    }
+
+    // <w:p> ทั้งเอกสารเรียงตามลำดับ — ตรงกับ listParagraphTexts
+    // จึงใช้เทียบกับ pair.index ของย่อหน้าที่เรนเดอร์แล้วได้
+    function paragraphNodes() {
+        if (!current) return [];
+
+        if (current.paragraphXml === current.xml && current.xmlParagraphs) {
+            return current.xmlParagraphs;
+        }
+
+        const doc = current.xml ? parseXml(current.xml) : null;
+
+        current.xmlParagraphs = doc
+            ? Array.from(doc.getElementsByTagNameNS(W_NS, 'p'))
+            : [];
+        current.paragraphXml = current.xml;
+
+        return current.xmlParagraphs;
+    }
+
+    // tab stop ของ style ที่ย่อหน้าใช้ รวมทั้งสายถ่ายทอด w:basedOn
+    function styleTabTarget(styleId, target, settings) {
+        const styles = settings && settings.styles;
+
+        if (!styleId || !styles || typeof styles.get !== 'function') return;
+
+        let id = styleId;
+        let depth = 0;
+
+        while (id && depth++ < 10) {
+            const style = styles.get(id);
+
+            if (!style) break;
+
+            style.stops.forEach(function (stop) {
+                target.stops.push(stop);
+            });
+            style.clears.forEach(function (pos) {
+                target.clears.push(pos);
+            });
+
+            id = style.basedOn;
+        }
+    }
+
+    // tab stop ที่ย่อหน้าในไฟล์ต้นฉบับกำหนดไว้ (ย่อหน้า + style ที่ใช้)
+    function paragraphTabTarget(xmlParagraph, settings) {
+        const target = { stops: [], clears: [] };
+
+        if (!xmlParagraph) return target;
+
+        const pPr = elementChild(xmlParagraph, 'pPr');
+        const pStyle = pPr ? elementChild(pPr, 'pStyle') : null;
+
+        styleTabTarget(pStyle ? wAttr(pStyle, 'val') : null, target, settings);
+        collectTabs(pPr ? elementChild(pPr, 'tabs') : null, target);
+
+        return target;
+    }
+
+    function isCleared(clears, pos) {
+        for (let i = 0; i < clears.length; i++) {
+            if (Math.abs(clears[i] - pos) < 1) return true;
+        }
+
+        return false;
+    }
+
+    // รายการ tab stop ที่มีผลจริงของย่อหน้า (px จากขอบซ้ายของเนื้อหาหน้า):
+    //   = tab stop ที่ตั้งเอง (ย่อหน้า + style) 
+    //     + แท็บเริ่มต้นที่เหลืออยู่ทางขวาของ tab stop ที่ตั้งเองตัวสุดท้าย
+    //       (Word ล้างแท็บเริ่มต้นทางซ้ายของ tab stop ที่ตั้งเอง)
+    function tabStopList(target, stepPx, maxPx) {
+        const stops = [];
+
+        target.stops.forEach(function (stop) {
+            if (!(stop.pos >= 0) || isCleared(target.clears, stop.pos)) return;
+
+            const duplicated = stops.some(function (other) {
+                return Math.abs(other.pos - stop.pos) < 1;
+            });
+
+            if (!duplicated) stops.push(stop);
+        });
+
+        stops.sort(function (a, b) {
+            return a.pos - b.pos;
+        });
+
+        const lastExplicit = stops.length ? stops[stops.length - 1].pos : 0;
+
+        if (stepPx > 0) {
+            for (
+                let k = Math.floor(lastExplicit / stepPx) + 1;
+                k * stepPx <= maxPx + stepPx;
+                k++
+            ) {
+                const pos = k * stepPx;
+
+                if (isCleared(target.clears, pos)) continue;
+
+                stops.push({ pos: pos, type: 'left', leader: '' });
+            }
+        }
+
+        return stops;
+    }
+
+    // ความกว้างของข้อความหลังแท็บ (จนถึงแท็บถัดไป หรือจบย่อหน้า)
+    // — ใช้กับ tab แบบ center / right ที่ต้องจัดข้อความหลังแท็บด้วย
+    function segmentWidth(span, nextSpan, paragraph, scale) {
+        try {
+            const range = document.createRange();
+
+            range.setStartAfter(span);
+            if (nextSpan) {
+                range.setEndBefore(nextSpan);
+            } else {
+                range.setEnd(paragraph, paragraph.childNodes.length);
+            }
+
+            const rects = range.getClientRects();
+            if (!rects.length) return 0;
+
+            // เอาเฉพาะบรรทัดแรกที่แท็บนั้นอยู่
+            return rects[0].width / scale;
+        } catch (error) {
+            return 0;
+        }
+    }
+
+    // วาดจุดนำ (w:leader) ของแท็บ — ใช้ background เพื่อไม่ให้กระทบขนาดกล่อง
+    function applyLeader(span, leader) {
+        span.classList.toggle('leader-dot', leader === 'dot' || leader === 'middleDot');
+        span.classList.toggle('leader-hyphen', leader === 'hyphen');
+        span.classList.toggle('leader-heavy', leader === 'heavy' || leader === 'underscore');
+    }
+
+    // ตั้งความกว้างของแท็บทุกอันในย่อหน้าหนึ่ง ให้จบพอดีที่ tab stop ถัดไป
+    function sizeParagraphTabs(paragraph, tabs, scale, stepPx, xmlParagraphs, settings) {
+        const rect = paragraph.getBoundingClientRect();
+        const foreign = paragraph.closest('foreignObject');
+        const section = paragraph.closest('section.docx');
+
+        // จุดตั้งต้นของ tab stop = ขอบซ้ายของเนื้อหาหน้า (ตาม w:pgMar)
+        // กล่องข้อความ (foreignObject) มีพื้นที่ของตัวเอง จึงใช้ขอบกล่องแทน
+        let originScreen;
+
+        if (foreign) {
+            originScreen = foreign.getBoundingClientRect().left;
+        } else if (section) {
+            const sectionRect = section.getBoundingClientRect();
+            const sectionStyle = window.getComputedStyle(section);
+            const inset =
+                (parseFloat(sectionStyle.borderLeftWidth) || 0) +
+                (parseFloat(sectionStyle.paddingLeft) || 0);
+
+            // getBoundingClientRect ถูก zoom คูณ แต่ computed style ไม่ถูกคูณ
+            originScreen = sectionRect.left + inset * scale;
+        } else {
+            originScreen = rect.left;
+        }
+
+        // แท็บขยายได้ไม่เกินขอบขวาของย่อหน้า (ในตาราง = ขอบขวาของเซลล์)
+        const limitScreen = rect.right;
+        const maxPx = (limitScreen - originScreen) / scale;
+
+        if (!(maxPx > 0) || !(stepPx > 0)) return;
+
+        const pair = current.pairs.get(paragraph);
+        const xmlParagraph = pair ? xmlParagraphs[pair.index] : null;
+        const target = paragraphTabTarget(xmlParagraph, settings);
+        const stops = tabStopList(target, stepPx, maxPx);
+
+        if (!stops.length) return;
+
+        // รอบที่ 1 คำนวณทุกแท็บ / รอบที่ 2 ปรับซ้ำ — ย่อหน้าที่จัดกลาง/ขวา
+        // พอความกว้างเปลี่ยน บรรทัดจะขยับตาม ทำให้ตำแหน่งแท็บเดิมเพี้ยน
+        for (let pass = 0; pass < 2; pass++) {
+            tabs.forEach(function (span, index) {
+                const spanRect = span.getBoundingClientRect();
+
+                // แท็บที่อยู่ชิดขอบซ้ายของหน้าพอดี ค่าจะติดลบเล็กน้อย
+                // จากคลาดเคลื่อนของเลขทศนิยม — คิดเป็น 0 (ส่วน NaN ให้ข้ามไว้ล่าง)
+                const x = Math.max(0, (spanRect.left - originScreen) / scale);
+
+                if (!(x >= 0)) return;
+
+                let start = -1;
+                for (let i = 0; i < stops.length; i++) {
+                    if (stops[i].pos > x + 0.5) {
+                        start = i;
+                        break;
+                    }
+                }
+
+                if (start < 0) start = stops.length - 1;
+
+                const limit = Math.max(0, (limitScreen - spanRect.left) / scale);
+                let segment = -1;
+                let width = -1;
+                let chosen = stops[start];
+
+                for (let i = start; i < stops.length; i++) {
+                    const stop = stops[i];
+                    let value;
+
+                    if (stop.type === 'center' || stop.type === 'right') {
+                        if (segment < 0) {
+                            segment = segmentWidth(span, tabs[index + 1], paragraph, scale);
+                        }
+                        value = stop.type === 'center'
+                            ? stop.pos - segment / 2 - x
+                            : stop.pos - segment - x;
+                    } else {
+                        value = stop.pos - x;
+                    }
+
+                    // แท็บที่ได้ความกว้างติดลบ = เกินขอบ ลองแท็บถัดไปแทน
+                    if (value >= -0.5) {
+                        width = Math.min(value, limit);
+                        chosen = stop;
+                        break;
+                    }
+                }
+
+                if (width < 0) width = 0;
+
+                const rounded = Math.round(width * 100) / 100;
+                const currentWidth = parseFloat(span.style.width) || 0;
+
+                if (Math.abs(currentWidth - rounded) > 0.25) {
+                    span.style.width = rounded + 'px';
+                }
+
+                applyLeader(span, chosen.leader || '');
+            });
+        }
+    }
+
+    // แท็บถูกครอบด้วย <span> ของ run อีกชั้น (decorateSpecials ใส่คลาสให้ทั้งคู่)
+    // — ตั้งความกว้างเฉพาะแท็บตัวในสุด ตัวครอบจะขยายตามเนื้อหาเอง
+    function wrapsTab(span) {
+        return Array.from(span.querySelectorAll('span')).some(function (inner) {
+            return inner.classList.contains('layout-tab') || isTabSpan(inner);
+        });
+    }
+
+    // ความกว้างของแท็บทุกอันในเอกสาร — คำนวณจาก tab stop ของแม่แบบ
+    function applyTabStops() {
+        if (!host || !current) return;
+
+        const wrapper = host.querySelector('.docx-wrapper');
+        const scale = wrapper ? Number(wrapper.style.zoom) || 1 : 1;
+        const settings = current.tabSettings || {
+            defaultTabStop: DEFAULT_TAB_STOP_TWIPS,
+            styles: new Map()
+        };
+        const stepPx =
+            (Number(settings.defaultTabStop) || DEFAULT_TAB_STOP_TWIPS) / TWIPS_PER_PX;
+
+        // กวาด span ทั้งเอกสารครั้งเดียว แล้วจับกลุ่มตามย่อหน้าที่มันอยู่
+        const groups = new Map();
+        host.querySelectorAll('article span').forEach(function (span) {
+            if (!span.classList.contains('layout-tab') && !isTabSpan(span)) return;
+            if (wrapsTab(span)) return;
+
+            const paragraph = span.closest('p');
+
+            if (!paragraph || !host.contains(paragraph)) return;
+
+            if (!groups.has(paragraph)) groups.set(paragraph, []);
+
+            groups.get(paragraph).push(span);
+        });
+
+        if (!groups.size) return;
+
+        const xmlParagraphs = paragraphNodes();
+
+        groups.forEach(function (tabs, paragraph) {
+            sizeParagraphTabs(paragraph, tabs, scale, stepPx, xmlParagraphs, settings);
         });
     }
 
@@ -1841,6 +2270,10 @@ async function renderDocx(bytes) {
     // แก้ตำแหน่งวัตถุที่ docx-preview วางไม่ตรงกับ Word
     function fixRenderedLayout() {
         if (!current || !current.xml || !host) return;
+
+        // ความกว้างแท็บต้องตรง tab stop ก่อนจัดตำแหน่งวัตถุ
+        // (ความกว้างแท็บเปลี่ยนการตัดบรรทัด = จุดอ้างอิงของรูป/กล่อง/ตารางเปลี่ยนด้วย)
+        applyTabStops();
 
         const anchors = shapeAnchors(current.xml);
         const containers = shapeContainers();

@@ -2858,10 +2858,39 @@ body.table-ratio-dragging .table-ratio-handle {
 /* .layout-preview .layout-special {
     cursor: not-allowed;
 } */
- .layout-preview .layout-tab {
+
+/* แท็บ (w:tab) — ความกว้างไม่ใช่ค่าตายตัวอีกต่อไป
+   แต่ถูกตั้งจาก tab stop ของแม่แบบใน applyTabStops() ของ templateLayoutDialog.js
+   ให้จบพอดีที่แท็บถัดไปตามที่ Word คำนวณ (ตำแหน่งวัดจากขอบซ้ายของเนื้อหาหน้า) */
+.layout-preview .layout-tab {
     display: inline-block;
-    width: 40px;
     cursor: not-allowed;
+}
+
+/* จุดนำ (w:leader) ของแท็บ — วาดด้วย background เพื่อไม่ให้กระทบขนาดกล่อง */
+.layout-preview .layout-tab.leader-dot {
+    background-image: radial-gradient(currentColor 1px, transparent 1.4px);
+    background-size: 4px 4px;
+    background-position: left bottom;
+    background-repeat: repeat-x;
+}
+
+.layout-preview .layout-tab.leader-hyphen {
+    background-image: repeating-linear-gradient(
+        to right,
+        currentColor 0 4px,
+        transparent 4px 8px
+    );
+    background-size: 100% 1px;
+    background-position: left calc(100% - 4px);
+    background-repeat: no-repeat;
+}
+
+.layout-preview .layout-tab.leader-heavy {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 100% 1px;
+    background-position: left calc(100% - 4px);
+    background-repeat: no-repeat;
 }
 
 .layout-preview .layout-symbol {
