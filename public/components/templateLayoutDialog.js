@@ -154,7 +154,7 @@
         '                <option value="2">200%</option>',
         '            </select>',
         '        </label>',
-        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
+        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
         '        <span id="layoutStatus" class="layout-status"></span>',
         '        <div class="layout-actions">',
         '            <button type="button" id="layoutResetBtn" class="plain">ย้อนกลับ</button>',
@@ -217,6 +217,9 @@
 
         if (current) current.pairs = new Map();
 
+        // เมนู field ที่เปิดค้างอยู่ต้องปิดพร้อมหน้าต่าง
+        closeFieldMenu();
+
         // ลบไฮไลต์ {{}} ออกจากทะเบียนของเอกสาร (range อ้าง node ที่จะถูกล้าง)
         clearFieldHighlight();
     }
@@ -265,6 +268,9 @@ async function renderDocx(bytes) {
     if (bytes) {
         current.bytes = bytes;
     }
+
+    // ปิดเมนู field ก่อน — range ที่จำไว้ตอนเปิดเมนูอ้าง TextNode ที่กำลังจะถูกลบ
+    closeFieldMenu();
 
     // ล้าง highlight เดิมก่อนล้าง DOM
     // เพราะ Range เดิมอ้าง TextNode ที่กำลังจะถูกลบ
@@ -2325,6 +2331,9 @@ async function renderDocx(bytes) {
             node.contentEditable = 'false';
         });
 
+        // ปิดการแก้ข้อความ = เมนู field ที่เปิดค้างอยู่ต้องปิดด้วย
+        if (!editable) closeFieldMenu();
+
         refreshFormatButtons();
     }
 
@@ -2679,6 +2688,426 @@ function scheduleFieldHighlight() {
         updateDirty();
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // แทรก {{field}} ที่ตำแหน่งเคอร์เซอร์ (Ctrl+Space)
+    //
+    // รายการที่ให้เลือก = field ที่มีอยู่ในแม่แบบนี้ — อ่านจากไฟล์ (xml)
+    // รวมกับที่เพิ่งพิมพ์ค้างไว้บนจอ (ยังไม่บันทึก) ถ้าพิมพ์ชื่อที่ยังไม่มี
+    // ในแม่แบบ จะเสนอ "แทรก {{ชื่อ}} ใหม่" เป็นรายการสุดท้าย
+    //
+    // popup ไม่มีช่องกรอกของตัวเอง — โฟกัสอยู่ที่เอกสารตลอด เคอร์เซอร์จึงไม่หาย
+    // พิมพ์เพื่อกรองได้เหมือน suggestMenu (ตัวอักษรที่พิมพ์ไม่หลุดลงเอกสาร)
+    // ──────────────────────────────────────────────────────────────
+
+    const FIELD_MENU_GAP = 6;        // ระยะห่างจากเคอร์เซอร์
+    const FIELD_MENU_MARGIN = 12;    // ระยะกันขอบจอ
+    const FIELD_MENU_WIDTH = 320;    // ความกว้างของ popup
+
+    let fieldMenu = null;       // popup (สร้างครั้งเดียวตอนใช้ครั้งแรก)
+    let fieldQueryEl = null;    // บรรทัดบอกคำที่ใช้กรอง
+    let fieldList = null;       // <ul> ของรายการ
+    let fieldItems = [];        // รายการที่แสดงอยู่
+    let fieldIndex = -1;        // รายการที่คีย์บอร์ดชี้อยู่
+    let fieldQuery = '';        // ข้อความที่พิมพ์เพื่อกรอง
+    let fieldRange = null;      // ตำแหน่งเคอร์เซอร์ตอนเปิดเมนู (ใช้แทรก)
+    let fieldParagraph = null;  // ย่อหน้าที่เปิดเมนูอยู่ (ใช้ตอนแทรก)
+
+    // ชื่อ field ทั้งหมดในแม่แบบนี้ — จากไฟล์ + ที่แก้ค้างอยู่บนจอ
+    // (ใช้ตัวอ่านเดียวกับตอนบันทึก จึงตรงกับ field ที่ระบบรู้จัก)
+    function documentFields() {
+        const names = [];
+
+        function add(name) {
+            if (name && names.indexOf(name) === -1) names.push(name);
+        }
+
+        if (current && current.xml && scope.Extract) {
+            scope.Extract.extractFields(current.xml).forEach(add);
+        }
+
+        if (host) {
+            const regex = new RegExp(FIELD_PATTERN.source, 'g');
+            const text = host.textContent || '';
+            let match;
+
+            while ((match = regex.exec(text)) !== null) add(match[1]);
+        }
+
+        return names.sort(function (a, b) {
+            return a.localeCompare(b, 'th');
+        });
+    }
+
+    // ชื่อที่พิมพ์มาใช้เป็นชื่อ field ได้หรือไม่ (ชุดเดียวกับ FIELD_PATTERN)
+    function isFieldName(name) {
+        return /^[a-zA-Z0-9_ก-๙]+$/.test(String(name || ''));
+    }
+
+    // รายการที่จะแสดง — field ที่ตรงกับคำที่พิมพ์กรอง
+    function fieldCandidates() {
+        const lower = fieldQuery.toLowerCase();
+        const names = documentFields();
+
+        const items = names
+            .filter(function (name) {
+                return !lower || name.toLowerCase().indexOf(lower) !== -1;
+            })
+            .map(function (name) {
+                return { name: name, kind: 'field' };
+            });
+
+        // พิมพ์ชื่อที่ยังไม่มีในแม่แบบ = เสนอ "แทรก {{ชื่อ}} ใหม่"
+        if (
+            fieldQuery &&
+            names.indexOf(fieldQuery) === -1 &&
+            isFieldName(fieldQuery)
+        ) {
+            items.push({ name: fieldQuery, kind: 'new' });
+        }
+
+        return items;
+    }
+
+    function buildFieldMenu() {
+        if (fieldMenu) return;
+
+        fieldMenu = document.createElement('div');
+        fieldMenu.className = 'field-menu';
+        fieldMenu.id = 'layoutFieldMenu';
+        fieldMenu.hidden = true;
+        fieldMenu.innerHTML =
+            '<p class="field-menu-query"></p>' +
+            '<ul class="field-menu-list" role="listbox"></ul>';
+
+        document.body.appendChild(fieldMenu);
+
+        fieldQueryEl = fieldMenu.querySelector('.field-menu-query');
+        fieldList = fieldMenu.querySelector('.field-menu-list');
+
+        // mousedown ก่อน click: กันไม่ให้ caret ในเอกสารหาย
+        // (คลิกรายการได้โดยไม่เสียตำแหน่งที่จะแทรก)
+        fieldList.addEventListener('mousedown', function (event) {
+            event.preventDefault();
+        });
+
+        fieldList.addEventListener('click', function (event) {
+            const button = event.target.closest('.field-menu-item');
+
+            if (!button) return;
+
+            acceptFieldItem(Number(button.dataset.index));
+        });
+
+        window.addEventListener('resize', function () {
+            if (fieldMenu && !fieldMenu.hidden) positionFieldMenu();
+        });
+    }
+
+    function renderFieldMenu() {
+        fieldQueryEl.textContent = fieldQuery
+            ? 'กรอง: ' + fieldQuery
+            : 'field ในแม่แบบนี้ (พิมพ์เพื่อกรอง · Enter = แทรก)';
+
+        fieldList.innerHTML = '';
+
+        if (fieldItems.length === 0) {
+            const empty = document.createElement('li');
+
+            empty.className = 'field-menu-empty';
+            empty.textContent = 'ไม่พบ field ที่ตรงกับ "' + fieldQuery + '"';
+
+            fieldList.appendChild(empty);
+            return;
+        }
+
+        // textContent ทุกจุด เพราะชื่อ field มาจากผู้ใช้ (กัน XSS)
+        fieldItems.forEach(function (item, index) {
+            const row = document.createElement('li');
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'field-menu-item';
+            button.dataset.index = String(index);
+
+            if (index === fieldIndex) {
+                button.className += ' selected';
+            }
+
+            const name = document.createElement('span');
+            name.className = 'field-menu-name';
+            name.textContent = '{{' + item.name + '}}';
+
+            button.appendChild(name);
+
+            if (item.kind === 'new') {
+                button.className += ' new';
+
+                const tag = document.createElement('span');
+                tag.className = 'field-menu-tag';
+                tag.textContent = 'field ใหม่';
+
+                button.appendChild(tag);
+            }
+
+            row.appendChild(button);
+            fieldList.appendChild(row);
+        });
+
+        const marked = fieldList.querySelector('.field-menu-item.selected');
+
+        if (marked && marked.scrollIntoView) {
+            marked.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    // กล่องของเคอร์เซอร์ — ใช้จัดตำแหน่ง popup
+    // (ย่อหน้าที่ถูกต้องเป็น fallback เมื่อเบราว์เซอร์ไม่บอกกล่องของ caret)
+    function caretBox() {
+        const selection = window.getSelection();
+
+        if (selection && selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0).cloneRange();
+            const rects = range.getClientRects();
+
+            if (rects && rects.length > 0) return rects[0];
+
+            const rect = range.getBoundingClientRect();
+
+            if (rect && (rect.width > 0 || rect.height > 0 || rect.top > 0)) {
+                return rect;
+            }
+        }
+
+        const paragraph = fieldParagraph || activeParagraph();
+
+        return paragraph ? paragraph.getBoundingClientRect() : null;
+    }
+
+    // ตำแหน่งของ popup = ใต้เคอร์เซอร์ (ล้นขอบล่างก็พลิกขึ้นด้านบน)
+    function positionFieldMenu() {
+        const box = caretBox();
+
+        if (!fieldMenu || !box) return;
+
+        fieldMenu.style.visibility = 'hidden';
+        fieldMenu.style.left = '0px';
+        fieldMenu.style.top = '0px';
+
+        const width = Math.min(
+            FIELD_MENU_WIDTH,
+            window.innerWidth - FIELD_MENU_MARGIN * 2
+        );
+
+        const height = fieldMenu.offsetHeight;
+
+        let left = box.left;
+
+        if (left + width > window.innerWidth - FIELD_MENU_MARGIN) {
+            left = window.innerWidth - FIELD_MENU_MARGIN - width;
+        }
+
+        if (left < FIELD_MENU_MARGIN) left = FIELD_MENU_MARGIN;
+
+        let top = box.bottom + FIELD_MENU_GAP;
+
+        if (top + height > window.innerHeight - FIELD_MENU_MARGIN) {
+            top = box.top - height - FIELD_MENU_GAP;
+        }
+
+        if (top < FIELD_MENU_MARGIN) top = FIELD_MENU_MARGIN;
+
+        fieldMenu.style.width = width + 'px';
+        fieldMenu.style.left = left + 'px';
+        fieldMenu.style.top = top + 'px';
+        fieldMenu.style.visibility = 'visible';
+    }
+
+    function fieldMenuOpen() {
+        return !!(fieldMenu && !fieldMenu.hidden);
+    }
+
+    function closeFieldMenu() {
+        if (fieldMenu) fieldMenu.hidden = true;
+
+        fieldItems = [];
+        fieldIndex = -1;
+        fieldQuery = '';
+        fieldRange = null;
+        fieldParagraph = null;
+    }
+
+    // สร้างรายการใหม่ตามคำที่กรอง แล้ววาด + ยึดตำแหน่งให้ตรงกับเคอร์เซอร์
+    function refreshFieldMenu() {
+        fieldItems = fieldCandidates();
+
+        // ชี้รายการแรกไว้เลย Enter/Tab จึงแทรกได้ทันที
+        fieldIndex = fieldItems.length > 0 ? 0 : -1;
+
+        renderFieldMenu();
+
+        fieldMenu.hidden = false;
+        positionFieldMenu();
+    }
+
+    function openFieldMenu() {
+        const selection = window.getSelection();
+        const paragraph = activeParagraph();
+
+        if (!paragraph || !selection || selection.rangeCount === 0) {
+            setStatus('วางเคอร์เซอร์ในย่อหน้าที่แก้ได้ก่อนจึงแทรก field ได้', 'warn');
+            return;
+        }
+
+        buildFieldMenu();
+
+        fieldParagraph = paragraph;
+        fieldRange = selection.getRangeAt(0).cloneRange();
+        fieldQuery = '';
+
+        fieldItems = fieldCandidates();
+
+        if (fieldItems.length === 0) {
+            closeFieldMenu();
+            setStatus('แม่แบบนี้ยังไม่มี field ({{...}}) ให้แทรก', 'warn');
+            return;
+        }
+
+        refreshFieldMenu();
+    }
+
+    function stepFieldSelection(step) {
+        if (fieldItems.length === 0) return;
+
+        let index = fieldIndex + step;
+
+        if (index < 0) index = fieldItems.length - 1;
+        if (index >= fieldItems.length) index = 0;
+
+        fieldIndex = index;
+        renderFieldMenu();
+    }
+
+    // แทรกข้อความ {{field}} ที่ตำแหน่งเคอร์เซอร์
+    // ใช้ execCommand เพื่อให้ข้อความใหม่ไปรวมกับ run เดิม (รูปแบบไม่เพี้ยน)
+    function insertField(name) {
+        const text = '{{' + name + '}}';
+        const selection = window.getSelection();
+
+        // คืนเคอร์เซอร์กลับที่เดิมก่อนแทรก (กันตำแหน่งหายไประหว่างเมนูเปิดอยู่)
+        if (
+            selection &&
+            fieldRange &&
+            fieldRange.startContainer &&
+            fieldRange.startContainer.isConnected
+        ) {
+            selection.removeAllRanges();
+            selection.addRange(fieldRange);
+        }
+
+        document.execCommand('insertText', false, text);
+
+        touchParagraph(caretParagraph() || fieldParagraph);
+        scheduleFieldHighlight();
+        scheduleLayoutFix();
+        updateDirty();
+    }
+
+    function acceptFieldItem(index) {
+        const item = fieldItems[index];
+
+        if (!item) return false;
+
+        insertField(item.name);
+        closeFieldMenu();
+
+        return true;
+    }
+
+    // Ctrl+Space = เปิดรายการ field ของแม่แบบนี้ที่ตำแหน่งเคอร์เซอร์
+    function isFieldShortcut(event) {
+        return !!(
+            (event.ctrlKey || event.metaKey) &&
+            !event.altKey &&
+            !event.shiftKey &&
+            (event.key === ' ' || event.code === 'Space')
+        );
+    }
+
+    // ขณะเมนูเปิดอยู่ ปุ่มทั้งหมดถูกจัดการที่นี่ (โฟกัสจึงอยู่ที่เอกสารตลอด)
+    function onFieldKeydown(event) {
+        if (!fieldMenuOpen()) {
+            if (!isFieldShortcut(event)) return;
+
+            // ไม่ได้อยู่ในย่อหน้าที่แก้ได้ = ไม่มีที่ให้แทรก
+            if (!activeParagraph()) return;
+
+            event.preventDefault();
+            openFieldMenu();
+            return;
+        }
+
+        // กำลังพิมพ์ด้วย IME (เช่นแป้นไทย) — ปล่อยให้พิมพ์ตามปกติ
+        if (event.isComposing || event.keyCode === 229) {
+            closeFieldMenu();
+            return;
+        }
+
+        switch (event.key) {
+            case 'ArrowDown':
+                event.preventDefault();
+                stepFieldSelection(1);
+                return;
+
+            case 'ArrowUp':
+                event.preventDefault();
+                stepFieldSelection(-1);
+                return;
+
+            case 'Enter':
+            case 'Tab':
+                event.preventDefault();
+                acceptFieldItem(fieldIndex);
+                return;
+
+            case 'Escape':
+                event.preventDefault();
+                closeFieldMenu();
+                return;
+
+            case 'Backspace':
+                // ยังไม่ได้พิมพ์กรอง = ปิดเมนู แล้วปล่อยให้ลบข้อความตามปกติ
+                if (!fieldQuery) {
+                    closeFieldMenu();
+                    return;
+                }
+
+                event.preventDefault();
+                fieldQuery = fieldQuery.slice(0, -1);
+                refreshFieldMenu();
+                return;
+
+            default:
+                break;
+        }
+
+        // คีย์ลัดอื่น (Ctrl+B / Ctrl+I / Ctrl+U) = ปิดเมนูแล้วทำงานตามปกติ
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+            closeFieldMenu();
+            return;
+        }
+
+        // พิมพ์ตัวอักษร = กรองรายการ (ไม่ให้ตัวอักษรหลุดลงเอกสาร)
+        if (event.key.length === 1) {
+            event.preventDefault();
+            fieldQuery += event.key;
+            refreshFieldMenu();
+            return;
+        }
+
+        // ลูกศรซ้าย/ขวา, Home, End, Delete ... = ปิดเมนูแล้วให้ทำงานตามปกติ
+        closeFieldMenu();
+    }
+
     // คีย์ลัด Ctrl+B / Ctrl+I / Ctrl+U เหมือน Word
     function onFormatKeydown(event) {
         if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
@@ -2708,6 +3137,9 @@ function scheduleFieldHighlight() {
     // กด Enter เพิ่มย่อหน้าใหม่ไม่ได้ — w:p ใหม่ต้องสร้างใน Word
     function onKeydown(event) {
         if (event.key !== 'Enter') return;
+
+        // กำลังเลือก field อยู่ = Enter คือ "ใช้ field ที่เลือก" (ดู onFieldKeydown)
+        if (fieldMenuOpen()) return;
 
         // ทั้งเอกสารเป็นช่องเดียว → เจอ .layout-edit ก็ถือว่าอยู่ในช่องแก้ไข
         const region = event.target && event.target.closest
@@ -2828,7 +3260,21 @@ function scheduleFieldHighlight() {
         host.addEventListener('input', onInput);
         host.addEventListener('keydown', onKeydown);
         host.addEventListener('keydown', onFormatKeydown);
+        host.addEventListener('keydown', onFieldKeydown);
         host.addEventListener('paste', onPaste);
+
+        // คลิกที่อื่นในเอกสาร = เคอร์เซอร์ย้าย เมนู field ปิดไปเลย
+        document.addEventListener('mousedown', function (event) {
+            if (!fieldMenuOpen()) return;
+            if (fieldMenu.contains(event.target)) return;
+
+            closeFieldMenu();
+        });
+
+        // เลื่อนดูเอกสาร = popup หลุดจากตำแหน่งเคอร์เซอร์ ให้ปิดแทนการยึดติด
+        overlay.addEventListener('scroll', function () {
+            if (fieldMenuOpen()) closeFieldMenu();
+        }, true);
 
         // เลือกข้อความใหม่ = อัปเดตสถานะปุ่มจัดรูปแบบ
         document.addEventListener('selectionchange', function () {

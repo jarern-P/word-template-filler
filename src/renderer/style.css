@@ -2864,6 +2864,110 @@ body.table-ratio-dragging .table-ratio-handle {
     /* color: var(--ink); */
 }
 
+/* ──────────────────────────────────────────────────────────────
+   popup เลือก field ของหน้าจัดตำแหน่ง (กด Ctrl+Space ที่เคอร์เซอร์)
+   โครงเดียวกับ .suggest-menu เพื่อให้หน้าตาเข้าชุดกัน
+   ────────────────────────────────────────────────────────────── */
+
+.field-menu {
+    position: fixed;
+    z-index: 150;                  /* เหนือหน้าจัดตำแหน่ง (130) */
+    max-width: calc(100vw - 24px);
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+    animation: select-menu-in 0.16s ease;
+}
+
+.field-menu[hidden] {
+    display: none;
+}
+
+.field-menu-query {
+    margin: 0 0 6px;
+    padding: 0 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+}
+
+.field-menu-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 40vh;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.field-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    margin: 0;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    box-shadow: none;
+}
+
+.field-menu-item:hover {
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-color: var(--pink-200);
+    box-shadow: none;
+}
+
+.field-menu-item.selected {
+    color: var(--pink-700);
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--pink-100), var(--pink-200));
+    border-color: var(--pink-300);
+    box-shadow: none;
+}
+
+/* ชื่อ field ที่ยังไม่มีในแม่แบบ — รายการ "field ใหม่" */
+.field-menu-item.new {
+    color: var(--ok);
+    border-style: dashed;
+    border-color: #cdeadd;
+}
+
+.field-menu-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.field-menu-tag {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+}
+
+.field-menu-item.new .field-menu-tag {
+    color: var(--ok);
+}
+
+.field-menu-empty {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: var(--ink-faint);
+}
+
 /* สัญลักษณ์ (w:sym) และแท็บ (w:tab) ของเอกสาร — แก้ไม่ได้ (ดู decorateSpecials) */
 /* .layout-preview .layout-special {
     cursor: not-allowed;
