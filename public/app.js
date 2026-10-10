@@ -2842,6 +2842,226 @@
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ค่าตั้งของ field (type / ล็อกตำแหน่ง / placeholder) — เมนูคลิกขวา
+    // ในหน้าจัดตำแหน่ง
+    //
+    // แก้ค่าเดียวกันกับที่หน้า "ตั้งค่าแม่แบบ" แก้ (record.types / locks /
+    // placeholders) จึงบันทึกลงฐานข้อมูลทันที และอัปเดต editor ของหน้านั้นด้วย
+    // ถ้ากำลังเปิดแม่แบบนี้อยู่
+    // ──────────────────────────────────────────────────────────────
+
+    function fieldConfigOf(record, field) {
+
+        return {
+
+            type:
+                (record.types && record.types[field]) ||
+                scope.FieldTypes.defaultValue,
+
+            lock:
+                !!(record.locks && record.locks[field]),
+
+            placeholder:
+                (record.placeholders && record.placeholders[field]) || ''
+        };
+    }
+
+    async function saveLayoutFieldConfig(record, field, values) {
+
+        if (!field) {
+            return;
+        }
+
+        const types =
+            Object.assign({}, record.types);
+
+        const locks =
+            Object.assign({}, record.locks);
+
+        const placeholders =
+            Object.assign({}, record.placeholders);
+
+        const tables =
+            Object.assign({}, record.tables);
+
+        // ค่า type ที่ไม่รู้จักกลับไปเป็นค่าเริ่มต้น (เหมือน dropdown ของหน้าแก้ไข)
+        const type =
+            scope.FieldTypes.get(
+                values && values.type
+            ).value;
+
+        types[field] = type;
+
+        if (values && values.lock) {
+            locks[field] = true;
+        } else {
+            delete locks[field];
+        }
+
+        const placeholder =
+            String((values && values.placeholder) || '');
+
+        // เว้นว่าง = ลบออก (กลับไปใช้ค่าเริ่มต้นของหน้ารายงาน)
+        if (placeholder.trim() === '') {
+            delete placeholders[field];
+        } else {
+            placeholders[field] = placeholder;
+        }
+
+        if (type === 'table') {
+
+            // เปลี่ยนเป็นตาราง = ต้องมีโครงตารางให้หน้าแก้ไขใช้ต่อ
+            // (ยังไม่มี = ค่าเริ่มต้น 3 คอลัมน์ ตาม FieldTypes)
+            tables[field] =
+                scope.FieldTypes.getTableSchema(
+                    field
+                );
+
+        } else {
+
+            // เหมือนตอนบันทึกจากหน้าแก้ไข: เก็บเฉพาะ field ที่เป็นตาราง
+            delete tables[field];
+        }
+
+        await ensureDb();
+
+        await scope.Db.save({
+
+            id:
+                record.id,
+
+            name:
+                record.name,
+
+            fileName:
+                record.file_name,
+
+            docx:
+                record.docx,
+
+            fields:
+                record.fields,
+
+            types:
+                types,
+
+            locks:
+                locks,
+
+            placeholders:
+                placeholders,
+
+            tables:
+                tables
+        });
+
+        // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
+        record.types = types;
+        record.locks = locks;
+        record.placeholders = placeholders;
+        record.tables = tables;
+
+        // หน้า "ตั้งค่าแม่แบบ" ที่เปิดแม่แบบนี้อยู่ต้องตรงกันด้วย
+        if (
+            state.templateId === record.id &&
+            currentPage === CONFIG_PAGE
+        ) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            getPageValues(
+                CONFIG_PAGE
+            )[field] = type;
+
+            if (config.setLocks) {
+                config.setLocks(locks);
+            }
+
+            if (config.setPlaceholders) {
+                config.setPlaceholders(placeholders);
+            }
+
+            if (config.setTableSchemas) {
+                config.setTableSchemas(tables);
+            }
+
+            fillForm(CONFIG_PAGE);
+        }
+
+        await refreshTemplateList();
+    }
+
+    // เปิดหน้า "แก้ไข" (ตั้งค่าแม่แบบ) ที่ field นั้น — สำหรับค่าที่ตั้งได้
+    // ละเอียดกว่าหน้าจัดตำแหน่ง (โครงตาราง / ลากสัดส่วน / รูปแบบหัวคอลัมน์)
+    async function openFieldInConfigPage(record, field) {
+
+        if (currentPage !== CONFIG_PAGE) {
+
+            await scope.AppDialog.alert(
+                'เปิดหน้าแก้ไขได้จากหน้า "ตั้งค่าแม่แบบ" เท่านั้น'
+            );
+
+            return false;
+        }
+
+        await onLoadTemplate(
+            record.id
+        );
+
+        flashConfigField(field);
+
+        return true;
+    }
+
+    // เลื่อน editor ไปที่ field ที่ต้องการ แล้วกะพริบกรอบให้เห็นว่าแถวไหน
+    function flashConfigField(field) {
+
+        const form =
+            document.getElementById('form');
+
+        if (!form) {
+            return;
+        }
+
+        let control = null;
+
+        form.querySelectorAll('[data-field]').forEach(function (node) {
+
+            if (node.dataset.field === field) {
+                control = node;
+            }
+        });
+
+        const row =
+            control && control.closest
+                ? control.closest('.field')
+                : null;
+
+        if (!row) {
+            return;
+        }
+
+        // รอให้โมดัลของ editor แสดงก่อน แล้วค่อยเลื่อน/กะพริบ
+        window.requestAnimationFrame(function () {
+
+            if (!document.contains(row)) {
+                return;
+            }
+
+            row.scrollIntoView({
+                block: 'center'
+            });
+
+            row.classList.add('field-flash');
+
+            window.setTimeout(function () {
+                row.classList.remove('field-flash');
+            }, 1600);
+        });
+    }
+
     async function onOpenLayout(recordId) {
 
         if (!recordId) {
@@ -2917,6 +3137,36 @@
                         await downloadLayoutEdits(
                             record,
                             newXml
+                        );
+                    },
+
+                // ค่าตั้งของ field สำหรับเมนูคลิกขวา (type / ล็อกตำแหน่ง / placeholder)
+                getFieldConfig:
+                    function (field) {
+
+                        return fieldConfigOf(
+                            record,
+                            field
+                        );
+                    },
+
+                saveFieldConfig:
+                    async function (field, values) {
+
+                        await saveLayoutFieldConfig(
+                            record,
+                            field,
+                            values
+                        );
+                    },
+
+                // เปิดหน้า "แก้ไข" ที่ field นั้น (ค่าที่ลึกกว่า เช่น โครงตาราง)
+                editField:
+                    async function (field) {
+
+                        return await openFieldInConfigPage(
+                            record,
+                            field
                         );
                     }
             });

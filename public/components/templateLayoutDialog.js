@@ -100,6 +100,9 @@
     // ชื่อ highlight ของ CSS Custom Highlight API (ไฮไลต์ {{...}} เป็นสีเหลือง)
     const FIELD_HIGHLIGHT = 'layout-field';
 
+    // ไฮไลต์ "ทุกที่ที่ใช้ field นี้" (คลิกขวา → ไฮไลต์ทุกที่) — คนละสีกับ FIELD_HIGHLIGHT
+    const FIELD_FOCUS_HIGHLIGHT = 'layout-field-focus';
+
     const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
     const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
 
@@ -217,8 +220,11 @@
 
         if (current) current.pairs = new Map();
 
-        // เมนู field ที่เปิดค้างอยู่ต้องปิดพร้อมหน้าต่าง
+        // popup ของหน้านี้ที่เปิดค้างอยู่ต้องปิดพร้อมหน้าต่าง
         closeFieldMenu();
+        closeContextMenu();
+        closeFieldDialog();
+        clearFieldFocus();
 
         // ลบไฮไลต์ {{}} ออกจากทะเบียนของเอกสาร (range อ้าง node ที่จะถูกล้าง)
         clearFieldHighlight();
@@ -269,8 +275,12 @@ async function renderDocx(bytes) {
         current.bytes = bytes;
     }
 
-    // ปิดเมนู field ก่อน — range ที่จำไว้ตอนเปิดเมนูอ้าง TextNode ที่กำลังจะถูกลบ
+    // ปิดเมนู/popup ก่อน — range ที่จำไว้ตอนเปิดอ้าง TextNode ที่กำลังจะถูกลบ
+    // (กล่องแก้รายละเอียด field ปิดด้วย เพราะตัวเลข/สถานะอ้างเอกสารชุดเก่า)
     closeFieldMenu();
+    closeContextMenu();
+    closeFieldDialog();
+    clearFieldFocus();
 
     // ล้าง highlight เดิมก่อนล้าง DOM
     // เพราะ Range เดิมอ้าง TextNode ที่กำลังจะถูกลบ
@@ -1476,27 +1486,29 @@ async function renderDocx(bytes) {
         return parts.join(' · ');
     }
 
-    async function save() {
-        if (!current || !current.payload.save) return;
+    // silent = true : บันทึกเลยไม่ต้องยืนยัน (เรียกหลังผู้ใช้ยืนยันมาแล้ว)
+    // คืน true เมื่อบันทึกสำเร็จ
+    async function save(silent) {
+        if (!current || !current.payload.save) return false;
 
         const edits = collectEdits(false);
         const changed = edits.texts.length + edits.formats.length;
 
         if (changed === 0) {
             setStatus('ยังไม่มีการแก้ไข');
-            return;
+            return false;
         }
 
         const name = current.payload.name || 'แม่แบบนี้';
 
-        if (!(await scope.AppDialog.confirm(
+        if (!silent && !(await scope.AppDialog.confirm(
             'บันทึกทับไฟล์ต้นฉบับของ "' + name + '"?\n\n' +
             'บันทึก: ' + editSummary(edits) + '\n' +
             'ค่า type / ล็อกตำแหน่ง / placeholder / ตาราง ของ field ที่ยังมีอยู่จะถูกเก็บไว้\n' +
             'ต้องการบันทึกหรือไม่?',
             { title: 'ยืนยันการบันทึก', okText: 'บันทึก' }
         ))) {
-            return;
+            return false;
         }
 
         setBusy(true);
@@ -1521,9 +1533,13 @@ async function renderDocx(bytes) {
                 skipped > 0 ? 'warn' : 'ok'
             );
 
+            return true;
+
         } catch (error) {
             console.error(error);
             setStatus('บันทึกไม่สำเร็จ: ' + messageOf(error), 'error');
+
+            return false;
         } finally {
             setBusy(false);
         }
@@ -2396,156 +2412,148 @@ function isDirectParagraphTextNode(node, paragraph) {
 
     //     return ranges;
     // }
-function fieldRanges() {
-    const ranges = [];
+// อ่านข้อความของย่อหน้าหนึ่งเป็น "สายเดียว" พร้อมตำแหน่งของ TextNode แต่ละก้อน
+//
+// docx-preview แยก {{field}} ออกเป็นหลาย <span> ได้ ({{ / วันที่ / }})
+// จึงต้องต่อข้อความของย่อหน้าเข้าด้วยกันก่อน แล้วค่อยหาช่วง {{...}} ในสายนั้น
+//
+// ห้าม cleanText() ตรงนี้ — จะลบ \u2003 / PUA แล้ว offset ของ Range เพี้ยน
+function paragraphTextMap(paragraph) {
+    const items = [];
 
-    if (!host) return ranges;
+    const walker = document.createTreeWalker(
+        paragraph,
+        NodeFilter.SHOW_TEXT,
+        null,
+        false
+    );
 
-    bodyParagraphs().forEach(function (paragraph) {
-        const textNodes = [];
+    let node;
+    let text = '';
+    let offset = 0;
 
-        const walker = document.createTreeWalker(
-            paragraph,
-            NodeFilter.SHOW_TEXT,
-            null,
-            false
-        );
-
-        let node;
-
-        // --------------------------------------------------
-        // เก็บ TextNode ของ paragraph นี้
-        //
-        // ต้องเก็บเฉพาะ TextNode ที่อยู่ใน paragraph ปัจจุบัน
-        // ไม่เอา <p> ที่ซ้อนอยู่ เช่น VML TextBox
-        // --------------------------------------------------
-        while ((node = walker.nextNode()) !== null) {
-            if (!isDirectParagraphTextNode(node, paragraph)) {
-                continue;
-            }
-
-            const text = node.textContent || '';
-
-            if (!text) {
-                continue;
-            }
-
-            textNodes.push({
-                node: node,
-                text: text,
-                start: 0,
-                end: 0
-            });
+    // เก็บเฉพาะ TextNode ที่อยู่ในย่อหน้านี้
+    // ไม่เอา <p> ที่ซ้อนอยู่ เช่น VML TextBox
+    while ((node = walker.nextNode()) !== null) {
+        if (!isDirectParagraphTextNode(node, paragraph)) {
+            continue;
         }
 
-        if (textNodes.length === 0) {
-            return;
+        const value = node.textContent || '';
+
+        if (!value) {
+            continue;
         }
 
-        // --------------------------------------------------
-        // รวม TextNode ทั้งหมดเป็น logical text เดียว
-        //
-        // ตัวอย่าง:
-        //
-        // <span>{{</span>
-        // <span>วันที่</span>
-        // <span>}}</span>
-        //
-        // จะกลายเป็น:
-        //
-        // {{วันที่}}
-        //
-        // ห้าม cleanText() ตรงนี้
-        // เพราะ cleanText() จะลบ \u2003 / PUA
-        // และทำให้ offset ของ Range ผิด
-        // --------------------------------------------------
-        let fullText = '';
-        let offset = 0;
-
-        textNodes.forEach(function (item) {
-            item.start = offset;
-
-            fullText += item.text;
-
-            offset += item.text.length;
-
-            item.end = offset;
+        items.push({
+            node: node,
+            text: value,
+            start: offset,
+            end: offset + value.length
         });
 
-        // --------------------------------------------------
-        // หา {{field}} จาก logical text
-        // --------------------------------------------------
-        const regex = new RegExp(FIELD_PATTERN.source, 'g');
+        text += value;
+        offset += value.length;
+    }
 
-        let match;
+    return { text: text, items: items };
+}
 
-        while ((match = regex.exec(fullText)) !== null) {
-            const matchStart = match.index;
-            const matchEnd = matchStart + match[0].length;
-
-            let startNode = null;
-            let startOffset = 0;
-
-            let endNode = null;
-            let endOffset = 0;
-
-            // --------------------------------------------------
-            // แปลง offset ของ fullText
-            // กลับไปเป็น TextNode จริง
-            // --------------------------------------------------
-            for (const item of textNodes) {
-                // จุดเริ่มต้น
-                if (
-                    !startNode &&
-                    matchStart >= item.start &&
-                    matchStart < item.end
-                ) {
-                    startNode = item.node;
-                    startOffset = matchStart - item.start;
-                }
-
-                // จุดสิ้นสุด
-                if (
-                    !endNode &&
-                    matchEnd > item.start &&
-                    matchEnd <= item.end
-                ) {
-                    endNode = item.node;
-                    endOffset = matchEnd - item.start;
-                }
-
-                if (startNode && endNode) {
-                    break;
-                }
+// ตำแหน่งในสายข้อความ → ตำแหน่งใน TextNode จริง
+//
+// จุดเริ่มใช้ offset < item.end ส่วนจุดสิ้นสุดใช้ offset <= item.end
+// เพราะ {{...}} มักจบที่สุดท้ายของ TextNode (span ของ "}}")
+function nodeAtOffset(items, offset, isEnd) {
+    for (const item of items) {
+        if (isEnd) {
+            if (offset > item.start && offset <= item.end) {
+                return { node: item.node, offset: offset - item.start };
             }
-
-            // --------------------------------------------------
-            // ป้องกัน Range ผิดพลาด
-            // --------------------------------------------------
-            if (!startNode || !endNode) {
-                continue;
-            }
-
-            try {
-                const range = document.createRange();
-
-                range.setStart(startNode, startOffset);
-                range.setEnd(endNode, endOffset);
-
-                ranges.push(range);
-            } catch (error) {
-                console.warn(
-                    'สร้าง field highlight range ไม่สำเร็จ',
-                    {
-                        field: match[0],
-                        error: error
-                    }
-                );
-            }
+        } else if (offset >= item.start && offset < item.end) {
+            return { node: item.node, offset: offset - item.start };
         }
+    }
+
+    return null;
+}
+
+// {{field}} ทุกก้อนของย่อหน้าหนึ่ง — { name, range, paragraph }
+// ใช้ร่วมกัน 3 ที่: ไฮไลต์เหลืองทั้งเอกสาร, ไฮไลต์เฉพาะ field, เมนูคลิกขวา
+function paragraphFields(paragraph) {
+    const map = paragraphTextMap(paragraph);
+    const fields = [];
+    const regex = new RegExp(FIELD_PATTERN.source, 'g');
+
+    let match;
+
+    while ((match = regex.exec(map.text)) !== null) {
+        const start = nodeAtOffset(map.items, match.index, false);
+        const end = nodeAtOffset(map.items, match.index + match[0].length, true);
+
+        // --------------------------------------------------
+        // ป้องกัน Range ผิดพลาด
+        // --------------------------------------------------
+        if (!start || !end) {
+            continue;
+        }
+
+        try {
+            const range = document.createRange();
+
+            range.setStart(start.node, start.offset);
+            range.setEnd(end.node, end.offset);
+
+            fields.push({
+                name: match[1],
+                range: range,
+                paragraph: paragraph,
+                // ตำแหน่งของ {{...}} ใน "สายข้อความ" ของย่อหน้า (ใช้หาว่าคลิกตรงไหน)
+                start: match.index,
+                end: match.index + match[0].length
+            });
+        } catch (error) {
+            console.warn(
+                'สร้างช่วง {{field}} ไม่สำเร็จ',
+                {
+                    field: match[0],
+                    error: error
+                }
+            );
+        }
+    }
+
+    return fields;
+}
+
+// {{field}} ทุกก้อนในเนื้อเรื่อง (หัว/ท้ายกระดาษและเชิงอรรถอยู่นอกเนื้อเรื่อง)
+function allParagraphFields() {
+    const fields = [];
+
+    bodyParagraphs().forEach(function (paragraph) {
+        paragraphFields(paragraph).forEach(function (field) {
+            fields.push(field);
+        });
     });
 
-    return ranges;
+    return fields;
+}
+
+// ช่วงข้อความของ {{field}} ทั้งหมด (ไฮไลต์เหลือง)
+function fieldRanges() {
+    return allParagraphFields().map(function (field) {
+        return field.range;
+    });
+}
+
+// ช่วงข้อความของ field ที่ระบุชื่อ (ไฮไลต์เฉพาะ field)
+function fieldRangesOf(name) {
+    return allParagraphFields()
+        .filter(function (field) {
+            return field.name === name;
+        })
+        .map(function (field) {
+            return field.range;
+        });
 }
 function highlightSupported() {
     return !!(
@@ -3108,6 +3116,523 @@ function scheduleFieldHighlight() {
         closeFieldMenu();
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // คลิกขวาที่ {{field}} — แก้ไขรายละเอียดของ field นั้น / ไฮไลต์ทุกที่ที่ใช้
+    //
+    // รายละเอียดที่แก้ได้ในที่นี้ = type / ล็อกตำแหน่ง / placeholder
+    // (เก็บและบันทึกผ่าน payload.getFieldConfig / saveFieldConfig ของ app.js)
+    // ส่วนค่าที่ลึกกว่า (โครงตาราง + รูปแบบหัวคอลัมน์) ทำที่หน้า "ตั้งค่าแม่แบบ"
+    // จึงมีปุ่มพาไปหน้านั้นให้ (payload.editField) เฉพาะเมื่อ field เป็นตาราง
+    // ──────────────────────────────────────────────────────────────
+
+    const CONTEXT_MENU_GAP = 4;   // ระยะห่างจากจุดคลิกขวา
+
+    const FIELD_MODAL_HTML = [
+        '<div class="layout-field-backdrop" data-field-modal-close></div>',
+        '<div class="layout-field-dialog" role="dialog" aria-modal="true" aria-labelledby="layoutFieldTitle">',
+        '    <div class="layout-field-head">',
+        '        <h2 id="layoutFieldTitle">แก้ไขรายละเอียด field</h2>',
+        '        <button type="button" class="layout-close" data-field-modal-close aria-label="ปิด">&times;</button>',
+        '    </div>',
+        '    <div class="layout-field-body">',
+        '        <p class="layout-field-name" id="layoutFieldName"></p>',
+        '        <div class="field">',
+        '            <label for="layoutFieldType">ชนิด (Type)</label>',
+        '            <select id="layoutFieldType"></select>',
+        '        </div>',
+        '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldLock"> ล็อกตำแหน่ง (รักษาตำแหน่งเดิมในเอกสาร)</label>',
+        '        <div class="field">',
+        '            <label for="layoutFieldPlaceholder">Placeholder (ข้อความตัวอย่างในหน้ารายงาน)</label>',
+        '            <input type="text" id="layoutFieldPlaceholder" autocomplete="off" placeholder="เว้นว่าง = ใช้ค่าเริ่มต้น">',
+        '        </div>',
+        '        <p class="hint" id="layoutFieldTableHint" hidden>field นี้เป็นตาราง — จำนวนคอลัมน์ / ชื่อคอลัมน์ / สัดส่วน / รูปแบบหัวคอลัมน์ ตั้งได้ที่หน้า "ตั้งค่าแม่แบบ"</p>',
+        '        <p class="layout-status" id="layoutFieldStatus"></p>',
+        '    </div>',
+        '    <div class="layout-field-actions">',
+        '        <button type="button" id="layoutFieldEditBtn" class="plain" hidden>เปิดหน้าแก้ไขเต็มรูปแบบ</button>',
+        '        <button type="button" class="plain" data-field-modal-close>ยกเลิก</button>',
+        '        <button type="button" id="layoutFieldSaveBtn">บันทึก</button>',
+        '    </div>',
+        '</div>'
+    ].join('\n');
+
+    let contextMenu = null;    // เมนูคลิกขวา (สร้างครั้งเดียวตอนใช้ครั้งแรก)
+    let contextList = null;    // <ul> ของรายการในเมนู
+    let contextField = null;   // { name, range } ของ field ที่คลิกขวา
+    let fieldModal = null;     // กล่องแก้รายละเอียด field (สร้างครั้งเดียว)
+    let fieldModalField = '';  // ชื่อ field ที่กล่องนี้กำลังแก้
+    let fieldFocus = '';       // ชื่อ field ที่ไฮไลต์ทุกที่อยู่ (' = ไม่มี)
+
+    // ── หา {{field}} ที่ตำแหน่งเมาส์ ──
+
+    // ย่อหน้าของ node (ใช้ได้กับย่อหน้าที่แก้ไม่ได้ด้วย — แก้ค่าตั้งของ field
+    // ไม่ได้แตะข้อความในเอกสาร)
+    function paragraphAt(node) {
+        const element = node && node.nodeType === 1
+            ? node
+            : (node ? node.parentNode : null);
+
+        if (!element || !element.closest || !host) return null;
+
+        const paragraph = element.closest('.layout-para');
+
+        return paragraph && host.contains(paragraph) ? paragraph : null;
+    }
+
+    // ข้อความ {{field}} ที่จุดที่คลิกขวา (คืน null เมื่อไม่ได้คลิกบน field)
+    function fieldAtPoint(clientX, clientY) {
+        let node = null;
+        let offset = 0;
+
+        if (document.caretRangeFromPoint) {
+            const caret = document.caretRangeFromPoint(clientX, clientY);
+
+            if (caret) {
+                node = caret.startContainer;
+                offset = caret.startOffset;
+            }
+        } else if (document.caretPositionFromPoint) {
+            const caret = document.caretPositionFromPoint(clientX, clientY);
+
+            if (caret) {
+                node = caret.offsetNode;
+                offset = caret.offset;
+            }
+        }
+
+        if (!node || node.nodeType !== 3) return null;
+
+        const paragraph = paragraphAt(node);
+
+        if (!paragraph) return null;
+
+        const map = paragraphTextMap(paragraph);
+        const item = map.items.find(function (entry) {
+            return entry.node === node;
+        });
+
+        if (!item) return null;
+
+        const caretOffset = item.start + offset;
+
+        const found = paragraphFields(paragraph).find(function (field) {
+            return caretOffset >= field.start && caretOffset <= field.end;
+        });
+
+        return found || null;
+    }
+
+    // ── เมนูคลิกขวา ──
+
+    function buildContextMenu() {
+        if (contextMenu) return;
+
+        contextMenu = document.createElement('div');
+        contextMenu.className = 'layout-context-menu';
+        contextMenu.id = 'layoutContextMenu';
+        contextMenu.hidden = true;
+        contextMenu.innerHTML =
+            '<p class="layout-context-title"></p>' +
+            '<ul class="layout-context-list" role="menu"></ul>';
+
+        document.body.appendChild(contextMenu);
+
+        contextList = contextMenu.querySelector('.layout-context-list');
+
+        // mousedown ก่อน click: กันไม่ให้ selection ในเอกสารหาย (และ caret ไม่ขยับ)
+        contextMenu.addEventListener('mousedown', function (event) {
+            event.preventDefault();
+        });
+
+        contextList.addEventListener('click', function (event) {
+            const button = event.target.closest('.layout-context-item');
+
+            if (!button) return;
+
+            runContextAction(button.dataset.action);
+        });
+    }
+
+    // รายการในเมนู — ปิดรายการที่แม่แบบนี้ยังไม่รองรับ (ยังไม่มี hook จาก app.js)
+    function contextActions() {
+        const payload = (current && current.payload) || {};
+
+        return [
+            {
+                action: 'edit-field',
+                label: 'แก้ไขรายละเอียด field',
+                enabled: typeof payload.getFieldConfig === 'function' &&
+                    typeof payload.saveFieldConfig === 'function'
+            },
+            {
+                action: 'focus-field',
+                label: 'ไฮไลต์ทุกที่ที่ใช้ field นี้',
+                enabled: true
+            }
+        ];
+    }
+
+    function contextMenuOpen() {
+        return !!(contextMenu && !contextMenu.hidden);
+    }
+
+    function positionContextMenu(clientX, clientY) {
+        contextMenu.style.visibility = 'hidden';
+        contextMenu.style.left = '0px';
+        contextMenu.style.top = '0px';
+
+        const width = contextMenu.offsetWidth;
+        const height = contextMenu.offsetHeight;
+
+        let left = clientX;
+        let top = clientY;
+
+        if (left + width > window.innerWidth - FIELD_MENU_MARGIN) {
+            left = window.innerWidth - FIELD_MENU_MARGIN - width;
+        }
+
+        if (left < FIELD_MENU_MARGIN) left = FIELD_MENU_MARGIN;
+
+        // ล้นขอบล่าง = พลิกขึ้นเหนือจุดคลิก
+        if (top + height > window.innerHeight - FIELD_MENU_MARGIN) {
+            top = clientY - height - CONTEXT_MENU_GAP;
+        }
+
+        if (top < FIELD_MENU_MARGIN) top = FIELD_MENU_MARGIN;
+
+        contextMenu.style.left = left + 'px';
+        contextMenu.style.top = top + 'px';
+        contextMenu.style.visibility = 'visible';
+    }
+
+    function closeContextMenu() {
+        if (contextMenu) contextMenu.hidden = true;
+
+        contextField = null;
+    }
+
+    function runContextAction(action) {
+        const field = contextField;
+
+        if (!field) return;
+
+        closeContextMenu();
+
+        if (action === 'edit-field') {
+            openFieldDialog(field.name);
+            return;
+        }
+
+        if (action === 'focus-field') {
+            toggleFieldFocus(field.name);
+        }
+    }
+
+    // คลิกขวาในเอกสาร: เจอ {{field}} = เปิดเมนูของ field นั้น
+    // ไม่เจอ = ปล่อยให้เป็นเมนูของระบบตามเดิม
+    function onContextMenu(event) {
+        const field = fieldAtPoint(event.clientX, event.clientY);
+
+        if (!field) {
+            closeContextMenu();
+            return;
+        }
+
+        event.preventDefault();
+
+        closeFieldMenu();
+
+        // เลือก {{field}} ทั้งก้อน ให้เห็นว่ากำลังจะแก้ field ไหน
+        const selection = window.getSelection();
+
+        if (selection && field.range) {
+            selection.removeAllRanges();
+            selection.addRange(field.range);
+        }
+
+        buildContextMenu();
+
+        contextField = field;
+        contextMenu.querySelector('.layout-context-title').textContent =
+            '{{' + field.name + '}}';
+
+        contextList.innerHTML = '';
+
+        // textContent ทุกจุด เพราะชื่อ field มาจากผู้ใช้ (กัน XSS)
+        contextActions().forEach(function (item) {
+            const row = document.createElement('li');
+            const button = document.createElement('button');
+
+            button.type = 'button';
+            button.className = 'layout-context-item';
+            button.dataset.action = item.action;
+            button.textContent = item.label;
+            button.disabled = !item.enabled;
+            button.setAttribute('role', 'menuitem');
+
+            row.appendChild(button);
+            contextList.appendChild(row);
+        });
+
+        contextMenu.hidden = false;
+        positionContextMenu(event.clientX, event.clientY);
+    }
+
+    // ── ไฮไลต์ทุกที่ที่ใช้ field เดียวกัน ──
+
+    function clearFieldFocus() {
+        fieldFocus = '';
+
+        if (highlightSupported()) {
+            scope.CSS.highlights.delete(FIELD_FOCUS_HIGHLIGHT);
+        }
+    }
+
+    // ไฮไลต์ช่วงของ field นั้นทุกก้อน — คืนจำนวนช่วงที่ไฮไลต์
+    function applyFieldFocus(name) {
+        clearFieldFocus();
+
+        if (!highlightSupported()) return 0;
+
+        const ranges = fieldRangesOf(name);
+
+        if (ranges.length === 0) return 0;
+
+        const highlight = new scope.Highlight();
+
+        ranges.forEach(function (range) {
+            highlight.add(range);
+        });
+
+        scope.CSS.highlights.set(FIELD_FOCUS_HIGHLIGHT, highlight);
+
+        fieldFocus = name;
+
+        const first = ranges[0].startContainer;
+        const element = first && (first.nodeType === 1 ? first : first.parentElement);
+
+        if (element && element.scrollIntoView) {
+            element.scrollIntoView({ block: 'center' });
+        }
+
+        return ranges.length;
+    }
+
+    // กดซ้ำที่ field เดิม = ยกเลิกไฮไลต์
+    function toggleFieldFocus(name) {
+        if (fieldFocus === name) {
+            clearFieldFocus();
+            setStatus('ยกเลิกไฮไลต์ "' + name + '" แล้ว');
+            return;
+        }
+
+        const count = applyFieldFocus(name);
+
+        if (count === 0) {
+            setStatus('ไม่พบ {{' + name + '}} ในเอกสารให้ไฮไลต์', 'warn');
+            return;
+        }
+
+        setStatus(
+            'ไฮไลต์ "' + name + '" ' + count + ' แห่ง (กด Esc เพื่อยกเลิก)',
+            'ok'
+        );
+    }
+
+    // ── กล่องแก้ไขรายละเอียด field ──
+
+    function fieldModalOpen() {
+        return !!(fieldModal && fieldModal.classList.contains('open'));
+    }
+
+    function buildFieldModal() {
+        if (fieldModal) return;
+
+        fieldModal = document.createElement('div');
+        fieldModal.className = 'layout-field-modal';
+        fieldModal.id = 'layoutFieldModal';
+        fieldModal.innerHTML = FIELD_MODAL_HTML;
+
+        // อยู่ "ใน" หน้าจัดตำแหน่ง จึงปิดเมื่อหน้าจัดตำแหน่งปิด และทับบนเอกสารเสมอ
+        overlay.appendChild(fieldModal);
+
+        fieldModal.querySelectorAll('[data-field-modal-close]').forEach(function (node) {
+            node.addEventListener('click', closeFieldDialog);
+        });
+
+        const typeSelect = fieldModal.querySelector('#layoutFieldType');
+
+        scope.FieldTypes.options.forEach(function (type) {
+            const option = document.createElement('option');
+
+            option.value = type.value;
+            option.textContent = type.label;
+
+            typeSelect.appendChild(option);
+        });
+
+        typeSelect.addEventListener('change', refreshFieldModalTable);
+
+        fieldModal.querySelector('#layoutFieldSaveBtn')
+            .addEventListener('click', saveFieldDialog);
+
+        fieldModal.querySelector('#layoutFieldEditBtn')
+            .addEventListener('click', openFieldInConfigPage);
+    }
+
+    function setFieldModalStatus(text, kind) {
+        const node = fieldModal && fieldModal.querySelector('#layoutFieldStatus');
+
+        if (!node) return;
+
+        node.textContent = text || '';
+        node.className = 'layout-status' + (kind ? ' ' + kind : '');
+    }
+
+    // เปิดแถบ "ตาราง" ในกล่อง เมื่อ type = Table
+    function refreshFieldModalTable() {
+        if (!fieldModal) return;
+
+        const isTable =
+            fieldModal.querySelector('#layoutFieldType').value === 'table';
+
+        fieldModal.querySelector('#layoutFieldTableHint').hidden = !isTable;
+        fieldModal.querySelector('#layoutFieldEditBtn').hidden = !isTable;
+    }
+
+    function closeFieldDialog() {
+        if (fieldModal) fieldModal.classList.remove('open');
+
+        fieldModalField = '';
+    }
+
+    async function openFieldDialog(name) {
+        const payload = (current && current.payload) || {};
+
+        if (typeof payload.getFieldConfig !== 'function') {
+            setStatus('หน้านี้ยังไม่รองรับการแก้รายละเอียด field', 'warn');
+            return;
+        }
+
+        buildFieldModal();
+
+        let values = null;
+
+        try {
+            values = (await payload.getFieldConfig(name)) || {};
+        } catch (error) {
+            setStatus(
+                'อ่านค่าตั้งของ field ไม่สำเร็จ: ' + messageOf(error),
+                'error'
+            );
+            return;
+        }
+
+        fieldModalField = name;
+        fieldModal.querySelector('#layoutFieldName').textContent = '{{' + name + '}}';
+        fieldModal.querySelector('#layoutFieldType').value =
+            values.type || scope.FieldTypes.defaultValue;
+        fieldModal.querySelector('#layoutFieldLock').checked = !!values.lock;
+        fieldModal.querySelector('#layoutFieldPlaceholder').value =
+            values.placeholder || '';
+
+        setFieldModalStatus('');
+        refreshFieldModalTable();
+
+        fieldModal.classList.add('open');
+
+        const first = fieldModal.querySelector('#layoutFieldType');
+
+        window.setTimeout(function () {
+            if (fieldModalOpen() && first && first.focus) first.focus();
+        }, 30);
+    }
+
+    async function saveFieldDialog() {
+        const payload = (current && current.payload) || {};
+
+        if (!fieldModalField || typeof payload.saveFieldConfig !== 'function') {
+            return;
+        }
+
+        const field = fieldModalField;
+        const values = {
+            type: fieldModal.querySelector('#layoutFieldType').value,
+            lock: fieldModal.querySelector('#layoutFieldLock').checked,
+            placeholder: fieldModal.querySelector('#layoutFieldPlaceholder').value
+        };
+
+        const button = fieldModal.querySelector('#layoutFieldSaveBtn');
+
+        button.disabled = true;
+        setFieldModalStatus('กำลังบันทึก...');
+
+        try {
+            await payload.saveFieldConfig(field, values);
+        } catch (error) {
+            setFieldModalStatus(
+                'บันทึกไม่สำเร็จ: ' + messageOf(error),
+                'error'
+            );
+            return;
+        } finally {
+            button.disabled = false;
+        }
+
+        closeFieldDialog();
+        setStatus('บันทึกค่า field {{' + field + '}} แล้ว', 'ok');
+    }
+
+    // ไปแก้ค่าที่ลึกกว่านี้ (โครงตาราง/หัวคอลัมน์) ที่หน้า "ตั้งค่าแม่แบบ"
+    async function openFieldInConfigPage() {
+        const payload = (current && current.payload) || {};
+
+        if (!fieldModalField || typeof payload.editField !== 'function') {
+            return;
+        }
+
+        const field = fieldModalField;
+
+        // ข้อความที่แก้ค้างในหน้านี้ต้องถูกบันทึกก่อน ไม่งั้นจะหายไปตอนปิดหน้านี้
+        if (pendingEdits() > 0) {
+            if (!(await scope.AppDialog.confirm(
+                'มีข้อความที่แก้ค้างอยู่ในหน้าจัดตำแหน่ง\n\n' +
+                'บันทึกก่อนเปิดหน้าแก้ไขหรือไม่?',
+                { title: 'ยืนยันการบันทึก', okText: 'บันทึกและไปต่อ' }
+            ))) {
+                return;
+            }
+
+            if (!(await save(true))) return;
+        }
+
+        let opened = false;
+
+        try {
+            opened = (await payload.editField(field)) !== false;
+        } catch (error) {
+            setFieldModalStatus(
+                'เปิดหน้าแก้ไขไม่สำเร็จ: ' + messageOf(error),
+                'error'
+            );
+            return;
+        }
+
+        if (!opened) return;
+
+        closeFieldDialog();
+        close();
+    }
+
+    // จำนวนย่อหน้าที่แก้ค้างอยู่ (ยังไม่บันทึก)
+    function pendingEdits() {
+        if (!current) return 0;
+
+        const edits = collectEdits(true);
+
+        return edits.texts.length + edits.formats.length;
+    }
+
     // คีย์ลัด Ctrl+B / Ctrl+I / Ctrl+U เหมือน Word
     function onFormatKeydown(event) {
         if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
@@ -3263,8 +3788,16 @@ function scheduleFieldHighlight() {
         host.addEventListener('keydown', onFieldKeydown);
         host.addEventListener('paste', onPaste);
 
-        // คลิกที่อื่นในเอกสาร = เคอร์เซอร์ย้าย เมนู field ปิดไปเลย
+        // คลิกขวาที่ {{field}} = เมนูแก้รายละเอียด field / ไฮไลต์ทุกที่ที่ใช้
+        host.addEventListener('contextmenu', onContextMenu);
+
+        // คลิกที่อื่นในเอกสาร = เคอร์เซอร์ย้าย popup ของเอกสารปิดไปเลย
+        // (กล่องแก้รายละเอียด field อยู่ชั้นบนสุด — ปิดด้วยปุ่ม/ฉากหลัง/Esc เท่านั้น)
         document.addEventListener('mousedown', function (event) {
+            if (contextMenuOpen() && !contextMenu.contains(event.target)) {
+                closeContextMenu();
+            }
+
             if (!fieldMenuOpen()) return;
             if (fieldMenu.contains(event.target)) return;
 
@@ -3274,6 +3807,7 @@ function scheduleFieldHighlight() {
         // เลื่อนดูเอกสาร = popup หลุดจากตำแหน่งเคอร์เซอร์ ให้ปิดแทนการยึดติด
         overlay.addEventListener('scroll', function () {
             if (fieldMenuOpen()) closeFieldMenu();
+            if (contextMenuOpen()) closeContextMenu();
         }, true);
 
         // เลือกข้อความใหม่ = อัปเดตสถานะปุ่มจัดรูปแบบ
@@ -3286,6 +3820,26 @@ function scheduleFieldHighlight() {
         document.addEventListener('keydown', function (event) {
             if (event.key !== 'Escape') return;
             if (!overlay.classList.contains('open')) return;
+
+            // Esc ทีละชั้น: กล่องแก้ field → เมนูคลิกขวา → ไฮไลต์ field → ปิดหน้าต่าง
+            if (fieldModalOpen()) {
+                event.preventDefault();
+                closeFieldDialog();
+                return;
+            }
+
+            if (contextMenuOpen()) {
+                event.preventDefault();
+                closeContextMenu();
+                return;
+            }
+
+            if (fieldFocus) {
+                event.preventDefault();
+                clearFieldFocus();
+                setStatus('');
+                return;
+            }
 
             // กำลังพิมพ์แก้ข้อความอยู่ = ไม่ปิด (กด × หรือคลิกนอกกล่องแทน)
             const active = document.activeElement;

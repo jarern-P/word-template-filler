@@ -2968,6 +2968,191 @@ body.table-ratio-dragging .table-ratio-handle {
     color: var(--ink-faint);
 }
 
+/* ──────────────────────────────────────────────────────────────
+   เมนูคลิกขวาที่ {{field}} ในหน้าจัดตำแหน่ง
+   ────────────────────────────────────────────────────────────── */
+
+.layout-context-menu {
+    position: fixed;
+    z-index: 160;                  /* เหนือหน้าจัดตำแหน่ง (130) + popup field (150) */
+    min-width: 250px;
+    max-width: calc(100vw - 24px);
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+    animation: select-menu-in 0.12s ease;
+}
+
+.layout-context-menu[hidden] {
+    display: none;
+}
+
+.layout-context-title {
+    margin: 0;
+    padding: 6px 10px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--pink-700);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layout-context-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.layout-context-item {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    box-shadow: none;
+}
+
+.layout-context-item:hover:not(:disabled) {
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-color: var(--pink-200);
+    box-shadow: none;
+}
+
+.layout-context-item:disabled {
+    color: var(--ink-faint);
+    cursor: not-allowed;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   กล่องแก้รายละเอียด field (อยู่ในหน้าจัดตำแหน่ง — คลิกขวาที่ {{field}})
+   ────────────────────────────────────────────────────────────── */
+
+.layout-field-modal {
+    display: none;
+    position: absolute;
+    inset: 0;
+    z-index: 20;                   /* ทับเอกสาร/แถบเครื่องมือ แต่ยังอยู่ในหน้าจัดตำแหน่ง */
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.layout-field-modal.open {
+    display: flex;
+}
+
+.layout-field-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(75, 58, 68, 0.25);
+    backdrop-filter: blur(2px);
+}
+
+.layout-field-dialog {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 560px;
+    max-height: 88%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glow-strong);
+    overflow: hidden;
+}
+
+.layout-field-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+}
+
+.layout-field-head h2 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.layout-field-body {
+    padding: 16px 18px;
+    overflow-y: auto;
+}
+
+/* ชื่อ field ที่กำลังแก้ ({{...}}) */
+.layout-field-name {
+    margin: 0 0 14px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--pink-700);
+    word-break: break-all;
+}
+
+.layout-field-body .field {
+    margin-bottom: 14px;
+}
+
+.layout-field-body .layout-toggle {
+    display: flex;
+    margin-bottom: 14px;
+}
+
+.layout-field-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+}
+
+/* ปุ่มไปหน้าแก้ไขเต็มรูปแบบอยู่ชิดซ้าย (ปุ่มหลัก/ยกเลิกชิดขวา) */
+.layout-field-actions #layoutFieldEditBtn {
+    margin-right: auto;
+}
+
+.layout-field-actions button {
+    margin-top: 0;
+}
+
+/* ไฮไลต์ "ทุกที่ที่ใช้ field นี้" (คลิกขวา → ไฮไลต์ทุกที่) — คนละสีกับไฮไลต์เหลือง */
+::highlight(layout-field-focus) {
+    background-color: #ffcc80;
+    text-decoration: underline;
+}
+
+/* กะพริบกรอบแถว field ที่เพิ่งเปิดมาจากหน้าจัดตำแหน่ง (หน้า "ตั้งค่าแม่แบบ") */
+.field.field-flash {
+    border-radius: var(--radius-lg);
+    animation: field-flash 1.6s ease;
+}
+
+@keyframes field-flash {
+    0%,
+    45% {
+        background: var(--pink-100);
+        box-shadow: 0 0 0 3px var(--pink-200);
+    }
+
+    100% {
+        background: transparent;
+        box-shadow: none;
+    }
+}
+
 /* สัญลักษณ์ (w:sym) และแท็บ (w:tab) ของเอกสาร — แก้ไม่ได้ (ดู decorateSpecials) */
 /* .layout-preview .layout-special {
     cursor: not-allowed;
