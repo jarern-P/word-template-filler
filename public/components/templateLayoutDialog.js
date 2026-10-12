@@ -2126,43 +2126,59 @@ async function renderDocx(bytes) {
         return rects;
     }
 
-    // กล่องบรรทัดแรก (บนสุด) — รวม rect ที่อยู่บรรทัดเดียวกันให้เป็นกล่องเดียว
-    function firstLineBox(rects) {
-        if (!rects.length) return null;
+    // รวม rect ที่อยู่บรรทัดเดียวกันเป็น "กล่องบรรทัด" (เรียงจากบนลงล่าง)
+    // บรรทัดหนึ่งมีหลาย rect ได้ (ข้อความถูกแยกเป็นหลาย span เช่น {{ / field / }})
+    function lineBoxes(rects) {
+        const sorted = rects.slice().sort(function (a, b) {
+            return a.top - b.top;
+        });
+        const lines = [];
 
-        let minTop = Infinity;
+        sorted.forEach(function (rect) {
+            const last = lines[lines.length - 1];
 
-        rects.forEach(function (rect) {
-            if (rect.top < minTop) minTop = rect.top;
+            // ซ้อนทับกันเกินครึ่งของกล่องที่เตี้ยกว่า = บรรทัดเดียวกัน
+            const overlap = last
+                ? Math.min(last.bottom, rect.bottom) - Math.max(last.top, rect.top)
+                : 0;
+            const shorter = last
+                ? Math.min(last.bottom - last.top, rect.bottom - rect.top)
+                : 0;
+
+            if (last && overlap > shorter * 0.5) {
+                last.top = Math.min(last.top, rect.top);
+                last.bottom = Math.max(last.bottom, rect.bottom);
+                return;
+            }
+
+            lines.push({ top: rect.top, bottom: rect.bottom });
         });
 
-        let top = Infinity;
-        let bottom = -Infinity;
-
-        rects.forEach(function (rect) {
-            if (rect.top - minTop > 2) return;
-
-            top = Math.min(top, rect.top);
-            bottom = Math.max(bottom, rect.bottom);
-        });
-
-        if (!(bottom > top)) return null;
-
-        return { top: top, bottom: bottom };
+        return lines;
     }
 
-    // ย่อหน้าแรกที่มีข้อความของกล่องข้อความ (สำหรับวัดบรรทัดแรกของกล่อง)
-    function textboxFirstParagraph(wrapper) {
-        const region = wrapper.querySelector('[data-layout-text-box]')
+    // กล่องเนื้อหาของ textbox (div ที่ห่อ <p> ไว้ข้างในกล่อง)
+    function textboxContent(wrapper) {
+        return wrapper.querySelector('[data-layout-text-box]')
             || wrapper.querySelector('foreignObject');
+    }
 
-        if (!region) return null;
+    // บรรทัดทั้งหมดของข้อความ "ในกล่องข้อความ" (ทุกย่อหน้าในกล่อง)
+    // ใช้ rect ที่เรนเดอร์จริง จึงไม่ขึ้นกับ padding ภายในกล่อง
+    function textboxLineRects(wrapper) {
+        const region = textboxContent(wrapper);
 
-        const paragraphs = Array.from(region.querySelectorAll('p'));
+        if (!region) return [];
 
-        return paragraphs.find(function (paragraph) {
-            return (paragraph.textContent || '').replace(/\s+/g, '') !== '';
-        }) || paragraphs[0] || null;
+        const rects = [];
+
+        Array.from(region.querySelectorAll('p')).forEach(function (paragraph) {
+            directTextRects(paragraph).forEach(function (rect) {
+                rects.push(rect);
+            });
+        });
+
+        return rects;
     }
 
     // ความสูงบรรทัดตาม computed style (px ในพื้นที่เอกสาร ยังไม่คูณ zoom)
@@ -2175,42 +2191,269 @@ async function renderDocx(bytes) {
         return (parseFloat(style.fontSize) || 12) * 1.2;
     }
 
-    // เลื่อนกล่องข้อความให้บรรทัดแรกตรงกับบรรทัดข้อความที่ใกล้ที่สุด
+    // ระยะห่างระหว่างบรรทัด (px ในพื้นที่เอกสาร, 0 = วัดไม่ได้)
+    function linePitch(lines, scale) {
+        if (lines.length < 2) return 0;
+
+        let total = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+            total += lines[i].top - lines[i - 1].top;
+        }
+
+        return total / (lines.length - 1) / scale;
+    }
+
+    // ย่อหน้าเป้าหมายของกล่อง — ย่อหน้าที่กล่องยึดอยู่ แล้วต่อด้วยย่อหน้าถัดไป
+    // จนครอบความสูงของกล่อง (กล่องหลายบรรทัดอาจคร่อมหลายย่อหน้า)
+    function targetParagraphsFor(wrapper, target, tolerance) {
+        const list = [target];
+        const height = wrapper.getBoundingClientRect().height;
+
+        let covered = target.getBoundingClientRect().height;
+        let node = target.nextElementSibling;
+        let guard = 0;
+
+        while (node && node.localName === 'p' && guard < 8) {
+            if (covered >= height - tolerance) break;
+
+            list.push(node);
+            covered += node.getBoundingClientRect().height;
+            node = node.nextElementSibling;
+            guard++;
+        }
+
+        return list;
+    }
+
+    // ปรับระยะบรรทัดของข้อความในกล่องให้เท่ากับระยะของแถวเป้าหมาย
+    //
+    // ระยะบรรทัดในกล่องกับแถวเป้าหมายมักไม่เท่ากัน (ย่อหน้าในกล่องมักไม่มี
+    // w:spacing แต่ย่อหน้าเป้าหมายมี w:after) → เลื่อนกล่องทั้งก้อนแล้วตรงได้
+    // ทีละบรรทัดเท่านั้น จึงปรับระยะในกล่องให้เท่ากันก่อน แล้วจึงจัดตำแหน่ง
+    //
+    // ปรับเฉพาะการแสดงผลในหน้านี้ — ไม่ได้เขียนกลับไฟล์ .docx
+    function matchTextboxLineSpacing(wrapper, targetLines, scale) {
+        const region = textboxContent(wrapper);
+
+        if (!region || targetLines.length < 2) return;
+
+        const inner = Array.from(region.querySelectorAll('p'));
+
+        if (inner.length < 2) return;
+
+        const boxLines = lineBoxes(textboxLineRects(wrapper));
+
+        // ปรับเฉพาะเมื่อจำนวนบรรทัดเท่ากัน (1:1) — ถ้าไม่เท่ากัน
+        // การยืดระยะให้เท่าค่าเฉลี่ยจะทำให้แย่ลง (เช่น กล่อง 7 บรรทัด แต่แถว 5 แถว)
+        if (boxLines.length !== targetLines.length) return;
+
+        const targetPitch = linePitch(targetLines, scale);
+
+        if (!(targetPitch > 0)) return;
+
+        // รอบที่ 1 — ล้างระยะท้ายย่อหน้า แล้ววัด "ระยะบรรทัดจริง" ของกล่อง
+        // (ไม่ตั้ง line-height เอง เพราะความสูงบรรทัดจริงขึ้นกับฟอนต์/กล่อง
+        //  ตั้งไปอาจคลาดเคลื่อนหรือทำข้อความทับกัน)
+        inner.forEach(function (paragraph) {
+            paragraph.style.marginTop = '0px';
+            paragraph.style.marginBottom = '0px';
+        });
+
+        const naturalPitch = linePitch(lineBoxes(textboxLineRects(wrapper)), scale);
+
+        if (!(naturalPitch > 0)) return;
+
+        // ระยะเท่ากันอยู่แล้ว = ไม่ต้องแตะ
+        if (Math.abs(targetPitch - naturalPitch) < 1) return;
+
+        // รอบที่ 2 — เว้นระยะท้ายย่อหน้าเป็นตัวกำหนดระยะระหว่างบรรทัด
+        // ให้ผลรวมตรงกับระยะของแถวเป้าหมาย (ย่อหน้าสุดท้ายไม่ต้องใส่)
+        const margin = targetPitch - naturalPitch;
+
+        inner.forEach(function (paragraph, index) {
+            paragraph.style.marginBottom = index < inner.length - 1
+                ? margin.toFixed(2) + 'px'
+                : '0px';
+        });
+
+        // เนื้อหากล่องอาจสูง/ต่ำกว่าเดิม — ต้องไม่ถูกตัดขอบ
+        wrapper.style.overflow = 'visible';
+        region.style.overflow = 'visible';
+    }
+
+    // เลื่อนกล่องข้อความให้ "ทุกบรรทัด" ตรงกับบรรทัดข้อความปกติมากที่สุด
+    //
+    // กล่องข้อความมีหลายบรรทัดได้ (เช่น ตำแหน่งประธาน / กรรมการ / เลขานุการ)
+    // จึงไม่ได้ดูแค่บรรทัดแรก: หา offset ที่ทำให้ระยะจากทุกบรรทัดในกล่อง
+    // ถึงบรรทัดเป้าหมายที่ใกล้ที่สุด รวมกันน้อยที่สุด แล้วใช้ค่านั้น
+    // (กล่องบรรทัดเดียวจะได้ผลเหมือนเดิม = ดึงเข้าบรรทัดที่ใกล้ที่สุด)
+    //
+    // การเลือก "แถวเป้าหมาย" ของกล่องหลายบรรทัด
+    // - กล่องที่วางอยู่ "ใต้" บรรทัดของย่อหน้าที่ตัวเองยึดอยู่ = กล่องป้าย
+    //   สำหรับแถวถัด ๆ ลงไป (เช่น ช่อง "ตำแหน่ง ..." ของรายชื่อด้านล่าง)
+    //   จุดเริ่มจึงเลื่อนไปที่แถวแรกที่อยู่ใต้กล่อง
+    // - กล่องที่ทับบรรทัดของย่อหน้าเอง (เช่น วางทับ {{field}} ในบรรทัดเดียวกัน)
+    //   ยังเริ่มที่บรรทัดนั้นตามเดิม
+    //
+    // แล้วจับคู่ทีละบรรทัด (1:1) พร้อมปรับระยะบรรทัดในกล่องให้เท่ากับแถวเป้าหมาย
+    // — ทำได้เฉพาะเมื่อจำนวนบรรทัดในกล่องเท่ากับจำนวนแถวเป้าหมาย
+    //
+    // กล่องบรรทัดเดียว / จับคู่ 1:1 ไม่ได้ ใช้ best-fit แบบเดิม:
+    // - บรรทัดแรกต้องใกล้บรรทัดข้อความอยู่แล้ว (คลาดเคลื่อนไม่เกินครึ่งบรรทัด)
+    //   ไม่งั้น = ตั้งใจวางเหลื่อม ไม่ดึง
+    // - offset ที่จะใช้ต้องเลื่อนได้ไม่เกินครึ่งบรรทัด และต้องดีกว่า "ไม่ขยับ"
     function snapTextboxToLine(item) {
         const wrapper = item.wrapper;
         const target = wrapper.closest ? wrapper.closest('p') : null;
 
-        if (!target) return;
-
-        const inner = textboxFirstParagraph(wrapper);
-        if (!inner) return;
-
-        const innerLine = firstLineBox(directTextRects(inner));
-        const targetRects = directTextRects(target);
-
-        if (!innerLine || !targetRects.length) return;
+        if (!target || !textboxContent(wrapper)) return;
 
         const scale = item.scale || 1;
-        const center = (innerLine.top + innerLine.bottom) / 2;
+        const tolerance = computedLineHeight(target) * scale / 2;
+        const middle = function (line) {
+            return (line.top + line.bottom) / 2;
+        };
 
-        // บรรทัดเป้าหมาย = rect ที่กึ่งกลางใกล้ที่สุด
-        let near = null;
+        // บรรทัดเป้าหมายของย่อหน้าที่กล่องยึดอยู่ + ย่อหน้าถัดไป
+        const paragraphs = targetParagraphsFor(wrapper, target, tolerance);
+        const targetLines = [];
 
-        targetRects.forEach(function (rect) {
-            const distance = Math.abs((rect.top + rect.bottom) / 2 - center);
-
-            if (!near || distance < near.distance) {
-                near = { rect: rect, distance: distance };
-            }
+        paragraphs.forEach(function (paragraph) {
+            lineBoxes(directTextRects(paragraph)).forEach(function (line) {
+                targetLines.push(line);
+            });
         });
 
-        if (!near) return;
+        if (!targetLines.length) return;
 
-        // ห่างเกินครึ่งความสูงบรรทัด = ตั้งใจวางเหลื่อม ไม่ดึงให้ตรงบรรทัด
-        if (near.distance > computedLineHeight(target) * scale / 2) return;
+        const boxLines = lineBoxes(textboxLineRects(wrapper));
 
-        const targetCenter = (near.rect.top + near.rect.bottom) / 2;
-        const delta = (targetCenter - center) / scale;
+        if (!boxLines.length) return;
+
+        // จุดเริ่มของแถวเป้าหมาย (บุ๋กล่องที่วางอยู่ใต้บรรทัดของย่อหน้าเอง)
+        let start = 0;
+        const anchorLines = lineBoxes(directTextRects(target));
+        const anchorLine = anchorLines.length ? anchorLines[anchorLines.length - 1] : null;
+
+        if (anchorLine && middle(boxLines[0]) > middle(anchorLine) + 1) {
+            while (
+                start < targetLines.length - 1
+                && middle(targetLines[start]) <= middle(boxLines[0])
+            ) {
+                start++;
+            }
+        }
+
+        // กล่องหลายบรรทัด + แถวเป้าหมายพอ = จับคู่ทีละบรรทัด (1:1)
+        if (boxLines.length >= 2 && targetLines.length - start >= boxLines.length) {
+            const windowLines = targetLines.slice(start, start + boxLines.length);
+
+            // ปรับระยะบรรทัดในกล่องให้เท่ากับแถวเป้าหมายก่อน
+            matchTextboxLineSpacing(wrapper, windowLines, scale);
+
+            const lines = lineBoxes(textboxLineRects(wrapper));
+
+            if (lines.length === windowLines.length) {
+                let sum = 0;
+
+                for (let i = 0; i < lines.length; i++) {
+                    sum += middle(windowLines[i]) - middle(lines[i]);
+                }
+
+                const delta = sum / lines.length;
+                let worst = 0;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const gap = Math.abs(
+                        middle(windowLines[i]) - middle(lines[i]) - delta
+                    );
+
+                    if (gap > worst) worst = gap;
+                }
+
+                // ทุกบรรทัดตรงกับแถวของตัวเอง = ใช้ได้ (ระยะบรรทัดเท่ากันแล้ว)
+                if (worst <= tolerance) {
+                    const move = delta / scale;
+
+                    if (Math.abs(move) >= 0.25) {
+                        wrapper.style.top = (item.top + move).toFixed(2) + 'px';
+                    }
+
+                    return;
+                }
+            }
+        }
+
+        // ── กล่องบรรทัดเดียว / จับคู่ 1:1 ไม่ได้ ──
+        const firstLines = lineBoxes(textboxLineRects(wrapper));
+
+        if (!firstLines.length) return;
+
+        // ประตู: บรรทัดแรกต้องใกล้บรรทัดข้อความอยู่แล้ว
+        // (เช็คก่อน — ไม่ผ่านจะไม่ไปปรับระยะบรรทัดให้กล่องเสียเปล่า)
+        let nearest = Infinity;
+
+        targetLines.forEach(function (line) {
+            const distance = Math.abs(middle(line) - middle(firstLines[0]));
+
+            if (distance < nearest) nearest = distance;
+        });
+
+        if (nearest > tolerance) return;
+
+        // ปรับระยะบรรทัดในกล่องให้เท่ากับแถวเป้าหมาย (กล่องหลายบรรทัด)
+        // เพื่อให้ทุกบรรทัดตรงได้จริง ไม่ใช่แค่บรรทัดแรก
+        matchTextboxLineSpacing(wrapper, targetLines, scale);
+
+        const lines = lineBoxes(textboxLineRects(wrapper));
+
+        if (!lines.length) return;
+
+        // ค่าเฉลี่ยระยะจากทุกบรรทัดในกล่อง ถึงบรรทัดเป้าหมายที่ใกล้ที่สุด
+        // เมื่อเลื่อนกล่องไป delta px
+        const residual = function (delta) {
+            let total = 0;
+
+            lines.forEach(function (line) {
+                const value = middle(line) + delta;
+                let nearest = Infinity;
+
+                targetLines.forEach(function (candidate) {
+                    const distance = Math.abs(middle(candidate) - value);
+
+                    if (distance < nearest) nearest = distance;
+                });
+
+                total += nearest;
+            });
+
+            return total / lines.length;
+        };
+
+        // หา offset ที่ดีที่สุด — เลื่อนได้ไม่เกินครึ่งบรรทัด
+        // (ไม่ลากกล่องไปเกาะบรรทัดอื่นที่ไกลออกไป)
+        const baseline = residual(0);
+        let best = null;
+
+        lines.forEach(function (boxLine) {
+            targetLines.forEach(function (targetLine) {
+                const delta = middle(targetLine) - middle(boxLine);
+
+                if (Math.abs(delta) > tolerance) return;
+
+                const average = residual(delta);
+
+                if (!best || average < best.average) {
+                    best = { delta: delta, average: average };
+                }
+            });
+        });
+
+        // ไม่มีทางเลือก หรือขยับแล้วไม่ดีกว่าเดิม = ไม่แตะ
+        if (!best || best.average >= baseline) return;
+
+        const delta = best.delta / scale;
 
         if (Math.abs(delta) < 0.25) return;
 
