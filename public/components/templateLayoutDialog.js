@@ -2069,6 +2069,189 @@ async function renderDocx(bytes) {
         return null;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ดึงกล่องข้อความให้อยู่ "แถวเดียวกัน" กับบรรทัดข้อความปกติ
+    //
+    // คนวางกล่องข้อความใน Word ด้วยมือมักเหลื่อมแนวตั้งจากบรรทัดข้าง ๆ
+    // ไม่กี่ px ทั้งที่ตั้งใจให้อยู่บรรทัดเดียวกัน ที่นี่จึงวัดบรรทัดจริงบนจอ:
+    // ถ้าบรรทัดแรกในกล่องห่างจากบรรทัดข้อความเป้าหมายไม่เกินครึ่งความสูงบรรทัด
+    // ก็เลื่อนกล่องให้บรรทัดแรกไปตรงแถวนั้น
+    //
+    // วัด "บรรทัดแรกในกล่อง" จากกล่องบรรทัดที่เรนเดอร์จริง (getClientRects)
+    // จึงไม่ขึ้นกับ padding ภายในกล่อง และเลื่อนกล่องเท่าที่ต่างจริง
+    // วัตถุที่อ้างแนวตั้งจากหน้า/ขอบกระดาษ (ลายน้ำ/รูปหัวกระดาษ) ไม่ถูกดึง
+    // ──────────────────────────────────────────────────────────────
+
+    // ข้อความนี้อยู่ในย่อหน้า/กล่องข้อความที่ซ้อนอยู่ใน element หรือไม่
+    // (ใช้ตัดข้อความของกล่องข้อความลอยออกจากการวัดบรรทัดของย่อหน้าแม่)
+    function insideNestedParagraph(node, element) {
+        let parent = node.parentElement;
+
+        while (parent && parent !== element) {
+            if (parent.localName === 'p') return true;
+            if (parent.localName === 'foreignObject') return true;
+            if (parent.dataset && parent.dataset.layoutTextBox === '1') return true;
+
+            parent = parent.parentElement;
+        }
+
+        return false;
+    }
+
+    // กล่องบรรทัด (px บนจอ ถูกคูณ zoom แล้ว) ของข้อความที่อยู่ใน element ตรง ๆ
+    function directTextRects(element) {
+        const rects = [];
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+
+        let node;
+
+        while ((node = walker.nextNode()) !== null) {
+            const value = node.textContent || '';
+
+            if (value.replace(/\s+/g, '') === '') continue;
+            if (insideNestedParagraph(node, element)) continue;
+
+            try {
+                const range = document.createRange();
+                range.selectNodeContents(node);
+
+                Array.from(range.getClientRects()).forEach(function (rect) {
+                    if (rect.height > 0) rects.push(rect);
+                });
+            } catch (error) {
+                // วัดไม่ได้ = ไม่มีข้อมูลบรรทัดนี้
+            }
+        }
+
+        return rects;
+    }
+
+    // กล่องบรรทัดแรก (บนสุด) — รวม rect ที่อยู่บรรทัดเดียวกันให้เป็นกล่องเดียว
+    function firstLineBox(rects) {
+        if (!rects.length) return null;
+
+        let minTop = Infinity;
+
+        rects.forEach(function (rect) {
+            if (rect.top < minTop) minTop = rect.top;
+        });
+
+        let top = Infinity;
+        let bottom = -Infinity;
+
+        rects.forEach(function (rect) {
+            if (rect.top - minTop > 2) return;
+
+            top = Math.min(top, rect.top);
+            bottom = Math.max(bottom, rect.bottom);
+        });
+
+        if (!(bottom > top)) return null;
+
+        return { top: top, bottom: bottom };
+    }
+
+    // ย่อหน้าแรกที่มีข้อความของกล่องข้อความ (สำหรับวัดบรรทัดแรกของกล่อง)
+    function textboxFirstParagraph(wrapper) {
+        const region = wrapper.querySelector('[data-layout-text-box]')
+            || wrapper.querySelector('foreignObject');
+
+        if (!region) return null;
+
+        const paragraphs = Array.from(region.querySelectorAll('p'));
+
+        return paragraphs.find(function (paragraph) {
+            return (paragraph.textContent || '').replace(/\s+/g, '') !== '';
+        }) || paragraphs[0] || null;
+    }
+
+    // ความสูงบรรทัดตาม computed style (px ในพื้นที่เอกสาร ยังไม่คูณ zoom)
+    function computedLineHeight(element) {
+        const style = window.getComputedStyle(element);
+        const value = parseFloat(style.lineHeight);
+
+        if (isFinite(value) && value > 0) return value;
+
+        return (parseFloat(style.fontSize) || 12) * 1.2;
+    }
+
+    // เลื่อนกล่องข้อความให้บรรทัดแรกตรงกับบรรทัดข้อความที่ใกล้ที่สุด
+    function snapTextboxToLine(item) {
+        const wrapper = item.wrapper;
+        const target = wrapper.closest ? wrapper.closest('p') : null;
+
+        if (!target) return;
+
+        const inner = textboxFirstParagraph(wrapper);
+        if (!inner) return;
+
+        const innerLine = firstLineBox(directTextRects(inner));
+        const targetRects = directTextRects(target);
+
+        if (!innerLine || !targetRects.length) return;
+
+        const scale = item.scale || 1;
+        const center = (innerLine.top + innerLine.bottom) / 2;
+
+        // บรรทัดเป้าหมาย = rect ที่กึ่งกลางใกล้ที่สุด
+        let near = null;
+
+        targetRects.forEach(function (rect) {
+            const distance = Math.abs((rect.top + rect.bottom) / 2 - center);
+
+            if (!near || distance < near.distance) {
+                near = { rect: rect, distance: distance };
+            }
+        });
+
+        if (!near) return;
+
+        // ห่างเกินครึ่งความสูงบรรทัด = ตั้งใจวางเหลื่อม ไม่ดึงให้ตรงบรรทัด
+        if (near.distance > computedLineHeight(target) * scale / 2) return;
+
+        const targetCenter = (near.rect.top + near.rect.bottom) / 2;
+        const delta = (targetCenter - center) / scale;
+
+        if (Math.abs(delta) < 0.25) return;
+
+        wrapper.style.top = (item.top + delta).toFixed(2) + 'px';
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ถอด "ตัวห่อ" ของวัตถุลอยออกจากผังข้อความ
+    //
+    // docx-preview ห่อ VML (w:pict) ไว้ใน <div> ซึ่งเป็น block อยู่ในย่อหน้า
+    // (renderVmlPicture → renderContainer(elem, "div"))
+    // <div> นี้อยู่ใน flow จึงดันข้อความข้าง ๆ (เช่น {{field}}) ขึ้นบรรทัดใหม่
+    // กล่องข้อความกับข้อความในย่อหน้าเดียวกันจึงคนละบรรทัด
+    // ทั้งที่ตัววัตถุถูกวาง position: absolute ไปแล้ว
+    //
+    // จึงถอด <div> ที่ทำหน้าที่แค่ห่อวัตถุออกจากผัง (display: contents)
+    // ไล่ขึ้นไปจนถึงย่อหน้า — วัตถุ absolute จะไม่กินบรรทัดอีก
+    // ถอดเฉพาะ <div> ที่มีแต่วัตถุ ไม่มีข้อความอื่นปน (กัน div ที่มีความหมายถูกถอด)
+    // ──────────────────────────────────────────────────────────────
+    function flattenShapeWrappers(wrapper) {
+        let node = wrapper.parentElement;
+
+        // ไล่ขึ้นเฉพาะผ่าน div/span ในย่อหน้า — เจอย่อหน้าหรือออกนอกย่อหน้า
+        // (ตาราง/กล่องหน้า) ให้หยุด ไม่แตะตัวห่อของผังหลัก
+        while (node) {
+            if (node.localName === 'p') break;
+            if (node.localName !== 'div' && node.localName !== 'span') break;
+
+            const hasText = Array.from(node.childNodes).some(function (child) {
+                return child.nodeType === 3
+                    && (child.textContent || '').replace(/\s+/g, '') !== '';
+            });
+
+            if (node.localName === 'div' && !hasText && node.children.length === 1) {
+                node.style.display = 'contents';
+            }
+
+            node = node.parentElement;
+        }
+    }
+
     // วางวัตถุลอย (รูประหว่างบรรทัด/ลอย กล่องข้อความ) ตาม wp:anchor ของเอกสาร
     function positionAnchors(anchors, wrappers) {
         // วัดตำแหน่งเดิมและวางแผนก่อน แล้วค่อยย้ายทีเดียว
@@ -2117,7 +2300,11 @@ async function renderDocx(bytes) {
                 wrapper: wrapper,
                 left: left === null ? currentLeft : left,
                 top: (top === null ? currentTop : top) - correction,
-                behind: anchor.behindDoc
+                behind: anchor.behindDoc,
+                scale: page.scale || 1,
+                // อ้างแนวตั้งจากย่อหน้า/บรรทัด = วัตถุที่ "อยู่กับข้อความ"
+                // จึงดึงเข้าบรรทัดได้ (วัตถุที่อ้างจากหน้าไม่แตะ)
+                textRelative: isParagraphRelative(anchor.vertical)
             });
         });
 
@@ -2133,6 +2320,17 @@ async function renderDocx(bytes) {
 
             // รูปที่ตั้งให้อยู่หลังข้อความ (behindDoc) ต้องอยู่หลังเนื้อเรื่องจริง
             item.wrapper.style.zIndex = item.behind ? '-1' : 'auto';
+
+            // วัตถุ absolute ไม่ควรกินบรรทัด — ถอดตัวห่อ block ออก
+            flattenShapeWrappers(item.wrapper);
+        });
+
+        // ดึงกล่องข้อความที่ความสูงใกล้บรรทัดข้อความปกติให้อยู่แถวเดียวกัน
+        // ทำหลังวางทุกวัตถุแล้ว เพื่อวัดบรรทัดของย่อหน้าได้นิ่ง
+        plan.forEach(function (item) {
+            if (!item.textRelative) return;
+
+            snapTextboxToLine(item);
         });
     }
 
@@ -2244,6 +2442,9 @@ async function renderDocx(bytes) {
             // เท่ากับ margin ใน VML พอดี
             reanchorDeclaredBox(svg, page, horizontal, 'left');
             reanchorDeclaredBox(svg, page, vertical, 'top');
+
+            // วัตถุ absolute ไม่ควรกินบรรทัด — ถอดตัวห่อ block ออก
+            flattenShapeWrappers(svg);
         });
     }
 
