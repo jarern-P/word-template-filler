@@ -589,6 +589,25 @@
         }
     }
 
+    // เทียบชื่อแม่แบบแบบพจนานุกรม (ก-ฮ, A-Z)
+    // ทำไมไม่เรียงใน SQL (`ORDER BY name`): SQLite เทียบทีละไบต์ของ UTF-8
+    // พยัญชนะไทยจึงเรียงถูก แต่สระนำหน้า (เ แ โ ใ ไ) ซึ่งอยู่หลังพยัญชนะในรหัส
+    // Unicode จะไปต่อท้ายทั้งหมด และตัวเลขเรียงแบบ 1, 10, 2
+    // ตัวเทียบของ ICU (localeCompare 'th') เรียงให้ตรงตามที่คนอ่านคาดหวัง
+    const templateNameCollator =
+        new Intl.Collator(
+            'th',
+            { numeric: true, sensitivity: 'base' }
+        );
+
+    function byTemplateName(a, b) {
+
+        return templateNameCollator.compare(
+            String((a && a.name) || '').trim(),
+            String((b && b.name) || '').trim()
+        );
+    }
+
     async function refreshTemplateList() {
 
         // ข้ามการโหลดฐานข้อมูลถ้าหน้าปัจจุบันไม่มีที่แสดงรายการ
@@ -605,6 +624,12 @@
 
             templateRecords =
                 await scope.Db.list();
+
+            // เรียงตามชื่อ (ตัวอักษร) ไม่ใช่เวลาสร้าง/อัปเดต
+            // ตัวฐานข้อมูลยังส่งมาล่าสุดก่อน -> ชื่อซ้ำกัน (เช่น (สำเนา)) ล่าสุดอยู่บน
+            templateRecords.sort(
+                byTemplateName
+            );
 
             renderTemplateChoosers(
                 templateRecords
