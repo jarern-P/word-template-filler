@@ -144,6 +144,14 @@
         ) {
             scope.ReportPage.resetTables();
         }
+
+        // ล้างชุดข้อมูลที่นำเข้าจาก Excel (ผูกกับ template ที่โหลดอยู่)
+        if (
+            scope.ReportPage &&
+            scope.ReportPage.clearImportedRows
+        ) {
+            scope.ReportPage.clearImportedRows();
+        }
     }
 
     function getPageHTML(page) {
@@ -350,6 +358,10 @@
                 component.showPreviewButton(false);
             }
 
+            if (component.showExcelButtons) {
+                component.showExcelButtons(false);
+            }
+
             if (component.setSaveEnabled) {
                 component.setSaveEnabled(false);
             }
@@ -374,6 +386,11 @@
         // ปุ่มดูตัวอย่างมีเฉพาะหน้ารายงาน (declared ใน reportPage.js)
         if (component.showPreviewButton) {
             component.showPreviewButton(state.fields.length > 0);
+        }
+
+        // ปุ่มนำเข้า/ส่งออก Excel ก็มีเฉพาะหน้ารายงาน
+        if (component.showExcelButtons) {
+            component.showExcelButtons(state.fields.length > 0);
         }
 
         if (component.setSaveEnabled) {
@@ -1092,6 +1109,16 @@
                     return;
                 }
 
+                // นำเข้าข้อมูลหลายแถวของหน้ารายงาน (ไฟล์เดียว = หลายชุดค่า)
+                if (
+                    target &&
+                    target.id === 'reportImportInput'
+                ) {
+
+                    onImportReportExcel(event);
+                    return;
+                }
+
                 // สวิตช์เปิด/ปิดการแนะนำคำ (หน้า "คำแนะนำ")
                 if (
                     target &&
@@ -1410,6 +1437,38 @@
                 if (id === 'previewBtn') {
 
                     onPreview();
+                    return;
+                }
+
+                // นำเข้า / ส่งออก Excel ของหน้ารายงาน
+                if (id === 'reportExportBtn') {
+
+                    onExportReportExcel();
+                    return;
+                }
+
+                if (id === 'reportImportBtn') {
+
+                    const reportImportInput =
+                        document.getElementById('reportImportInput');
+
+                    if (reportImportInput) {
+                        reportImportInput.click();
+                    }
+
+                    return;
+                }
+
+                // เลื่อนดูชุดข้อมูลที่นำเข้าจาก Excel ทีละแถว
+                if (id === 'reportRowPrevBtn') {
+
+                    onReportRowStep(-1);
+                    return;
+                }
+
+                if (id === 'reportRowNextBtn') {
+
+                    onReportRowStep(1);
                     return;
                 }
 
@@ -2138,6 +2197,419 @@
         });
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // หน้ารายงาน: นำเข้า / ส่งออก Excel
+    //
+    // ไฟล์ Excel ใช้ 1 คอลัมน์ = 1 field ใน template (แถวแรกเป็นชื่อ field)
+    // ผู้ใช้กรอกนอกแอปได้หลายแถว แต่ละแถว = หนึ่งชุดค่า → กด Download ทีเดียวได้แถวละไฟล์
+    // field ชนิดตาราง (Table) ไม่อยู่ในไฟล์ เพราะค่าของตารางไม่ใช่ข้อความ
+    // (ค่าตารางที่กรอกในฟอร์มถูกใช้เหมือนกันทุกชุด)
+    // ──────────────────────────────────────────────────────────────
+
+    // field ที่ใส่ในไฟล์ Excel ได้ = ทุก field ที่ไม่ใช่ตาราง
+    function reportExcelFields() {
+
+        const types =
+            scope.App.getFieldTypes();
+
+        return state.fields.filter(function (field) {
+            return types[field] !== 'table';
+        });
+    }
+
+    // แถวทั้งหมดของไฟล์ Excel ที่จะส่งออก
+    // แถวแรก = ชื่อ field | แถวถัดไป = ค่าดิบ (เติมกลับเข้าฟอร์มได้ตรง ๆ)
+    function reportExcelRows(report) {
+
+        const fields =
+            reportExcelFields();
+
+        const rows = [fields.slice()];
+
+        // มีชุดข้อมูลที่นำเข้าอยู่ = ส่งออกทุกแถว (แก้ต่อใน Excel แล้วอัปโหลดกลับได้เลย)
+        if (
+            report.getImportedRows &&
+            report.getImportedRows().length > 1
+        ) {
+
+            if (report.syncImportedRow) {
+                report.syncImportedRow();
+            }
+
+            report.getImportedRows().forEach(function (row) {
+
+                rows.push(
+                    fields.map(function (field) {
+                        return row[field] == null ? '' : String(row[field]);
+                    })
+                );
+            });
+
+            return rows;
+        }
+
+        // ไม่มี = ส่งออกค่าที่กรอกอยู่ในฟอร์มเป็นแถวเดียว
+        const raw =
+            report.getRawValues();
+
+        rows.push(
+            fields.map(function (field) {
+                return raw[field] == null ? '' : String(raw[field]);
+            })
+        );
+
+        return rows;
+    }
+
+    // อ่านแถวจากไฟล์ Excel ของหน้ารายงาน
+    // แถวแรก (หรือแถวแรกที่เจอชื่อ field) = คอลัมน์ | คอลัมน์ที่ไม่ตรงกับ field ใดถูกข้าม
+    function parseReportRows(rows, fields) {
+
+        const list =
+            Array.isArray(rows) ? rows : [];
+
+        const byHeader = {};
+
+        fields.forEach(function (field) {
+            byHeader[normalizeHeaderCell(field)] = field;
+        });
+
+        let headerIndex = 0;
+        let columns = null;
+        let unknown = 0;
+
+        for (let i = 0; i < Math.min(list.length, 5); i++) {
+
+            const labels =
+                (list[i] || []).map(normalizeHeaderCell);
+
+            let matched = 0;
+            let skipped = 0;
+
+            const mapped =
+                labels.map(function (label) {
+
+                    if (
+                        label !== '' &&
+                        Object.prototype.hasOwnProperty.call(byHeader, label)
+                    ) {
+                        matched++;
+                        return byHeader[label];
+                    }
+
+                    if (label !== '') skipped++;
+                    return '';
+                });
+
+            if (matched === 0) continue;
+
+            headerIndex = i;
+            columns = mapped;
+            unknown = skipped;
+            break;
+        }
+
+        if (!columns) {
+            return { values: [], unknown: 0 };
+        }
+
+        const values = [];
+
+        for (let i = headerIndex + 1; i < list.length; i++) {
+
+            const row = list[i] || [];
+            const value = {};
+            let filled = false;
+
+            columns.forEach(function (field, col) {
+
+                if (!field) return;
+
+                const text =
+                    row[col] == null ? '' : String(row[col]);
+
+                value[field] = text;
+
+                if (text.trim() !== '') filled = true;
+            });
+
+            // แถวว่างทั้งแถวข้าม (Excel มักมีแถวเปล่าต่อท้าย)
+            if (!filled) continue;
+
+            values.push(value);
+        }
+
+        return { values: values, unknown: unknown };
+    }
+
+    // สรุปผลนำเข้าข้อมูลหลายแถวของหน้ารายงาน
+    function describeReportImport(parsed) {
+
+        const parts = [
+            'นำเข้าสำเร็จ ' + parsed.values.length + ' แถว'
+        ];
+
+        if (parsed.values.length > 1) {
+            parts.push(
+                'กด Download DOCX ครั้งเดียวจะได้ ' + parsed.values.length + ' ไฟล์'
+            );
+        }
+
+        if (parsed.unknown > 0) {
+            parts.push('ข้ามคอลัมน์ที่ไม่ตรงกับ field ' + parsed.unknown + ' คอลัมน์');
+        }
+
+        return parts.join(' · ');
+    }
+
+    // ดาวน์โหลดไฟล์ Excel ของหน้ารายงาน (field เป็นคอลัมน์)
+    // ตั้งใจให้ไฟล์ที่ได้เติมหลายแถวแล้วอัปโหลดกลับได้เลย
+    async function onExportReportExcel() {
+
+        if (!state.loaded) {
+
+            await scope.AppDialog.alert(
+                'ยังไม่มี template — เลือก template ก่อนดาวน์โหลด Excel'
+            );
+
+            return;
+        }
+
+        const report =
+            getComponent(DEFAULT_PAGE);
+
+        const excelRows =
+            reportExcelRows(report);
+
+        if (excelRows[0].length === 0) {
+
+            await scope.AppDialog.alert(
+                'template นี้ไม่มี field ที่ใส่ใน Excel ได้'
+            );
+
+            return;
+        }
+
+        showDownloadStatus('กำลังสร้างไฟล์ Excel...');
+
+        try {
+
+            const blob =
+                await scope.Xlsx.createBlob(excelRows, 'Report');
+
+            const fileName =
+                templateOutputName() + '-' + dateStamp() + '.xlsx';
+
+            const result =
+                await downloadBlob(blob, fileName);
+
+            if (result && result.ok === false) {
+
+                throw new Error(
+                    result.error ||
+                    'บันทึกไฟล์ไม่สำเร็จ'
+                );
+            }
+
+            if (result && result.canceled) {
+
+                showDownloadStatus('ยกเลิกการดาวน์โหลด');
+                return;
+            }
+
+            showDownloadStatus(
+                'ดาวน์โหลด Excel แล้ว: ' +
+                (result && result.fileName ? result.fileName : fileName) +
+                '  (' + (excelRows.length - 1) + ' แถว)',
+                'ok'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            showDownloadStatus(
+                'ดาวน์โหลด Excel ไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    // นำเข้าข้อมูลหลายแถวจากไฟล์ .xlsx ของหน้ารายงาน
+    // แถวแรกจะถูกเติมเข้าฟอร์มให้ตรวจ และกด Download ครั้งเดียวได้ทุกแถว
+    async function onImportReportExcel(event) {
+
+        const input =
+            event.target;
+
+        const file =
+            input.files && input.files[0];
+
+        // ล้างค่า input ทันที เพื่อให้เลือกไฟล์เดิมซ้ำได้
+        input.value = '';
+
+        if (!file) {
+            return;
+        }
+
+        if (!state.loaded) {
+
+            await scope.AppDialog.alert(
+                'ยังไม่มี template — เลือก template ก่อนอัปโหลด Excel'
+            );
+
+            return;
+        }
+
+        const report =
+            getComponent(DEFAULT_PAGE);
+
+        showDownloadStatus(
+            'กำลังอ่านไฟล์ ' + (file.name || '') + '...'
+        );
+
+        try {
+
+            const bytes =
+                new Uint8Array(
+                    await file.arrayBuffer()
+                );
+
+            const rows =
+                await scope.Xlsx.readRows(bytes);
+
+            const parsed =
+                parseReportRows(rows, reportExcelFields());
+
+            if (parsed.values.length === 0) {
+
+                showDownloadStatus(
+                    'ไม่พบข้อมูลในไฟล์ — แถวแรกต้องเป็นชื่อ field ' +
+                    'ให้ตรงกับ template',
+                    'error'
+                );
+
+                return;
+            }
+
+            // ฟอร์มมีค่าอยู่ = ถามก่อน กันอัปโหลดผิดไฟล์แล้วค่าที่กรอกหาย
+            const current =
+                report.getRawValues();
+
+            const hasData =
+                Object.keys(current).some(function (field) {
+
+                    const text =
+                        current[field] == null
+                            ? ''
+                            : String(current[field]);
+
+                    return text.trim() !== '';
+                });
+
+            if (hasData) {
+
+                const ok =
+                    await scope.AppDialog.confirm(
+                        'พบ ' + parsed.values.length + ' แถวในไฟล์ "' +
+                        (file.name || '') + '"\n\n' +
+                        'ค่าที่กรอกอยู่ในฟอร์มจะถูกแทนด้วยแถวแรกของไฟล์\n' +
+                        'ต้องการนำเข้าหรือไม่?',
+                        { title: 'ยืนยันการนำเข้า Excel', okText: 'นำเข้า' }
+                    );
+
+                if (!ok) {
+                    showDownloadStatus('ยกเลิกการนำเข้า');
+                    return;
+                }
+            }
+
+            report.setImportedRows(parsed.values);
+
+            showDownloadStatus(
+                describeReportImport(parsed),
+                'ok'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            showDownloadStatus(
+                'นำเข้าไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    // เลื่อนดูชุดข้อมูลที่นำเข้าจาก Excel ทีละแถว
+    // (ค่าที่แก้ในฟอร์มถูกเก็บกลับเข้าแถวเดิมก่อนเปลี่ยนทุกครั้ง)
+    function onReportRowStep(step) {
+
+        const report =
+            getComponent(DEFAULT_PAGE);
+
+        if (!report || !report.goToImportedRow) {
+            return;
+        }
+
+        report.goToImportedRow(
+            report.getImportedIndex() + step
+        );
+    }
+
+    // ชุดค่าที่จะสร้างไฟล์ .docx
+    // ปกติ 1 ชุด (ค่าที่กรอกในฟอร์ม) — ถ้ามีชุดข้อมูลที่นำเข้าตั้งแต่ 2 แถวขึ้นไป
+    // จะได้ทุกแถว (แถวละไฟล์) ตอนกด Download ครั้งเดียว
+    function collectDownloadBatches(component) {
+
+        if (
+            component &&
+            component.getImportedRows &&
+            component.getImportedRows().length > 1 &&
+            component.formatImportedRow
+        ) {
+
+            // เก็บค่าที่แก้ในฟอร์มของแถวที่แสดงอยู่กลับก่อน (ผู้ใช้อาจแก้หลังอัปโหลด)
+            if (component.syncImportedRow) {
+                component.syncImportedRow();
+            }
+
+            return component.getImportedRows().map(function (_, index) {
+                return component.formatImportedRow(index);
+            });
+        }
+
+        return [
+            component.getValues()
+        ];
+    }
+
+    // ข้อความสรุปผลการดาวน์โหลด (1 ไฟล์ หรือหลายไฟล์จากการนำเข้า Excel)
+    function describeDownload(names) {
+
+        if (names.length <= 1) {
+
+            return (
+                'ดาวน์โหลดแล้ว: ' + (names[0] || '') +
+                '  (โฟลเดอร์ Downloads)'
+            );
+        }
+
+        const shown =
+            names.slice(0, 3);
+
+        const more =
+            names.length - shown.length;
+
+        return (
+            'ดาวน์โหลดแล้ว ' + names.length + ' ไฟล์: ' +
+            shown.join(', ') +
+            (more > 0 ? ' และอีก ' + more + ' ไฟล์' : '') +
+            '  (โฟลเดอร์ Downloads)'
+        );
+    }
+
     async function onDownload() {
 
         if (
@@ -2152,14 +2624,9 @@
             return;
         }
 
-        const values =
-            getComponent(
-                currentPage
-            ).getValues();
+        const component =
+            getComponent(currentPage);
 
-        // แทนค่าจาก xml ต้นฉบับ
-        // และสร้าง zip ใหม่จาก byte ต้นฉบับ
-        // → กดดาวน์โหลดซ้ำได้ค่าที่ถูกต้องเสมอ
         // field ที่ติ๊ก "ล็อกตำแหน่ง" ไว้ในหน้า Template Configuration
         const config =
             getComponent(
@@ -2172,25 +2639,9 @@
                 ? config.getLocks()
                 : null;
 
-        const xml =
-            scope.Replace.replaceFields(
-                state.xml,
-                values,
-                locks,
-                collectTables(),
-                fieldHighlightOn()
-            );
-
-        // ล็อกตำแหน่งได้ครบหรือไม่ + ปรับช่องว่างไปเท่าไร แจ้งบนหน้ารายงาน
-        showReplaceResult(
-            scope.Replace.getWarnings
-                ? scope.Replace.getWarnings()
-                : [],
-            scope.Replace.getApplied
-                ? scope.Replace.getApplied()
-                : [],
-            !!(textMeasurer && textMeasurer.approximate)
-        );
+        // 1 ชุด = 1 ไฟล์ (นำเข้าหลายแถวจาก Excel แล้วกดครั้งเดียว = ได้ทุกแถว)
+        const batches =
+            collectDownloadBatches(component);
 
         try {
 
@@ -2199,50 +2650,93 @@
                     state.docxBytes
                 );
 
-            zip.file(
-                'word/document.xml',
-                xml
-            );
+            const saved = [];
 
-            const blob =
-                await zip.generateAsync({
-                    type: 'blob'
-                });
+            for (
+                let index = 0;
+                index < batches.length;
+                index++
+            ) {
 
-            const fileName =
-                outputFileName(values);
+                const values =
+                    batches[index];
 
-            const result =
-                await downloadBlob(
-                    blob,
-                    fileName
+                // แทนค่าจาก xml ต้นฉบับ แล้วเขียนทับใน zip เดียวกัน (generate ใหม่ต่อแถว)
+                // → กดดาวน์โหลดซ้ำได้ค่าที่ถูกต้องเสมอ
+                const xml =
+                    scope.Replace.replaceFields(
+                        state.xml,
+                        values,
+                        locks,
+                        collectTables(),
+                        fieldHighlightOn()
+                    );
+
+                // ล็อกตำแหน่งได้ครบหรือไม่ + ปรับช่องว่างไปเท่าไร แจ้งบนหน้ารายงาน
+                // (รายงานจากแถวแรกที่สร้าง — พอเห็นว่าล็อกได้ครบไหม)
+                if (index === 0) {
+
+                    showReplaceResult(
+                        scope.Replace.getWarnings
+                            ? scope.Replace.getWarnings()
+                            : [],
+                        scope.Replace.getApplied
+                            ? scope.Replace.getApplied()
+                            : [],
+                        !!(textMeasurer && textMeasurer.approximate)
+                    );
+                }
+
+                zip.file(
+                    'word/document.xml',
+                    xml
                 );
 
-            // Electron เท่านั้น: แจ้ง error จากฝั่ง main (เช่น เขียนโฟลเดอร์ไม่ได้)
-            if (result && result.ok === false) {
+                const blob =
+                    await zip.generateAsync({
+                        type: 'blob'
+                    });
 
-                throw new Error(
-                    result.error ||
-                    'บันทึกไฟล์ไม่สำเร็จ'
-                );
-            }
+                const fileName =
+                    outputFileName(values);
 
-            if (result && result.canceled) {
+                const result =
+                    await downloadBlob(
+                        blob,
+                        fileName
+                    );
 
-                showDownloadStatus('ยกเลิกการดาวน์โหลด');
+                // Electron เท่านั้น: แจ้ง error จากฝั่ง main (เช่น เขียนโฟลเดอร์ไม่ได้)
+                if (result && result.ok === false) {
 
-                return;
-            }
+                    throw new Error(
+                        result.error ||
+                        'บันทึกไฟล์ไม่สำเร็จ'
+                    );
+                }
 
-            // ฝั่ง main คืนชื่อจริงที่ได้ (อาจมีเลข (1) ต่อท้ายถ้าชื่อซ้ำ)
-            showDownloadStatus(
-                'ดาวน์โหลดแล้ว: ' +
-                (
+                if (result && result.canceled) {
+
+                    showDownloadStatus(
+                        saved.length > 0
+                            ? 'ยกเลิกการดาวน์โหลด (ได้ไปแล้ว ' +
+                                saved.length + ' ไฟล์)'
+                            : 'ยกเลิกการดาวน์โหลด'
+                    );
+
+                    return;
+                }
+
+                // ฝั่ง main คืนชื่อจริงที่ได้ (อาจมีเลข (1) ต่อท้ายถ้าชื่อซ้ำ)
+                saved.push(
                     result && result.fileName
                         ? result.fileName
                         : fileName
-                ) +
-                '  (โฟลเดอร์ Downloads)',
+                );
+            }
+
+            showDownloadStatus(
+                describeDownload(saved),
                 'ok'
             );
 

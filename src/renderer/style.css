@@ -830,6 +830,28 @@ button.danger:hover {
     flex-shrink: 0;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   ชุดข้อมูลที่นำเข้าจาก Excel (หน้ารายงาน)
+   ไฟล์ Excel 1 แถว = 1 ชุดค่า = 1 ไฟล์ .docx ตอนกด Download
+   ────────────────────────────────────────────────────────────── */
+.report-rows {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.report-rows button {
+    margin-top: 0;
+}
+
+.report-rows-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+}
+
 
 .saved-templates {
     margin-top: 36px;

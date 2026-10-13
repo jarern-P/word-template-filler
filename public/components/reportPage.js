@@ -21,14 +21,33 @@
     // ต่อด้วยบรรทัดผลการบันทึกไฟล์ (ดาวน์โหลดแล้ว: <ชื่อไฟล์>)
     // เพราะการดาวน์โหลดไม่เปิดกล่อง Save อีก จึงต้องบอกชื่อไฟล์ที่ได้จริง
     // (พร้อมเลข (1) ถ้าชื่อซ้ำ) ให้เห็นบนหน้านี้
+    // แถบเลื่อนดูชุดข้อมูลที่นำเข้าจาก Excel (แสดงเมื่อมีมากกว่า 1 แถวเท่านั้น)
+    // 1 แถว = 1 ชุดค่า = 1 ไฟล์ .docx ตอนกด Download
+    const ROWS_HTML = [
+        '<div class="report-rows" id="reportRows" style="display:none">',
+        '    <button id="reportRowPrevBtn" type="button" class="plain"',
+        '            aria-label="แถวก่อนหน้า">← ก่อนหน้า</button>',
+        '    <span id="reportRowLabel" class="report-rows-label"></span>',
+        '    <button id="reportRowNextBtn" type="button" class="plain"',
+        '            aria-label="แถวถัดไป">ถัดไป →</button>',
+        '</div>'
+    ].join('\n');
+
     const FOOTER_HTML =
+        ROWS_HTML +
         '<p id="replaceWarning" class="replace-warning" style="display:none"></p>' +
         '<p id="downloadStatus" class="db-status" style="display:none"></p>';
 
-    // ปุ่มดูตัวอย่างก่อนดาวน์โหลด (แสดงเฉพาะเมื่อโหลด template แล้ว — ดู showPreviewButton)
+    // ปุ่มดูตัวอย่างก่อนดาวน์โหลด + นำเข้า/ส่งออก Excel (แสดงเฉพาะเมื่อโหลด template แล้ว
+    // — ดู showPreviewButton / showExcelButtons)
     const ACTIONS_HTML =
         '<button id="previewBtn" type="button" class="plain" style="display:none">' +
-        'ดูตัวอย่างก่อนดาวน์โหลด</button>';
+        'ดูตัวอย่างก่อนดาวน์โหลด</button>' +
+        '<button id="reportExportBtn" type="button" class="plain" style="display:none">' +
+        'ดาวน์โหลด Excel</button>' +
+        '<button id="reportImportBtn" type="button" class="plain" style="display:none">' +
+        'อัปโหลด Excel</button>' +
+        '<input type="file" id="reportImportInput" accept=".xlsx" hidden>';
 
     const META_HTML = [
         '<div class="template-meta">',
@@ -127,17 +146,129 @@
     page.renderForm = function (fields) {
         baseRenderForm.call(page, fields);
         syncHighlightToggle();
+        syncRowsBar();
     };
 
     const baseShowEmptyState = page.showEmptyState;
     page.showEmptyState = function () {
         baseShowEmptyState.call(page);
         syncHighlightToggle();
+        syncRowsBar();
     };
 
     page.showPreviewButton = function (show) {
         const btn = document.getElementById('previewBtn');
         if (btn) btn.style.display = show ? 'block' : 'none';
+    };
+
+    page.showExcelButtons = function (show) {
+        ['reportExportBtn', 'reportImportBtn'].forEach(function (id) {
+            const btn = document.getElementById(id);
+            if (btn) btn.style.display = show ? 'block' : 'none';
+        });
+    };
+
+    // ──────────────────────────────────────────────────────────────
+    // ชุดข้อมูลที่นำเข้าจาก Excel
+    //
+    // ผู้ใช้อาจกรอกหลายแถวในไฟล์ Excel แล้วอัปโหลดกลับ — แต่ละแถวคือ "หนึ่งชุดค่า"
+    // ซึ่งจะกลายเป็นไฟล์ .docx หนึ่งไฟล์ตอนกด Download
+    //
+    // เก็บเป็นค่าดิบ (แบบเดียวกับประวัติ) จึงเติมกลับเข้าฟอร์มได้เสมอ
+    // ค่าที่แก้ในฟอร์มถูกเก็บกลับเข้าแถวเดิมก่อนทุกครั้งที่เปลี่ยนแถว/ดาวน์โหลด
+    // ──────────────────────────────────────────────────────────────
+    let importedRows = [];
+    let importedIndex = 0;
+
+    function syncRowsBar() {
+        const bar = document.getElementById('reportRows');
+        const label = document.getElementById('reportRowLabel');
+
+        if (!bar) return;
+
+        // แถวเดียว = ไม่ต้องมีแถบเลื่อน (ไม่รบกวนหน้าตาเดิม)
+        bar.style.display = importedRows.length > 1 ? '' : 'none';
+
+        if (label) {
+            label.textContent =
+                'แถวที่ ' + (importedIndex + 1) + ' จาก ' + importedRows.length;
+        }
+    }
+
+    // แถวที่นำเข้าตอนนี้ (ค่าดิบ) — [] = ยังไม่ได้นำเข้า Excel
+    page.getImportedRows = function () {
+        return importedRows;
+    };
+
+    page.getImportedIndex = function () {
+        return importedIndex;
+    };
+
+    // รับชุดข้อมูลที่นำเข้าจาก Excel แล้วแสดงแถวแรกในฟอร์มให้ตรวจก่อนดาวน์โหลด
+    page.setImportedRows = function (rows) {
+        importedRows = (Array.isArray(rows) ? rows : []).map(function (row) {
+            return Object.assign({}, row);
+        });
+        importedIndex = 0;
+
+        if (importedRows.length > 0) {
+            page.applyValues(importedRows[0]);
+        }
+
+        syncRowsBar();
+    };
+
+    // ล้างชุดข้อมูลที่นำเข้า (เปลี่ยน template / ล้างค่า)
+    page.clearImportedRows = function () {
+        importedRows = [];
+        importedIndex = 0;
+        syncRowsBar();
+    };
+
+    // เก็บค่าที่แก้อยู่ในฟอร์มกลับเข้าแถวปัจจุบัน (เรียกก่อนอ่านค่าออกไปสร้างไฟล์)
+    page.syncImportedRow = function () {
+        if (importedRows.length === 0) return;
+
+        importedRows[importedIndex] = page.getRawValues();
+    };
+
+    // ค่าที่จัดรูปแบบพร้อมเขียนลงเอกสารของแถวที่ index
+    // (แถวที่ไม่ได้แสดงในฟอร์มต้องจัดรูปแบบเองจากค่าดิบ)
+    page.formatImportedRow = function (index) {
+        const raw = importedRows[Number(index)] || {};
+        const types = getConfiguredTypes();
+        const modes = getCurrencyModes();
+        const values = {};
+
+        Object.keys(raw).forEach(function (field) {
+            values[field] = scope.FieldTypes.formatValue(
+                types[field],
+                raw[field],
+                modes,
+                field
+            );
+        });
+
+        return values;
+    };
+
+    // เลื่อนไปดูแถวอื่นของชุดข้อมูลที่นำเข้า
+    page.goToImportedRow = function (index) {
+        if (importedRows.length === 0) return false;
+
+        const target = Math.min(
+            importedRows.length - 1,
+            Math.max(0, Number(index))
+        );
+
+        // เก็บค่าที่แก้ในฟอร์มของแถวปัจจุบันกลับก่อน แล้วจึงเติมแถวใหม่
+        importedRows[importedIndex] = page.getRawValues();
+        importedIndex = target;
+
+        page.applyValues(importedRows[importedIndex]);
+        syncRowsBar();
+
+        return true;
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -647,9 +778,17 @@
     };
 
     page.applyValues = function (values) {
-        baseApplyValues.call(page, values);
-        page.syncCurrencyInputs(values);
+        // มีชุดข้อมูลที่นำเข้าอยู่ = แถวที่กำลังดูเป็นแหล่งค่าหลัก
+        // (สลับหน้าไปกลับแล้วยังได้แถวเดิม ไม่หลุดไปเป็นค่าที่ค้างของหน้า)
+        const source =
+            importedRows.length > 0
+                ? importedRows[importedIndex]
+                : values;
+
+        baseApplyValues.call(page, source);
+        page.syncCurrencyInputs(source);
         page.syncTables(values);
+        syncRowsBar();
     };
 
     // เติมแถวของตารางกลับเข้าฟอร์ม (ใช้ตอนกดใช้ซ้ำจากประวัติ)
