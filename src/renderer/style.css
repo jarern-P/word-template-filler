@@ -82,6 +82,18 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   ล็อกการ scroll ของหน้าจอด้านหลัง ขณะมี popup เปิดอยู่
+
+   คลาสนี้ถูกใส่/ถอดให้เองโดย components/scrollLock.js
+   ล็อกที่ <html> (viewport) เท่านั้น — scroll ของ sidebar และของใน popup
+   (หน้าจัดตำแหน่ง / ตัวอย่างเอกสาร) จึงยังใช้ได้ปกติ
+   ────────────────────────────────────────────────────────────── */
+
+html.page-scroll-locked {
+    overflow: hidden;
+}
+
 ::selection {
     background: var(--pink-200);
     color: var(--ink);
