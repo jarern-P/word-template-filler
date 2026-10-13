@@ -124,6 +124,11 @@
     // วัตถุที่อ้างจากหน้า/ขอบกระดาษ ไม่ใช้ค่านี้ เพราะคำนวณจากกล่องหน้าตรง ๆ อยู่แล้ว
     const PARAGRAPH_TOP_CORRECTION_PX = 10;
 
+    // ระยะแนวตั้ง (จำนวนบรรทัด) ที่ยังนับว่าข้อความในเอกสารเป็น "คอลัมน์เดียวกัน"
+    // กับกล่องข้อความ — ใช้ใน snapTextboxToColumn
+    // ข้อความที่ไกลออกไปทั้งหน้าเริ่มตรงกันได้โดยบังเอิญ ไม่ใช่คอลัมน์ของกล่อง
+    const COLUMN_SNAP_ROWS = 8;
+
     // อ่าน word/document.xml เป็น DOM (คืน null ถ้า XML เสีย)
     function parseXml(xml) {
         const doc = new DOMParser().parseFromString(xml, 'application/xml');
@@ -2128,6 +2133,7 @@ async function renderDocx(bytes) {
 
     // รวม rect ที่อยู่บรรทัดเดียวกันเป็น "กล่องบรรทัด" (เรียงจากบนลงล่าง)
     // บรรทัดหนึ่งมีหลาย rect ได้ (ข้อความถูกแยกเป็นหลาย span เช่น {{ / field / }})
+    // left = จุดเริ่มของข้อความในบรรทัด (ใช้จับคู่คอลัมน์ — ดู snapTextboxToColumn)
     function lineBoxes(rects) {
         const sorted = rects.slice().sort(function (a, b) {
             return a.top - b.top;
@@ -2148,13 +2154,41 @@ async function renderDocx(bytes) {
             if (last && overlap > shorter * 0.5) {
                 last.top = Math.min(last.top, rect.top);
                 last.bottom = Math.max(last.bottom, rect.bottom);
+                last.left = Math.min(last.left, rect.left);
                 return;
             }
 
-            lines.push({ top: rect.top, bottom: rect.bottom });
+            lines.push({ top: rect.top, bottom: rect.bottom, left: rect.left });
         });
 
         return lines;
+    }
+
+    // จุดเริ่มของข้อความทุกช่วง (run) ในเอกสาร — ใช้เป็น "คอลัมน์" อ้างอิง
+    // ของกล่องข้อความ (ดู snapTextboxToColumn)
+    //
+    // ไม่ใช่แค่จุดเริ่มบรรทัด: ป้ายอย่าง "ตำแหน่ง" อยู่กลางบรรทัด ต่อจากชื่อ
+    // (เอกสารจัดตำแหน่งด้วยช่องว่าง ไม่ใช่แท็บ) จึงต้องใช้จุดเริ่มของทุกช่วงข้อความ
+    //
+    // ข้อความในกล่องข้อความถูกตัดออก — ย่อหน้าที่กล่องยึดอยู่มีตัวกล่องเป็นลูกอยู่
+    // จึงต้องข้ามข้อความที่ซ้อนใน foreignObject/[data-layout-text-box] (ดู directTextRects)
+    // ค่าที่คืนเป็น px ในพื้นที่เอกสาร (ยังไม่คูณ zoom) เทียบกับมุมซ้ายบนของหน้า
+    function documentTextRuns(section, pageRect, scale) {
+        const runs = [];
+
+        Array.from(section.querySelectorAll('p')).forEach(function (paragraph) {
+            if (paragraph.closest('svg') || paragraph.closest('[data-layout-text-box]')) return;
+            if ((paragraph.textContent || '').trim() === '') return;
+
+            directTextRects(paragraph).forEach(function (rect) {
+                runs.push({
+                    left: (rect.left - pageRect.left) / scale,
+                    top: (rect.top - pageRect.top) / scale
+                });
+            });
+        });
+
+        return runs;
     }
 
     // กล่องเนื้อหาของ textbox (div ที่ห่อ <p> ไว้ข้างในกล่อง)
@@ -2461,6 +2495,85 @@ async function renderDocx(bytes) {
     }
 
     // ──────────────────────────────────────────────────────────────
+    // ดึง "คอลัมน์" ของข้อความในกล่องให้ตรงกับข้อความในเอกสาร
+    //
+    // กล่องข้อความในเทมเพลตมักถูกวางให้ข้อความในกล่องต่อเนื่องกับข้อความในเอกสาร
+    // (เช่น กล่อง "ตำแหน่ง ผู้ตรวจรับพัสดุ" ที่ต้องเริ่มที่เดียวกับคำว่า "ตำแหน่ง"
+    // ของบรรทัดอื่น ๆ ในบล็อกเดียวกัน) แต่ wp:anchor บอกตำแหน่งของ "ขอบกล่อง"
+    // ไม่ใช่จุดเริ่มของข้อความในกล่อง และข้อความในเอกสารเองก็มักจัดตำแหน่ง
+    // ด้วยช่องว่าง (ไม่ใช่แท็บ) ทำให้จุดเริ่มที่เรนเดอร์คลาดไปได้หลาย px
+    //
+    // จึงเลื่อนกล่องในแนวนอนให้จุดเริ่มของบรรทัดแรกในกล่องไปตรงกับจุดเริ่ม
+    // ของข้อความที่ใกล้ที่สุด — เฉพาะเมื่อคลาดไม่เกินครึ่งความสูงบรรทัด
+    // (เท่ากับเกณฑ์แนวตั้งของ snapTextboxToLine: เกินกว่านั้นถือว่าตั้งใจวางเหลื่อม)
+    //
+    // บรรทัดถัด ๆ ไปในกล่องเลื่อนตามทั้งกล่อง ระยะภายในกล่องจึงไม่เปลี่ยน
+    // ข้อความที่จัดกึ่งกลาง/ขวาไม่แตะ — ขอบซ้ายของบรรทัดขึ้นกับความกว้างข้อความ
+    // ไม่ใช่คอลัมน์ของกล่อง (เลื่อนกล่องไปแล้วจะพาไปผิดที่)
+    // ──────────────────────────────────────────────────────────────
+    function snapTextboxToColumn(item, columns) {
+        const wrapper = item.wrapper;
+        const region = textboxContent(wrapper);
+
+        // เอกสารอ้างตำแหน่งแนวนอนด้วย align (center/right/inside) = ตำแหน่งคิดจาก
+        // ขอบพื้นที่ ไม่ใช่ขอบซ้ายที่ระบุไว้ → ไม่มี "คอลัมน์" ให้ดึงเข้าหา
+        if (item.alignH) return;
+
+        if (!region || !columns || !columns.page || !columns.runs.length) return;
+
+        const paragraph = region.querySelector('p');
+
+        if (!paragraph) return;
+
+        const align = window.getComputedStyle(paragraph).textAlign;
+
+        if (align === 'center' || align === 'right' || align === 'end') return;
+
+        const page = columns.page;
+        const scale = page.scale || 1;
+        const lines = lineBoxes(textboxLineRects(wrapper));
+
+        if (!lines.length) return;
+
+        // จุดเริ่มจริงของบรรทัดแรกในกล่อง (px ในพื้นที่เอกสาร เทียบมุมซ้ายบนของหน้า)
+        const boxLeft = (lines[0].left - page.rect.left) / scale;
+        const boxTop = (lines[0].top - page.rect.top) / scale;
+        // ค่าเหล่านี้เป็น px ในพื้นที่เอกสาร (ยังไม่คูณ zoom) — เทียบกับ boxLeft/boxTop
+        // ที่หาร scale ออกแล้ว (computed style ไม่ถูกคูณ zoom อยู่แล้ว)
+        const lineHeight = computedLineHeight(paragraph);
+        const tolerance = lineHeight / 2;
+        const rowLimit = lineHeight * COLUMN_SNAP_ROWS;
+
+        // เลือกข้อความที่อยู่บรรทัดใกล้กล่องที่สุด แล้วในบรรทัดเดียวกัน
+        // ใช้ตัวที่คลาดแนวนอนน้อยที่สุด (ไม่ใช้ "คลาดน้อยสุด" อย่างเดียว
+        // เพราะข้อความที่ต่อท้ายบรรทัดยาว ๆ อาจเริ่มใกล้พอดีทั้งที่คนละคอลัมน์)
+        let best = null;
+
+        columns.runs.forEach(function (run) {
+            const delta = run.left - boxLeft;
+
+            if (Math.abs(run.top - boxTop) > rowLimit) return;
+            if (Math.abs(delta) > tolerance) return;
+
+            const distance = Math.abs(run.top - boxTop);
+
+            if (
+                !best
+                || distance < best.distance - 0.5
+                || (Math.abs(distance - best.distance) <= 0.5 && Math.abs(delta) < Math.abs(best.delta))
+            ) {
+                best = { delta: delta, distance: distance };
+            }
+        });
+
+        // ไม่มีคอลัมน์ใกล้พอ หรือตรงอยู่แล้ว = ไม่แตะ
+        if (!best) return;
+        if (Math.abs(best.delta) < 0.25) return;
+
+        wrapper.style.left = (item.left + best.delta).toFixed(2) + 'px';
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // ถอด "ตัวห่อ" ของวัตถุลอยออกจากผังข้อความ
     //
     // docx-preview ห่อ VML (w:pict) ไว้ใน <div> ซึ่งเป็น block อยู่ในย่อหน้า
@@ -2544,6 +2657,8 @@ async function renderDocx(bytes) {
                 left: left === null ? currentLeft : left,
                 top: (top === null ? currentTop : top) - correction,
                 behind: anchor.behindDoc,
+                // อ้างแนวนอนด้วย align (center/right/inside) หรือไม่ (ดู snapTextboxToColumn)
+                alignH: anchor.horizontal ? anchor.horizontal.align : '',
                 scale: page.scale || 1,
                 // อ้างแนวตั้งจากย่อหน้า/บรรทัด = วัตถุที่ "อยู่กับข้อความ"
                 // จึงดึงเข้าบรรทัดได้ (วัตถุที่อ้างจากหน้าไม่แตะ)
@@ -2568,12 +2683,34 @@ async function renderDocx(bytes) {
             flattenShapeWrappers(item.wrapper);
         });
 
-        // ดึงกล่องข้อความที่ความสูงใกล้บรรทัดข้อความปกติให้อยู่แถวเดียวกัน
-        // ทำหลังวางทุกวัตถุแล้ว เพื่อวัดบรรทัดของย่อหน้าได้นิ่ง
+        // ดึงกล่องข้อความให้ตรงบรรทัด (แนวตั้ง) และตรงคอลัมน์ (แนวนอน)
+        // ของข้อความในเอกสาร — ทำหลังวางทุกวัตถุแล้ว เพื่อวัดบรรทัดได้นิ่ง
+        //
+        // คอลัมน์ของข้อความในเอกสารคิดครั้งเดียวต่อหน้า แล้วใช้ร่วมกันทุกกล่อง
+        // ในหน้านั้น (วัดข้อความทั้งหน้า = แพง)
+        const columnsByPage = new Map();
+
+        function columnsFor(wrapper) {
+            const section = wrapper.closest ? wrapper.closest('section.docx') : null;
+            const page = section ? pageGeometry(section) : null;
+
+            if (!page) return { page: null, runs: [] };
+
+            if (!columnsByPage.has(section)) {
+                columnsByPage.set(
+                    section,
+                    documentTextRuns(section, page.rect, page.scale || 1)
+                );
+            }
+
+            return { page: page, runs: columnsByPage.get(section) };
+        }
+
         plan.forEach(function (item) {
             if (!item.textRelative) return;
 
             snapTextboxToLine(item);
+            snapTextboxToColumn(item, columnsFor(item.wrapper));
         });
     }
 
