@@ -166,9 +166,25 @@
         );
     }
 
-    // ชื่อเอกสารที่กรอกเสร็จแล้ว (ใช้ตอน Download DOCX / ตัวอย่างเอกสาร)
-    // ใช้ชื่อแม่แบบที่ตั้ง/บันทึกไว้ ถ้ายังไม่มีจึงใช้ชื่อไฟล์ .docx ต้นฉบับ
-    // และตัดอักขระที่ตั้งเป็นชื่อไฟล์บน Windows ไม่ได้ออก
+    // ตัดอักขระที่ตั้งเป็นชื่อไฟล์บน Windows ไม่ได้ออก
+    // พร้อมตัดช่องว่าง/จุดหัวท้าย และจำกัดความยาวไม่ให้เกินขีดจำกัดของ Windows
+    function sanitizeFileName(name) {
+
+        return String(name || '')
+            // อักขระต้องห้ามบน Windows
+            .replace(/[\\/:*?"<>|]+/g, '-')
+            // ขึ้นบรรทัดใหม่ที่ผู้ใช้อาจพิมพ์ในช่องกรอก
+            .replace(/[\r\n\t]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            // กันชื่อยาวเกินขีดจำกัดของ Windows (ชื่อไฟล์ + โฟลเดอร์)
+            .slice(0, 120)
+            .trim()
+            // Windows ไม่ให้ชื่อไฟล์ลงท้ายด้วยจุดหรือช่องว่าง
+            .replace(/[. ]+$/g, '');
+    }
+
+    // ชื่อแม่แบบที่ตั้ง/บันทึกไว้ ถ้ายังไม่มีจึงใช้ชื่อไฟล์ .docx ต้นฉบับ
     function templateOutputName() {
 
         const name =
@@ -181,10 +197,25 @@
                 state.fileName
             );
 
-        return name.replace(
-            /[\\/:*?"<>|]+/g,
-            '-'
-        );
+        return sanitizeFileName(name) || 'document';
+    }
+
+    // ชื่อไฟล์ .docx ที่จะได้จากการดาวน์โหลด
+    //   1. ชื่อเรื่อง (ค่าของ field "ชื่อเรื่อง" ที่กรอกในหน้ารายงาน)
+    //   2. ชื่อแม่แบบที่ตั้ง/บันทึกไว้
+    //   3. ชื่อไฟล์ .docx ต้นฉบับของแม่แบบ
+    // เลข (1), (2) เมื่อชื่อซ้ำ เติมที่ฝั่ง main process ตอนเขียนไฟล์ (ดู file:save)
+    function outputFileName(values) {
+
+        const subject =
+            sanitizeFileName(
+                (values && values['ชื่อเรื่อง']) || ''
+            );
+
+        return (
+            subject ||
+            templateOutputName()
+        ) + '.docx';
     }
 
     async function readDocumentXml(bytes) {
@@ -208,6 +239,29 @@
         }
 
         return entry.async('string');
+    }
+
+    // แจ้งผลการบันทึกไฟล์บนหน้ารายงาน (บรรทัดใต้ฟอร์ม)
+    // element นี้มีเฉพาะหน้ารายงาน — หน้าอื่นใช้ setDbStatus ของตัวเอง
+    function showDownloadStatus(text, kind) {
+
+        const el =
+            document.getElementById(
+                'downloadStatus'
+            );
+
+        if (!el) {
+            return;
+        }
+
+        el.textContent = text || '';
+
+        el.className =
+            'db-status' +
+            (kind ? ' ' + kind : '');
+
+        el.style.display =
+            text ? '' : 'none';
     }
 
     async function downloadBlob(blob, fileName) {
@@ -1999,10 +2053,11 @@
 
         scope.PreviewDialog.open({
             // ใช้ชื่อไฟล์เต็ม (มี .docx) เพราะหัวเรื่องนี้คือ "ไฟล์ที่จะดาวน์โหลด"
+            // ชื่อเดียวกับไฟล์ที่จะได้ตอนกดดาวน์โหลด
+            // (เลข (1) เมื่อชื่อซ้ำ จะรู้ตอนเขียนไฟล์จริง จึงไม่แสดงที่นี่)
             title:
                 'ตัวอย่างเอกสาร — ' +
-                templateOutputName() +
-                '-filled.docx',
+                outputFileName(values),
             xml:
                 state.xml,
             values:
@@ -2085,10 +2140,41 @@
                     type: 'blob'
                 });
 
-            downloadBlob(
-                blob,
-                templateOutputName() +
-                '-filled.docx'
+            const fileName =
+                outputFileName(values);
+
+            const result =
+                await downloadBlob(
+                    blob,
+                    fileName
+                );
+
+            // Electron เท่านั้น: แจ้ง error จากฝั่ง main (เช่น เขียนโฟลเดอร์ไม่ได้)
+            if (result && result.ok === false) {
+
+                throw new Error(
+                    result.error ||
+                    'บันทึกไฟล์ไม่สำเร็จ'
+                );
+            }
+
+            if (result && result.canceled) {
+
+                showDownloadStatus('ยกเลิกการดาวน์โหลด');
+
+                return;
+            }
+
+            // ฝั่ง main คืนชื่อจริงที่ได้ (อาจมีเลข (1) ต่อท้ายถ้าชื่อซ้ำ)
+            showDownloadStatus(
+                'ดาวน์โหลดแล้ว: ' +
+                (
+                    result && result.fileName
+                        ? result.fileName
+                        : fileName
+                ) +
+                '  (โฟลเดอร์ Downloads)',
+                'ok'
             );
 
             // เก็บชุดค่าที่เพิ่งสร้างเอกสารไว้ให้กดใช้ซ้ำ (หน้า "ประวัติ")
@@ -2097,6 +2183,11 @@
         } catch (error) {
 
             console.error(error);
+
+            showDownloadStatus(
+                'ดาวน์โหลดไม่สำเร็จ: ' + error.message,
+                'error'
+            );
 
             await scope.AppDialog.alert(
                 'ดาวน์โหลดไม่สำเร็จ'
@@ -2119,8 +2210,9 @@
             return;
         }
 
+        // ชื่อแม่แบบที่ตั้งไว้ ถ้ายังไม่มีจึงใช้ชื่อไฟล์ .docx ต้นฉบับ
         const fileName =
-            state.fileName || 'template.docx';
+            templateOutputName() + '.docx';
 
         setDbStatus('กำลังดาวน์โหลด: ' + fileName);
 
@@ -2155,7 +2247,15 @@
                 return;
             }
 
-            setDbStatus('ดาวน์โหลดไฟล์ต้นฉบับแล้ว: ' + fileName);
+            setDbStatus(
+                'ดาวน์โหลดไฟล์ต้นฉบับแล้ว: ' +
+                (
+                    result && result.fileName
+                        ? result.fileName
+                        : fileName
+                ),
+                'ok'
+            );
 
         } catch (error) {
 
@@ -3313,11 +3413,13 @@
             );
 
         const base =
-            String(
-                record.file_name ||
-                record.name ||
-                'document.docx'
-            ).replace(/\.docx$/i, '');
+            sanitizeFileName(
+                String(
+                    record.file_name ||
+                    record.name ||
+                    'document.docx'
+                ).replace(/\.docx$/i, '')
+            ) || 'document';
 
         downloadBlob(
             new Blob(
@@ -3328,7 +3430,7 @@
                         '.wordprocessingml.document'
                 }
             ),
-            base + '-edited.docx'
+            base + '.docx'
         );
     }
 

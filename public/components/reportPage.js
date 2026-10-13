@@ -18,8 +18,12 @@
     ].join('\r\n');
 
     // เตือนเมื่อล็อกตำแหน่งไม่สมบูรณ์ เช่น ช่องว่างด้านหน้า field ไม่พอให้ลบ
+    // ต่อด้วยบรรทัดผลการบันทึกไฟล์ (ดาวน์โหลดแล้ว: <ชื่อไฟล์>)
+    // เพราะการดาวน์โหลดไม่เปิดกล่อง Save อีก จึงต้องบอกชื่อไฟล์ที่ได้จริง
+    // (พร้อมเลข (1) ถ้าชื่อซ้ำ) ให้เห็นบนหน้านี้
     const FOOTER_HTML =
-        '<p id="replaceWarning" class="replace-warning" style="display:none"></p>';
+        '<p id="replaceWarning" class="replace-warning" style="display:none"></p>' +
+        '<p id="downloadStatus" class="db-status" style="display:none"></p>';
 
     // ปุ่มดูตัวอย่างก่อนดาวน์โหลด (แสดงเฉพาะเมื่อโหลด template แล้ว — ดู showPreviewButton)
     const ACTIONS_HTML =

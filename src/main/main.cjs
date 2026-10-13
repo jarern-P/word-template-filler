@@ -1311,28 +1311,77 @@ ipcMain.handle(
 // File
 // ============================================================
 
+// จำนวนเลขท้ายชื่อไฟล์สูงสุดที่ลองหา "ชื่อว่าง" ก่อนยอมแพ้
+const MAX_DOWNLOAD_NAME_TRIES = 1000;
+
+
+// เขียนไฟล์ลงโฟลเดอร์ที่กำหนด โดยไม่ทับไฟล์เดิม
+//   report.docx -> report (1).docx -> report (2).docx
+// ใช้ flag "wx" (สร้างไฟล์ใหม่เท่านั้น) จึงเช็คกับเขียนเป็นจังหวะเดียวกัน
+// ชื่อที่ซ้ำจริงจะได้ EEXIST แล้วลองเลขถัดไป — พฤติกรรมเดียวกับ browser download
+async function writeDownloadFile(dir, fileName, buffer) {
+
+    const ext =
+        path.extname(fileName);
+
+    const base =
+        path.basename(fileName, ext) ||
+        "document";
+
+
+    for (
+        let index = 0;
+        index < MAX_DOWNLOAD_NAME_TRIES;
+        index++
+    ) {
+
+        const name =
+            index === 0
+                ? base + ext
+                : base + " (" + index + ")" + ext;
+
+        const filePath =
+            path.join(dir, name);
+
+
+        try {
+
+            await fs.promises.writeFile(
+                filePath,
+                buffer,
+                {
+                    flag: "wx"
+                }
+            );
+
+            return filePath;
+
+        } catch (error) {
+
+            // ชื่อซ้ำ = ลองเลขถัดไป
+            if (
+                error &&
+                error.code === "EEXIST"
+            ) {
+                continue;
+            }
+
+            throw error;
+        }
+    }
+
+
+    throw new Error(
+        "ตั้งชื่อไฟล์ไม่สำเร็จ (ชื่อซ้ำ " +
+        MAX_DOWNLOAD_NAME_TRIES +
+        " ชื่อ)"
+    );
+}
+
+
 ipcMain.handle(
     "file:save",
     async function (event, payload) {
-
-        // หน้าต่างที่เป็นเจ้าของกล่อง "บันทึกเป็น"
-        //
-        // ต้องส่งเป็นหน้าต่างเจ้าของ (parent) ของ dialog และคืนโฟกัสให้หลังปิด
-        // ถ้าไม่ทำ บน Windows หลังปิดกล่องบันทึกของ OS ผู้ใช้จะพิมพ์ต่อในแอปไม่ได้
-        // ต้องคลิกสลับไปหน้าต่างอื่นแล้วกลับมา — อาการเดียวกับ alert/confirm
-        const owner =
-            BrowserWindow.fromWebContents(event.sender);
-
-        const refocus = () => {
-
-            if (
-                owner &&
-                !owner.isDestroyed() &&
-                !owner.isMinimized()
-            ) {
-                owner.focus();
-            }
-        };
 
         try {
 
@@ -1357,55 +1406,42 @@ ipcMain.handle(
                 );
             }
 
-            const options = {
-                title: "บันทึกเอกสาร",
-                defaultPath: fileName,
-                filters: [
-                    {
-                        name: "Word Document",
-                        extensions: ["docx"]
-                    }
-                ]
-            };
 
-            const result =
-                owner && !owner.isDestroyed()
-                    ? await dialog.showSaveDialog(owner, options)
-                    : await dialog.showSaveDialog(options);
+            // เซฟลงโฟลเดอร์ Downloads ของผู้ใช้ตรง ๆ (ไม่เปิดกล่องบันทึกของ Windows)
+            // ชื่อไฟล์มาจาก renderer แล้ว (ชื่อเรื่อง -> ชื่อแม่แบบ -> ชื่อไฟล์ต้นฉบับ)
+            // ถ้าชื่อซ้ำจะเติมเลข (1), (2) ให้เอง
+            const dir =
+                app.getPath("downloads");
 
-            // ปิดกล่องแล้วคืนโฟกัสให้หน้าต่างแอปทันที (ก่อนเขียนไฟล์)
-            refocus();
+            await fs.promises.mkdir(
+                dir,
+                {
+                    recursive: true
+                }
+            );
 
-            // ผู้ใช้กด Cancel
-            if (result.canceled) {
-                return {
-                    ok: true,
-                    canceled: true
-                };
-            }
 
-            if (!result.filePath) {
-                return {
-                    ok: true,
-                    canceled: true
-                };
-            }
-
-            const buffer =
-                Buffer.from(
-                    data
+            const filePath =
+                await writeDownloadFile(
+                    dir,
+                    fileName,
+                    Buffer.from(data)
                 );
 
-            await fs.promises.writeFile(
-                result.filePath,
-                buffer
+
+            console.log(
+                "Saved file:",
+                filePath
             );
+
 
             return {
                 ok: true,
                 canceled: false,
-                filePath:
-                    result.filePath
+                filePath,
+                // ชื่อจริงที่ได้ (อาจมีเลข (1) ต่อท้าย) ไว้ให้ renderer แจ้งผู้ใช้
+                fileName:
+                    path.basename(filePath)
             };
 
         } catch (error) {
@@ -1414,8 +1450,6 @@ ipcMain.handle(
                 "file:save error:",
                 error
             );
-
-            refocus();
 
             return {
                 ok: false,
