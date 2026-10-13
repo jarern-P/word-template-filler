@@ -57,7 +57,7 @@ ELECTRON_ENABLE_LOGGING=1 "./release/win-unpacked/Word Template Filler.exe"
 สิ่งที่ควรเห็นใน log = แปลว่า DB ทำงาน:
 
 // text
-Data path: ...\release\win-unpacked\data
+Data path: C:\Users\<user>\AppData\Roaming\word-template-filler\data
 DB data path: ...
 SQLite database opened:
 DB Worker: ready
@@ -69,7 +69,9 @@ npm run dev:electron   # ทำงาน/แก้ UI → ไม่ต้อง 
 npm run build:exe      # จะแจก/ทดสอบ .exe ค่อยรัน
 
 - ข้อมูลตอน dev →  <project>/data/templates.db 
-- ข้อมูลตอนรัน .exe →  <โฟลเดอร์ของ .exe>/data/templates.db  (คนละอันกัน ไม่ทับกัน)
+- ข้อมูลตอนรัน .exe (ที่ติดตั้งด้วย Setup) →  %APPDATA%\word-template-filler\data\templates.db
+  (คนละอันกับตอน dev ไม่ทับกัน และไม่ถูก Setup .exe ลบตอนอัปเดต)
+- ข้อมูลตอนรันแบบ portable →  <โฟลเดอร์ของ .exe>/data/templates.db
 - แก้โค้ด renderer ให้แก้ที่  public/  ( dist/  ถูกลบใหม่ทุกครั้งที่ build)
 
 6) ปัญหาที่เจอบ่อย

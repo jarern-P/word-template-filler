@@ -40,41 +40,156 @@ function isWritableDir(dir) {
 }
 
 
-// Development            -> <project>/data
-// Portable .exe          -> <โฟลเดอร์ของ .exe>/data
-// เขียนไม่ได้ (ติดตั้ง)  -> userData/data
+// Development             -> <project>/data
+// Portable .exe           -> <โฟลเดอร์ของ .exe>/data
+// ติดตั้งด้วย Setup .exe  -> userData/data
+//
+// ทำไมติดตั้งแล้วไม่เก็บไว้ข้าง .exe:
+//   ตอนกดรัน Setup .exe ซ้ำ ตัวติดตั้งจะเรียก uninstaller ของเวอร์ชันเดิม
+//   ซึ่งย้ายและลบทั้งโฟลเดอร์ติดตั้ง
+//   (app-builder-lib/templates/nsis/uninstaller.nsh: isUpdated -> atomicRMDir + RMDir /r $INSTDIR)
+//   ไฟล์ที่แอปสร้างเองในโฟลเดอร์นั้น (data/templates.db) จึงถูกลบไปด้วย
+//   เก็บใน userData แทน -> รัน Setup ซ้ำ = อัปเดตตัวแอป ไม่แตะข้อมูลเดิม
 function getDataPath() {
 
-    const candidates =
-        app.isPackaged
-            ? [
-                path.join(
-                    process.env.PORTABLE_EXECUTABLE_DIR ||
-                    path.dirname(process.execPath),
-                    "data"
-                ),
-                path.join(
-                    app.getPath("userData"),
-                    "data"
-                )
-            ]
-            : [
-                path.join(
-                    app.getAppPath(),
-                    "data"
-                )
-            ];
+    // Development
+    if (!app.isPackaged) {
+
+        return path.join(
+            app.getAppPath(),
+            "data"
+        );
+    }
 
 
-    for (const dir of candidates) {
+    // Portable: ตั้งใจให้พกข้อมูลไปกับ .exe
+    const portableDir =
+        process.env.PORTABLE_EXECUTABLE_DIR;
 
-        if (isWritableDir(dir)) {
-            return dir;
+    if (portableDir) {
+
+        const portableData =
+            path.join(
+                portableDir,
+                "data"
+            );
+
+        if (isWritableDir(portableData)) {
+            return portableData;
         }
     }
 
 
-    return candidates[candidates.length - 1];
+    // ติดตั้งด้วย Setup .exe
+    return path.join(
+        app.getPath("userData"),
+        "data"
+    );
+}
+
+
+// ============================================================
+// ย้ายฐานข้อมูลจากตำแหน่งเดิม
+// ============================================================
+
+const DB_FILE = "templates.db";
+
+
+// เวอร์ชันก่อนเก็บ data ไว้ข้าง .exe (ในโฟลเดอร์ติดตั้ง) ซึ่งถูกลบตอนติดตั้งทับ
+// จึงคัดลอกฐานข้อมูลเดิมมาไว้ที่ใหม่ให้ก่อน
+// ทำงานครั้งเดียว: ถ้าปลายทางมี templates.db อยู่แล้วจะไม่แตะอะไรเลย
+function migrateLegacyDatabase(targetDir) {
+
+    if (!app.isPackaged) {
+        return;
+    }
+
+
+    if (
+        fs.existsSync(
+            path.join(targetDir, DB_FILE)
+        )
+    ) {
+        return;
+    }
+
+
+    const legacyDir =
+        path.join(
+            path.dirname(process.execPath),
+            "data"
+        );
+
+
+    // Portable ใช้โฟลเดอร์เดียวกับปลายทางอยู่แล้ว จึงไม่มีอะไรต้องย้าย
+    if (
+        path.resolve(legacyDir) ===
+        path.resolve(targetDir)
+    ) {
+        return;
+    }
+
+
+    if (
+        !fs.existsSync(
+            path.join(legacyDir, DB_FILE)
+        )
+    ) {
+        return;
+    }
+
+
+    try {
+
+        fs.mkdirSync(
+            targetDir,
+            {
+                recursive: true
+            }
+        );
+
+
+        // -wal / -shm ถ้ามีต้องย้ายมาคู่กัน ไม่งั้นข้อมูลที่ค้างใน wal หาย
+        [
+            "",
+            "-wal",
+            "-shm"
+        ].forEach(suffix => {
+
+            const from =
+                path.join(
+                    legacyDir,
+                    DB_FILE + suffix
+                );
+
+            if (fs.existsSync(from)) {
+
+                fs.copyFileSync(
+                    from,
+                    path.join(
+                        targetDir,
+                        DB_FILE + suffix
+                    )
+                );
+            }
+        });
+
+
+        console.log(
+            "Migrated database:",
+            legacyDir,
+            "->",
+            targetDir
+        );
+
+    } catch (error) {
+
+        // ย้ายไม่ได้ก็ยังเปิดฐานข้อมูลใหม่ได้ (ข้อมูลเดิมยังอยู่ที่เดิม)
+        console.error(
+            "ย้ายฐานข้อมูลเดิมไม่สำเร็จ:",
+            error
+        );
+    }
 }
 
 
@@ -134,6 +249,9 @@ function startDbWorker() {
         "Data path:",
         dbDataPath
     );
+
+
+    migrateLegacyDatabase(dbDataPath);
 
 
     dbReadyPromise = new Promise(

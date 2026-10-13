@@ -494,6 +494,7 @@ if ($exe) {
 }
 
 Write-Host ""
-Write-Host "  Next run: the app creates its database next to the exe"
-Write-Host ("            {0}\data\templates.db" -f $OutputDir)
+Write-Host "  Next run: the database lives in userData, not next to the .exe"
+Write-Host ("            {0}\word-template-filler\data\templates.db" -f $env:APPDATA)
+Write-Host "            (Setup .exe can be re-run without wiping it)"
 Write-Host ""

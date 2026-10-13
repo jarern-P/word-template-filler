@@ -1058,10 +1058,22 @@ npm run build:exe:ps -- -OutputDir release-test
 ### ตำแหน่งข้อมูล (SQLite)
 
 ```text
-Development           -> <project>/data/templates.db
-Portable .exe         -> <โฟลเดอร์ของ .exe>/data/templates.db
-โฟลเดอร์เขียนไม่ได้    -> userData/data/templates.db
+Development            -> <project>/data/templates.db
+Portable .exe          -> <โฟลเดอร์ของ .exe>/data/templates.db
+ติดตั้งด้วย Setup .exe -> userData/data/templates.db
+                          (%APPDATA%\word-template-filler\data\templates.db)
 ```
+
+**ห้ามเก็บฐานข้อมูลไว้ข้าง .exe ของตัวที่ติดตั้ง** เพราะตอนกดรัน `Setup .exe` ซ้ำ
+ตัวติดตั้งจะเรียก uninstaller ของเวอร์ชันเดิม ซึ่งย้ายและลบทั้งโฟลเดอร์ติดตั้ง
+(`app-builder-lib/templates/nsis/uninstaller.nsh`: `isUpdated` -> `atomicRMDir` + `RMDir /r $INSTDIR`)
+ไฟล์ที่แอปสร้างเองในโฟลเดอร์นั้น (`data/templates.db`) จึงถูกลบไปด้วย
+เก็บใน `userData` จึงกดรัน Setup ซ้ำได้เป็นการอัปเดตตัวแอป โดยไม่แตะข้อมูลเดิม
+
+ถ้าเครื่องเคยติดตั้งเวอร์ชันก่อน (ฐานข้อมูลอยู่ที่ `<โฟลเดอร์ติดตั้ง>\data\templates.db`)
+โปรแกรมจะคัดลอกฐานข้อมูลเดิมมาไว้ที่ใหม่ให้เองหนึ่งครั้งตอนเปิดครั้งแรก
+แต่ตัวติดตั้งจะลบโฟลเดอร์เดิมก่อนที่โปรแกรมใหม่จะได้รัน จึงควรคัดลอก
+`data\templates.db` เก็บไว้ก่อนกดรัน `Setup .exe` ครั้งแรกหลังอัปเดต
 
 Renderer ไม่ต้องแก้อะไร ทั้ง dev และ .exe ใช้ `window.electronAPI` ชุดเดียวกัน
 เพราะตำแหน่งไฟล์ถูกคำนวณจากฝั่ง Main Process แล้วส่งต่อให้ DB Worker
