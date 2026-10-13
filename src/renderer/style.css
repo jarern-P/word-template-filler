@@ -903,8 +903,16 @@ button.danger:hover {
     color: var(--ink-faint);
 }
 
+/* ชื่อเรื่องของแต่ละรายการ (หน้า "ประวัติ") — จาก field "ชื่อเรื่อง" ที่กรอกในหน้ารายงาน */
+.saved-item .info .history-subject {
+    font-size: 13px;
+    color: var(--ink-soft);
+    word-break: break-word;
+}
+
 /* ตัวอย่างค่าที่กรอกของแต่ละรายการ (หน้า "ประวัติ")
    ยาวได้แต่ต้องไม่ดันปุ่มใช้ซ้ำ/ลบตกขอบ */
+
 .saved-item .info .history-values {
     font-size: 12px;
     color: var(--ink-soft);

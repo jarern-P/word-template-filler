@@ -17,6 +17,12 @@
     const MAX_PREVIEW_ITEMS = 3;
     const PREVIEW_LENGTH = 28;
 
+    // ชื่อเรื่องของเอกสาร — field "ชื่อเรื่อง" ที่กรอกในหน้ารายงาน
+    // ใช้ตัวเดียวกับที่ตั้งชื่อไฟล์ตอนดาวน์โหลด (ดู outputFileName ใน app.js)
+    // และให้ยาวกว่าค่าช่องอื่นได้ เพราะเป็นตัวระบุรายการ
+    const SUBJECT_FIELD = 'ชื่อเรื่อง';
+    const SUBJECT_LENGTH = 60;
+
     const HTML = [
         '<h1>ประวัติการกรอก</h1>',
 
@@ -133,9 +139,24 @@
         return truncate(value, PREVIEW_LENGTH);
     }
 
+    // ชื่อเรื่องของชุดค่านี้ (ว่าง = ไม่มี field นี้ กรอกไว้ หรือค่าที่กรอกว่าง)
+    function subjectOf(record) {
+        const values = (record && record.values) || {};
+        const value = values[SUBJECT_FIELD];
+
+        if (value === null || value === undefined) return '';
+        if (isTableValue(value)) return '';
+
+        return String(value).trim();
+    }
+
     // ข้อความย่อของค่าที่กรอก เช่น "ชื่อ: สมชาย · จำนวนเงิน: 1,000"
     function describeValues(record) {
-        const fields = filledEntries(record);
+        // ชื่อเรื่อง แสดงเป็นบรรทัดของตัวเองอยู่แล้ว (ดู createItem) จึงไม่ต้องซ้ำ
+        const fields = filledEntries(record).filter(function (field) {
+            return field !== SUBJECT_FIELD;
+        });
+
         const shown = fields.slice(0, MAX_PREVIEW_ITEMS);
 
         const parts = shown.map(function (field) {
@@ -160,6 +181,8 @@
         const name = document.createElement('strong');
         name.textContent = record.template_name || 'ไม่ทราบชื่อ template';
 
+        const subject = subjectOf(record);
+
         const count = filledEntries(record).length;
 
         const meta = document.createElement('span');
@@ -175,6 +198,17 @@
         preview.textContent = describeValues(record);
 
         info.appendChild(name);
+
+        // ชื่อเรื่องของรายการนี้ — มีเฉพาะชุดค่าที่กรอกช่อง "ชื่อเรื่อง" ไว้
+        if (subject) {
+            const subjectLine = document.createElement('span');
+            subjectLine.className = 'history-subject';
+            subjectLine.textContent =
+                SUBJECT_FIELD + ': ' + truncate(subject, SUBJECT_LENGTH);
+
+            info.appendChild(subjectLine);
+        }
+
         info.appendChild(meta);
         info.appendChild(preview);
 
@@ -298,6 +332,8 @@
 
                 const haystack = [
                     record.template_name || '',
+                    // ค้นด้วยชื่อเรื่องได้ด้วย เพราะแสดงอยู่บนรายการแล้ว
+                    subjectOf(record),
                     describeValues(record)
                 ].join(' ').toLowerCase();
 
