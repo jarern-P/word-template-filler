@@ -2480,6 +2480,21 @@ body.table-ratio-dragging .table-ratio-handle {
     overflow-y: auto;
 }
 
+/* โมดัล "กลุ่มและกลุ่มย่อย" ของหน้า ข้อมูลหลัก — ลอยสูงกว่ากึ่งกลางหน้าจอ
+   รายการกลุ่ม/กลุ่มย่อยยาวได้ และจะเห็นรายการด้านล่างมากขึ้นถ้าโมดัลอยู่สูงขึ้น
+
+   ทำไมใช้ transform ไม่ใช่ padding/margin ของ .page-modal:
+   ตัวโมดัลสูงได้ถึง max-height 88vh แล้ว align-items: center จะจัดให้อยู่กลาง
+   "กล่องที่หัก padding" ของ container — พอพื้นที่ที่จัดให้เตี้ยลง ของที่สูงเท่า
+   max-height จะล้นเท่ากันทั้งบนและล่าง ขอบบน (หัวโมดัล + ปุ่มปิด) เลยหลุดจอ
+   ไปกดปิดไม่ได้ ส่วน transform ไม่เปลี่ยนพื้นที่จัดวาง จึงไม่ทำให้ล้น
+
+   เลื่อนขึ้น 4vh — น้อยกว่าที่ว่างบน/ล่างตอนอยู่กลาง (6vh จาก max-height: 88vh)
+   ขอบบนจึงยังเหลือที่ว่างเสมอทุกขนาดหน้าต่าง */
+#masterGroupModal .page-modal-dialog {
+    transform: translateY(-4vh);
+}
+
 .master-tools {
     margin-top: 28px;
     padding: 22px 24px;

@@ -401,8 +401,16 @@
 
     function renderPage(page) {
 
+        // โมดัลของหน้าเดิมถูกย้ายไปเกาะ <body> ไว้ (ดู PageModal.mount)
+        // ต้องลบก่อนวาดหน้าใหม่ ไม่งั้น id ของโมดัลจะซ้ำกัน
+        scope.PageModal.unmount();
+
         mainEl.innerHTML =
             getPageHTML(page);
+
+        // โมดัลย้ายออกจาก .main เพราะ backdrop-filter ของ .main ทำให้
+        // position: fixed ไปยึดกับกล่องของ .main (โมดัลไปโผล่ผิดที่)
+        scope.PageModal.mount(mainEl);
 
         applyMeta(page);
 
@@ -975,10 +983,46 @@
         }
     }
 
+    // ผูก event แบบ delegate ของ "พื้นที่ทำงาน" — ฟอร์มของหน้า + โมดัลฟอร์ม
+    //
+    // โมดัลฟอร์ม (.page-modal) ถูกย้ายไปเกาะ <body> ตอนวาดหน้า (PageModal.mount)
+    // เพราะ .main มี backdrop-filter ทำให้ position: fixed ไปยึดกับกล่องของ .main
+    // event จากช่อง/ปุ่มในโมดัลจึงไม่ bubble มาถึง mainEl อีก
+    // จึงผูกที่ document แล้วกรองเฉพาะ event ที่มาจากใน mainEl หรือในโมดัลฟอร์ม
+    // (ปุ่ม/ช่องของ sidebar และ popup ตัวอื่น เช่น app dialog / date picker /
+    //  ลิสต์แนะนำคำ ไม่ถูกจับ)
+    function bindDelegatedEvent(type, handler) {
+
+        document.addEventListener(
+            type,
+            function (event) {
+
+                const target =
+                    event.target;
+
+                if (
+                    !target ||
+                    !target.closest
+                ) {
+                    return;
+                }
+
+                if (
+                    !mainEl.contains(target) &&
+                    !target.closest('.page-modal')
+                ) {
+                    return;
+                }
+
+                handler(event);
+            }
+        );
+    }
+
     function bindMainEvents() {
 
         // ช่องจำนวนเงินโหมดตัวหนังสือ: คลิก/โฟกัสแล้วกลับมาแก้ไขเป็นตัวเลขทันที
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'focusin',
             function (event) {
 
@@ -998,7 +1042,7 @@
             }
         );
 
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'change',
             function (event) {
 
@@ -1105,7 +1149,7 @@
             }
         );
 
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'input',
             function (event) {
 
@@ -1162,7 +1206,7 @@
             }
         );
 
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'click',
             function (event) {
 
@@ -1589,7 +1633,7 @@
         );
 
         // โฟกัสช่องในตาราง = เลือกช่องนั้นให้แถบจัดรูปแบบทำงานด้วย
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'focusin',
             function (event) {
 
@@ -1619,7 +1663,7 @@
         );
 
         // โฟกัสช่องชื่อหัวคอลัมน์ = เลือกคอลัมน์นั้นให้กล่องเครื่องมือทำงาน (หน้า Configuration)
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'focusin',
             function (event) {
 
@@ -1648,7 +1692,7 @@
         );
 
         // ลัดคีย์จัดรูปแบบช่องในตาราง: Ctrl+B = ตัวหนา, Ctrl+I = ตัวเอียง
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'keydown',
             function (event) {
 
@@ -1691,7 +1735,7 @@
         );
 
         // กด Enter ในช่องเพิ่มกลุ่ม/กลุ่มย่อย = เพิ่มเลย
-        mainEl.addEventListener(
+        bindDelegatedEvent(
             'keydown',
             function (event) {
 

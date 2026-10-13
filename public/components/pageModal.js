@@ -54,6 +54,39 @@
         if (modal) modal.classList.remove('open');
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ย้ายโมดัลของหน้าไปเกาะ <body>
+    // ──────────────────────────────────────────────────────────────
+    //
+    // โมดัลของแต่ละหน้าถูกเขียนไว้ใน HTML ของหน้านั้น (อยู่ใน .main) แต่ .main
+    // มี backdrop-filter ซึ่งทำให้ position: fixed ของลูกไปยึดกับกล่องของ .main
+    // แทนหน้าจอ — โมดัลจึงไปอยู่กลาง "ความสูงของเนื้อหาทั้งหน้า"
+    // (หน้าข้อมูลหลักยาวหลายพันพิกเซล โมดัลจะไปโผล่ต่ำกว่าจอมาก) และ backdrop
+    // ก็คลุมไม่ถึง sidebar ด้วย
+    //
+    // ย้ายมาเกาะ <body> แล้ว inset: 0 จึงหมายถึงหน้าจอจริงตามที่ตั้งใจ
+    // (แนวเดียวกับ popup ตัวอื่นที่สร้างเองแล้ว appendChild ใส่ body)
+    //
+    // ตัวที่ย้ายมาแล้วต้องลบตอนวาดหน้าใหม่ ไม่งั้น id ของโมดัลจะซ้ำกับหน้าใหม่
+    let mounted = [];
+
+    function mount(container) {
+        if (!container) return;
+
+        container.querySelectorAll('.page-modal').forEach(function (modal) {
+            document.body.appendChild(modal);
+            mounted.push(modal);
+        });
+    }
+
+    function unmount() {
+        mounted.forEach(function (modal) {
+            modal.remove();
+        });
+
+        mounted = [];
+    }
+
     // ปิดเมื่อกด Esc
     document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') {
@@ -64,6 +97,8 @@
     scope.PageModal = {
         open: open,
         close: close,
-        closeAll: closeAll
+        closeAll: closeAll,
+        mount: mount,
+        unmount: unmount
     };
 })(window);
