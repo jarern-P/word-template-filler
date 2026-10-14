@@ -53,15 +53,16 @@
         '</section>',
 
         '<section class="saved-templates">',
+        '    <h2>ข้อมูลแบบรายการ</h2>',
         '    <ul id="masterList" class="saved-list"></ul>',
         '</section>',
 
         // ── ตารางแก้ไขแบบ Inline (ซ่อนไว้ตอนเริ่ม) ──
         '<section class="master-table-section" style="display:none">',
-        '    <h2>แก้ไขแบบตาราง</h2>',
+        '    <h2>ข้อมูลแบบตาราง</h2>',
         '    <div class="master-table-toolbar">',
-        '        <button id="masterAddRowBtn" type="button" class="plain">+ เพิ่มแถว</button>',
-        '        <button id="masterTableSaveBtn" type="button" class="plain">บันทึก</button>',
+        // '        <button id="masterAddRowBtn" type="button" class="plain">+ เพิ่มแถว</button>',
+        // '        <button id="masterTableSaveBtn" type="button" class="plain">บันทึก</button>',
         '        <span id="masterTableStatus" class="db-status"></span>',
         '    </div>',
         '    <div class="master-table-wrap">',
