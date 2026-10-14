@@ -11,10 +11,20 @@
     const HIGHLIGHT_TOGGLE_ID = 'highlightFieldToggle';
 
     const HIGHLIGHT_HTML = '\r\n' + [
+        '<section class="master-tools">',
+        '    <h2>เครื่องมือ</h2>',
+        '<div class="form-actions">',
         '<label class="field-highlight-toggle" for="highlightFieldToggle">',
         '    <input type="checkbox" id="highlightFieldToggle">',
         '    ไฮไลต์ตัวแปรเป็นสีเหลือง',
-        '</label>'
+        '</label>',
+        '<button id="reportExportBtn" type="button" class="plain" style="display:none">' +
+        'ดาวน์โหลด Excel</button>' +
+        '<button id="reportImportBtn" type="button" class="plain" style="display:none">' +
+        'อัปโหลด Excel</button>' +
+        '<input type="file" id="reportImportInput" accept=".xlsx" hidden>',
+        '</div>',
+        '</section>'
     ].join('\r\n');
 
     // เตือนเมื่อล็อกตำแหน่งไม่สมบูรณ์ เช่น ช่องว่างด้านหน้า field ไม่พอให้ลบ
@@ -42,15 +52,10 @@
     // — ดู showPreviewButton / showExcelButtons)
     const ACTIONS_HTML =
         '<button id="previewBtn" type="button" class="plain" style="display:none">' +
-        'ดูตัวอย่างก่อนดาวน์โหลด</button>' +
-        '<button id="reportExportBtn" type="button" class="plain" style="display:none">' +
-        'ดาวน์โหลด Excel</button>' +
-        '<button id="reportImportBtn" type="button" class="plain" style="display:none">' +
-        'อัปโหลด Excel</button>' +
-        '<input type="file" id="reportImportInput" accept=".xlsx" hidden>';
+        'ดูตัวอย่างก่อนดาวน์โหลด</button>';
 
     const META_HTML = [
-        '<div class="template-meta">',
+        '<div class="template-meta"  style="padding-top:14px">',
         '    <label for="templateSelect">Template ที่จะใช้</label>',
         '    <select id="templateSelect">',
         '        <option value="">กำลังโหลดรายการ template...</option>',
@@ -81,11 +86,12 @@
     }
 
     const page = scope.FormPage.create({
-        title: 'Word Template Filler',
+        title: 'รายงาน',
         showFileInput: false,
         // รวมปุ่ม ดูตัวอย่าง / Download DOCX / Clear ไว้แถวเดียวกันใต้ฟอร์ม
         actionsRow: true,
-        metaHTML: META_HTML + HIGHLIGHT_HTML,
+        metaHTML: HIGHLIGHT_HTML + META_HTML,
+        // metaHTML: META_HTML + ,
         actionsHTML: ACTIONS_HTML,
         footerHTML: FOOTER_HTML,
         emptyMessage: 'ยังไม่มี template — เลือกจาก dropdown ด้านบน หรือไปสร้างแม่แบบที่หน้า "ตั้งค่าแม่แบบ" ก่อน',
