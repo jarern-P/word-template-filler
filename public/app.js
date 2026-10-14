@@ -5685,6 +5685,14 @@
 
         clearPageState();
 
+        // ล้างการเลือก template ใน dropdown (เฉพาะหน้ารายงาน)
+        const templateSelect =
+            document.getElementById('templateSelect');
+
+        if (templateSelect) {
+            templateSelect.value = '';
+        }
+
         const component =
             getComponent(
                 currentPage
