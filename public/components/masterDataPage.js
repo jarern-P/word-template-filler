@@ -12,25 +12,7 @@
     const HTML = [
         '<h1>ข้อมูลหลัก</h1>',
 
-        // ── รายการเป็นหลัก (list-first) ──
-        '<section class="saved-templates">',
-        '    <div class="list-head">',
-        '        <h2>รายการข้อมูลหลัก</h2>',
-        '        <button id="masterNewBtn" type="button" class="plain"' +
-            ' data-modal-open="masterModal">+ เพิ่มข้อมูลหลัก</button>',
-        '    </div>',
-
-        '    <div class="master-toolbar">',
-        '        <label for="masterSearch">ค้นหา</label>',
-        '        <input type="text" id="masterSearch"' +
-            ' placeholder="name / code group / sub group" autocomplete="off">',
-        '    </div>',
-
-        '    <p id="masterDbStatus" class="db-status"></p>',
-        '    <ul id="masterList" class="saved-list"></ul>',
-        '</section>',
-
-        // ── เครื่องมือ (Excel + กลุ่ม + ตารางแก้ไข) ──
+                // ── เครื่องมือ (Excel + กลุ่ม + ตารางแก้ไข) ──
         '<section class="master-tools">',
         '    <h2>เครื่องมือ</h2>',
 
@@ -52,6 +34,44 @@
             ' — รายการเดิม (Code Group + Name ตรงกัน) จะถูกอัปเดตกลุ่มย่อย' +
             ' ส่วนรายการใหม่จะถูกเพิ่ม</p>',
         '</section>',
+
+        // ── รายการเป็นหลัก (list-first) ──
+        '<section class="master-list-header">',
+        '    <div class="list-head">',
+        '        <h2>รายการข้อมูลหลัก</h2>',
+        '        <button id="masterNewBtn" type="button" class="plain"' +
+            ' data-modal-open="masterModal">+ เพิ่มข้อมูลหลัก</button>',
+        '    </div>',
+
+        '    <div class="master-toolbar">',
+        '        <label for="masterSearch">ค้นหา</label>',
+        '        <input type="text" id="masterSearch"' +
+            ' placeholder="name / code group / sub group" autocomplete="off">',
+        '    </div>',
+        '</section>',
+
+        '<section class="saved-templates">',
+        '    <p id="masterDbStatus" class="db-status"></p>',
+        '    <ul id="masterList" class="saved-list"></ul>',
+        '</section>',
+        // '<div class="master-list-header">',
+        // '    <div class="list-head">',
+        // '        <h2>รายการข้อมูลหลัก</h2>',
+        // '        <button id="masterNewBtn" type="button" class="plain"' +
+        //     ' data-modal-open="masterModal">+ เพิ่มข้อมูลหลัก</button>',
+        // '    </div>',
+
+        // '    <div class="master-toolbar">',
+        // '        <label for="masterSearch">ค้นหา</label>',
+        // '        <input type="text" id="masterSearch"' +
+        //     ' placeholder="name / code group / sub group" autocomplete="off">',
+        // '    </div>',
+        // '</div>',
+
+        // '<section class="saved-templates">',
+        // '    <p id="masterDbStatus" class="db-status"></p>',
+        // '    <ul id="masterList" class="saved-list"></ul>',
+        // '</section>',
 
         // ── ตารางแก้ไขแบบ Inline (ซ่อนไว้ตอนเริ่ม) ──
         '<section class="master-table-section" style="display:none">',
@@ -689,11 +709,16 @@
 
         setViewMode: function (mode) {
             viewMode = mode || 'list';
-
+            const headerSection = document.querySelector('.master-list-header');
             const listSection = document.querySelector('.saved-templates');
             const tableSection = document.querySelector('.master-table-section');
             const tableViewBtn = el('masterTableViewBtn');
             const listViewBtn = el('masterListViewBtn');
+
+            // Header และ Toolbar แสดงทั้ง List และ Table
+            if (headerSection) {
+                headerSection.style.display = '';
+            }
 
             if (listSection) {
                 listSection.style.display = viewMode === 'list' ? '' : 'none';
