@@ -141,7 +141,7 @@
         '<div class="layout-dialog" role="dialog" aria-modal="true" aria-labelledby="layoutTitle">',
         '    <div class="layout-head">',
         '        <h2 id="layoutTitle">จัดตำแหน่ง</h2>',
-        '        <button type="button" class="layout-close" data-layout-close aria-label="ปิด">&times;</button>',
+        '        <button type="button" class="page-modal-close" data-layout-close aria-label="ปิด">&times;</button>',
         '    </div>',
         '    <div class="layout-toolbar">',
         '        <label class="layout-toggle"><input type="checkbox" id="layoutEditToggle" checked> แก้ไขข้อความ</label>',
