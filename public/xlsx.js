@@ -206,11 +206,43 @@
             return '<row r="' + (rowIndex + 1) + '">' + cells + '</row>';
         }).join('');
 
+        // คำนวณความกว้าง column อัตโนมัติจากความยาวข้อความที่ยาวที่สุดในแต่ละคอลัมน์
+        // (รวมแถวแรกซึ่งเป็น header ด้วย)
+        const columnWidths = [];
+
+        for (let c = 0; c < maxColumns; c++) {
+            let maxLen = 0;
+
+            for (let r = 0; r < list.length; r++) {
+                const row = Array.isArray(list[r]) ? list[r] : [];
+                const text = String(row[c] == null ? '' : row[c]);
+                const len = text.length;
+
+                if (len > maxLen) maxLen = len;
+            }
+
+            // กำหนดความกว้างขั้นต่ำไว้ level หนึ่ง เพื่อไม่ให้ column เล็กเกินจนอ่านยาก
+            // และบวก padding เล็กน้อยให้ข้อความไม่ชนขอบ
+            const width = Math.max(8, maxLen + 2);
+            columnWidths.push(width);
+        }
+
+        // สร้าง `<cols>` สำหรับระบุความกว้างแต่ละ column
+        let colsXml = '';
+
+        for (let c = 0; c < maxColumns; c++) {
+            colsXml +=
+                '<col min="' + (c + 1) + '" max="' + (c + 1) + '" ' +
+                'width="' + columnWidths[c] + '" ' +
+                'customWidth="1"/>';
+        }
+
         const dimension = 'A1:' + columnName(maxColumns - 1) + Math.max(1, list.length);
 
         return XML_HEADER +
             '<worksheet xmlns="' + NS_SPREADSHEET + '">' +
             '<dimension ref="' + dimension + '"/>' +
+            (colsXml ? '<cols>' + colsXml + '</cols>' : '') +
             '<sheetData>' + body + '</sheetData>' +
             '</worksheet>';
     }
