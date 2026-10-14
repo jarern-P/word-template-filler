@@ -1213,6 +1213,21 @@
                     return;
                 }
 
+                // ช่องค้นหาของหน้า Word Suggest กรองรายการทันที
+                if (
+                    target &&
+                    target.id === 'wordSearch'
+                ) {
+
+                    getComponent(
+                        WORDS_PAGE
+                    ).setSearch(
+                        target.value
+                    );
+
+                    return;
+                }
+
                 // ช่อง currency: คัดให้เหลือแต่ตัวเลข/จุดทศนิยม
                 if (
                     target &&
