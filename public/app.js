@@ -2212,8 +2212,27 @@
         const types =
             scope.App.getFieldTypes();
 
+        const placeholders =
+            scope.App.getFieldPlaceholders();
+
+        // header ของ checkbox ใน Excel ใช้ชื่อฟิลด์ + placeholder
+        // (อัปโหลดกลับแล้วแมปคอลัมน์ได้จากชื่อฟิลด์)
         return state.fields.filter(function (field) {
             return types[field] !== 'table';
+        }).map(function (field) {
+
+            // checkbox: ใช้ "ชื่อฟิลด์ + placeholder" เป็นหัวคอลัมน์ในไฟล์ส่งออก
+            if (types[field] === 'checkbox') {
+
+                const ph =
+                    placeholders && placeholders[field] != null
+                        ? String(placeholders[field]).trim()
+                        : '';
+
+                return ph ? (field + ' (' + ph + ')') : field;
+            }
+
+            return field;
         });
     }
 
@@ -2261,12 +2280,14 @@
         return rows;
     }
 
-    // อ่านแถวจากไฟล์ Excel ของหน้ารายงาน
-    // แถวแรก (หรือแถวแรกที่เจอชื่อ field) = คอลัมน์ | คอลัมน์ที่ไม่ตรงกับ field ใดถูกข้าม
+    // อ่านแถวจากไฟล์ Excel ของหน้ารายงาน    // แถวแรก (หรือแถวแรกที่เจอชื่อ field) = คอลัมน์ | คอลัมน์ที่ไม่ตรงกับ field ใดถูกข้าม
     function parseReportRows(rows, fields) {
 
         const list =
             Array.isArray(rows) ? rows : [];
+
+        const types =
+            scope.App.getFieldTypes();
 
         const byHeader = {};
 
@@ -2275,7 +2296,9 @@
         });
 
         let headerIndex = 0;
+
         let columns = null;
+
         let unknown = 0;
 
         for (let i = 0; i < Math.min(list.length, 5); i++) {
@@ -2325,10 +2348,21 @@
 
                 if (!field) return;
 
-                const text =
+                let text =
                     row[col] == null ? '' : String(row[col]);
 
-                value[field] = text;
+                // checkbox: หัวคอลัมน์ในไฟล์ Excel ใช้ชื่อฟิลด์ + placeholder
+                // จึงต้องตัด placeholder ออกก่อนตรวจว่าเป็นคอลัมน์ของ checkbox หรือไม่
+                // อ่านค่าเป็นตัวเลข/ข้อความโดยไม่ตัดอะไรก่อน (ค่าจะถูกส่งให้ฟอร์มเป็น true/false ทีหลัง)
+                const baseField = field.replace(/\s*\([^)]*\)\s*/g, '').trim();
+                if (
+                    types[baseField] === 'checkbox' &&
+                    (text.trim().toLowerCase() === 'x' || text.trim().toUpperCase() === 'X')
+                ) {
+                    text = 'true';
+                }
+
+                value[baseField] = text;
 
                 if (text.trim() !== '') filled = true;
             });
@@ -2480,7 +2514,6 @@
 
             const parsed =
                 parseReportRows(rows, reportExcelFields());
-
             if (parsed.values.length === 0) {
 
                 showDownloadStatus(
