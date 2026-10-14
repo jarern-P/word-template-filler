@@ -150,7 +150,7 @@
         '            <button type="button" id="layoutItalicBtn" class="layout-fmt" title="ตัวเอียง (Ctrl+I)"><em>I</em></button>',
         '            <button type="button" id="layoutUnderlineBtn" class="layout-fmt" title="ขีดเส้นใต้ (Ctrl+U)"><u>U</u></button>',
         '        </div>',
-        '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldToggle" checked> ไฮไลต์ {{}} สีเหลือง</label>',
+        '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldToggle" checked> ไฮไลต์ตัวแปรเป็นสีเหลือง</label>',
         '        <label class="layout-toggle">ย่อ/ขยาย',
         '            <select id="layoutZoom">',
         '                <option value="fit" selected>พอดีความกว้าง</option>',
