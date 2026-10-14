@@ -54,24 +54,6 @@
         '    <p id="masterDbStatus" class="db-status"></p>',
         '    <ul id="masterList" class="saved-list"></ul>',
         '</section>',
-        // '<div class="master-list-header">',
-        // '    <div class="list-head">',
-        // '        <h2>รายการข้อมูลหลัก</h2>',
-        // '        <button id="masterNewBtn" type="button" class="plain"' +
-        //     ' data-modal-open="masterModal">+ เพิ่มข้อมูลหลัก</button>',
-        // '    </div>',
-
-        // '    <div class="master-toolbar">',
-        // '        <label for="masterSearch">ค้นหา</label>',
-        // '        <input type="text" id="masterSearch"' +
-        //     ' placeholder="name / code group / sub group" autocomplete="off">',
-        // '    </div>',
-        // '</div>',
-
-        // '<section class="saved-templates">',
-        // '    <p id="masterDbStatus" class="db-status"></p>',
-        // '    <ul id="masterList" class="saved-list"></ul>',
-        // '</section>',
 
         // ── ตารางแก้ไขแบบ Inline (ซ่อนไว้ตอนเริ่ม) ──
         '<section class="master-table-section" style="display:none">',
