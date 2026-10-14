@@ -136,7 +136,7 @@
         '                <label for="masterNewGroup">เพิ่มกลุ่ม</label>',
         '                <input type="text" id="masterNewGroup"' +
             ' placeholder="เช่น CUSTOMER_TYPE" autocomplete="off">',
-        '                <button id="masterGroupAddBtn" type="button" class="plain">เพิ่มกลุ่ม</button>',
+        '                <button id="masterGroupAddBtn" type="button" class="plain" data-action="group-add">เพิ่มกลุ่ม</button>',
         '            </div>',
 
         '            <p id="masterGroupStatus" class="db-status"></p>',
