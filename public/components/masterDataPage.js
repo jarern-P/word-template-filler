@@ -733,6 +733,7 @@
         },
 
         // เตรียมแถวสำหรับตาราง: ผสม records จริง + pending rows (แถวใหม่)
+        // แถวใหม่ (pending) ให้แสดงอยู่บนสุด เพื่อให้เห็นและกรอกได้ง่าย
         tableData: function () {
             // ใช้ filtered records ตาม searchText ปัจจุบัน
             const filtered = records.filter(function (record) {
@@ -741,23 +742,24 @@
 
             // แปลงเป็น array ของ objects ที่ใช้แสดงในตาราง
             // แต่ละแถวมี id (0 = แถวใหม่), codeGroup, subGroup, name, updated_at
-            return filtered.map(function (record) {
+            // ใส่ pendingRows ไว้บนสุด แล้วค่อย records ทีหลัง
+            return pendingRows.map(function (row, index) {
                 return {
-                    id: record.id || 0,
-                    codeGroup: record.code_group || '',
-                    subGroup: record.sub_group || '',
-                    name: record.name || '',
-                    updated_at: record.updated_at || ''
+                    id: 0,
+                    codeGroup: row.codeGroup || '',
+                    subGroup: row.subGroup || '',
+                    name: row.name || '',
+                    updated_at: '',
+                    _pendingIndex: index
                 };
             }).concat(
-                pendingRows.map(function (row, index) {
+                filtered.map(function (record) {
                     return {
-                        id: 0,
-                        codeGroup: row.codeGroup || '',
-                        subGroup: row.subGroup || '',
-                        name: row.name || '',
-                        updated_at: '',
-                        _pendingIndex: index
+                        id: record.id || 0,
+                        codeGroup: record.code_group || '',
+                        subGroup: record.sub_group || '',
+                        name: record.name || '',
+                        updated_at: record.updated_at || ''
                     };
                 })
             );
