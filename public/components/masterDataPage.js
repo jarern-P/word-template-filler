@@ -25,6 +25,7 @@
             'อัปโหลด Excel</button>',
         '        <button id="masterTableViewBtn" type="button" class="plain">' +
             'ดูแบบตาราง</button>',
+        '        <button id="masterListViewBtn" type="button" class="plain" style="display:none">ดูแบบรายการ</button>',
         '    </div>',
 
         '    <input type="file" id="masterImportInput" accept=".xlsx" hidden>',
@@ -48,10 +49,10 @@
         '        <input type="text" id="masterSearch"' +
             ' placeholder="name / code group / sub group" autocomplete="off">',
         '    </div>',
+        '    <p id="masterDbStatus" class="db-status"></p>',
         '</section>',
 
         '<section class="saved-templates">',
-        '    <p id="masterDbStatus" class="db-status"></p>',
         '    <ul id="masterList" class="saved-list"></ul>',
         '</section>',
 
@@ -61,7 +62,6 @@
         '    <div class="master-table-toolbar">',
         '        <button id="masterAddRowBtn" type="button" class="plain">+ เพิ่มแถว</button>',
         '        <button id="masterTableSaveBtn" type="button" class="plain">บันทึก</button>',
-        '        <button id="masterListViewBtn" type="button" class="plain">กลับดูรายการ</button>',
         '        <span id="masterTableStatus" class="db-status"></span>',
         '    </div>',
         '    <div class="master-table-wrap">',
