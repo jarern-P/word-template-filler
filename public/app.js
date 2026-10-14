@@ -1566,10 +1566,46 @@
                     return;
                 }
 
-                // เพิ่มกลุ่มใหม่ (หน้า Master Data)
-                if (id === 'masterGroupAddBtn') {
+                // สลับไปโหมดตาราง (หน้า Master Data)
+                if (id === 'masterTableViewBtn') {
 
-                    onAddMasterGroup();
+                    const master =
+                        getComponent(MASTER_PAGE);
+
+                    if (master && master.setViewMode) {
+                        master.setViewMode('table');
+                    }
+                    return;
+                }
+
+                // กลับไปดูรายการ (จากโหมดตาราง)
+                if (id === 'masterListViewBtn') {
+
+                    const master =
+                        getComponent(MASTER_PAGE);
+
+                    if (master && master.setViewMode) {
+                        master.setViewMode('list');
+                    }
+                    return;
+                }
+
+                // เพิ่มแถวใหม่ในตาราง (โหมดตาราง)
+                if (id === 'masterAddRowBtn') {
+
+                    const master =
+                        getComponent(MASTER_PAGE);
+
+                    if (master && master.addPendingRow) {
+                        master.addPendingRow();
+                    }
+                    return;
+                }
+
+                // บันทึกการเปลี่ยนแปลงจากตาราง (โหมดตาราง)
+                if (id === 'masterTableSaveBtn') {
+
+                    onSaveMasterTable();
                     return;
                 }
 
@@ -1596,6 +1632,27 @@
                     onDeleteMaster(
                         recordId
                     );
+
+                } else if (
+                    action === 'table-delete'
+                ) {
+
+                    // ลบแถวจากตาราง + ฐานข้อมูล
+                    onDeleteMasterTableRow(
+                        recordId
+                    );
+
+                } else if (
+                    action === 'table-delete-pending'
+                ) {
+
+                    // ลบแถว pending (แถวใหม่ที่ยังไม่บันทึก)
+                    const master =
+                        getComponent(MASTER_PAGE);
+
+                    if (master && master.deletePendingRow) {
+                        master.deletePendingRow(recordId);
+                    }
 
                 } else if (action === 'word-edit') {
 
@@ -4066,6 +4123,11 @@
                 masterRecords
             );
 
+            // ถ้ากำลังอยู่ในโหมดตาราง ให้พร้อมและ render แถว
+            if (master.readyTable) {
+                master.readyTable();
+            }
+
         } catch (error) {
 
             console.error(error);
@@ -5670,6 +5732,162 @@
             await scope.AppDialog.alert(
                 'ลบไม่สำเร็จ: ' +
                 error.message
+            );
+        }
+    }
+
+    // ลบแถวจากตาราง (แถวจริง) + ฐานข้อมูล
+    async function onDeleteMasterTableRow(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        if (
+            !(await scope.AppDialog.confirm(
+                'ต้องการลบแถวข้อมูลนี้ใช่ไหม?',
+                { title: 'ยืนยันการลบ', okText: 'ลบ', danger: true }
+            ))
+        ) {
+            return;
+        }
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        try {
+
+            await ensureDb();
+
+            await scope.Db.masterDelete(
+                recordId
+            );
+
+            master.setTableStatus(
+                'ลบแถวแล้ว',
+                'ok'
+            );
+
+            await refreshMasterList();
+
+            resetInteractionState();
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'ลบไม่สำเร็จ: ' +
+                (error && error.message ? error.message : error)
+            );
+
+            if (master) {
+                master.setTableStatus(
+                    'ลบไม่สำเร็จ',
+                    'error'
+                );
+            }
+        }
+    }
+
+    // บันทึกการเปลี่ยนแปลงทั้งหมดจากตาราง (รวมแถวใหม่ + แก้ไขแถวเดิม)
+    async function onSaveMasterTable() {
+
+        const master =
+            getComponent(MASTER_PAGE);
+
+        if (!master) {
+            await scope.AppDialog.alert('ไม่พบหน้า Master Data');
+            return;
+        }
+
+        const rows =
+            master.readTableRows 
+                ? master.readTableRows()
+                : [];
+
+        if (rows.length === 0) {
+            master.setTableStatus(
+                'ไม่มีแถวให้บันทึก',
+                'error'
+            );
+            return;
+        }
+
+        // ตรวจสอบความถูกต้อง: ทุกแถวต้องมี Code Group และ Name
+        const invalidRows = rows.filter(function (row) {
+            return !row.codeGroup || !row.name;
+        });
+
+        if (invalidRows.length > 0) {
+            master.setTableStatus(
+                'มีแถวที่กรอกไม่ครบ — ต้องการ Code Group และ Name (พบ ' +
+                invalidRows.length + ' แถว)',
+                'error'
+            );
+            return;
+        }
+
+        master.setExcelBusy(true);
+        master.setTableStatus('กำลังบันทึก...');
+
+        try {
+
+            await ensureDb();
+
+            // แบ่งเป็นกลุ่ม: แก้ไขแถวเดิม (id > 0) และเพิ่มแถวใหม่ (id = 0)
+            const toUpdate = rows.filter(function (row) { return row.id > 0; });
+            const toInsert = rows.filter(function (row) { return row.id === 0; });
+
+            // บันทึกแบบ batch: อัปเดตแถวเดิมทีละรายการ, เพิ่มแถวใหม่ทีละรายการ
+            for (const row of toUpdate) {
+                await scope.Db.masterSave({
+                    id: row.id,
+                    codeGroup: row.codeGroup,
+                    subGroup: row.subGroup,
+                    name: row.name
+                });
+            }
+
+            for (const row of toInsert) {
+                await scope.Db.masterSave({
+                    id: 0,
+                    codeGroup: row.codeGroup,
+                    subGroup: row.subGroup,
+                    name: row.name
+                });
+            }
+
+            // ล้าง pending rows หลังบันทึกสำเร็จ
+            if (master.resetForm) {
+                master.resetForm();
+            }
+
+            // รีโหลดรายการจากฐานข้อมูล
+            await refreshMasterList();
+
+            // ถ้ากำลังอยู่ในโหมดตาราง ให้ render แถวใหม่จาก records ที่อัปเดตแล้ว
+            if (master.setViewMode && master.isTableMode && master.isTableMode()) {
+                master.renderTableRows(master.records || []);
+            }
+
+            master.setExcelBusy(false);
+            master.setTableStatus(
+                'บันทึกเรียบร้อย (' + rows.length + ' แถว)',
+                'ok'
+            );
+
+            resetInteractionState();
+
+        } catch (error) {
+
+            console.error(error);
+
+            master.setExcelBusy(false);
+            master.setTableStatus(
+                'บันทึกไม่สำเร็จ: ' +
+                (error && error.message ? error.message : error),
+                'error'
             );
         }
     }

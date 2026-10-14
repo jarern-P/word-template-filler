@@ -30,7 +30,7 @@
         '    <ul id="masterList" class="saved-list"></ul>',
         '</section>',
 
-        // ── เครื่องมือ (Excel + กลุ่ม) ──
+        // ── เครื่องมือ (Excel + กลุ่ม + ตารางแก้ไข) ──
         '<section class="master-tools">',
         '    <h2>เครื่องมือ</h2>',
 
@@ -41,6 +41,8 @@
             'ดาวน์โหลด Excel</button>',
         '        <button id="masterImportBtn" type="button" class="plain">' +
             'อัปโหลด Excel</button>',
+        '        <button id="masterTableViewBtn" type="button" class="plain">' +
+            'ดูแบบตาราง</button>',
         '    </div>',
 
         '    <input type="file" id="masterImportInput" accept=".xlsx" hidden>',
@@ -49,6 +51,34 @@
         '    <p class="hint">ไฟล์ Excel ใช้ 3 คอลัมน์: Code Group, Sub Group และ Name' +
             ' — รายการเดิม (Code Group + Name ตรงกัน) จะถูกอัปเดตกลุ่มย่อย' +
             ' ส่วนรายการใหม่จะถูกเพิ่ม</p>',
+        '</section>',
+
+        // ── ตารางแก้ไขแบบ Inline (ซ่อนไว้ตอนเริ่ม) ──
+        '<section class="master-table-section" style="display:none">',
+        '    <h2>แก้ไขแบบตาราง</h2>',
+        '    <div class="master-table-toolbar">',
+        '        <button id="masterAddRowBtn" type="button" class="plain">+ เพิ่มแถว</button>',
+        '        <button id="masterTableSaveBtn" type="button" class="plain">บันทึก</button>',
+        '        <button id="masterListViewBtn" type="button" class="plain">กลับดูรายการ</button>',
+        '        <span id="masterTableStatus" class="db-status"></span>',
+        '    </div>',
+        '    <div class="master-table-wrap">',
+        '        <table id="masterTable" class="master-table">',
+        '            <thead>',
+        '                <tr>',
+        '                    <th class="col-check"><input type="checkbox" id="masterTableSelectAll"></th>',
+        '                    <th class="col-id">#</th>',
+        '                    <th class="col-code-group">Code Group</th>',
+        '                    <th class="col-sub-group">Sub Group</th>',
+        '                    <th class="col-name">Name</th>',
+        '                    <th class="col-actions">การดำเนินการ</th>',
+        '                </tr>',
+        '            </thead>',
+        '            <tbody id="masterTableBody"></tbody>',
+        '        </table>',
+        '    </div>',
+        '    <p class="hint">แก้ไขตรงในตารางได้ — กดบันทึกเพื่อฝากการเปลี่ยนแปลง' +
+            ' (เพิ่มแถวใหม่ให้ใส่ Code Group และ Name ให้ครบ)</p>',
         '</section>',
 
         // ── ฟอร์มเพิ่ม/แก้ไขข้อมูลหลัก (อยู่ในโมดัล) ──
@@ -122,6 +152,12 @@
     let records = [];      // รายการ master ล่าสุดที่โหลดมาจากฐานข้อมูล
     let groups = [];       // กลุ่ม/กลุ่มย่อยที่กำหนดไว้ล่วงหน้า
     let searchText = '';   // คำค้นปัจจุบัน (ตัวพิมพ์เล็กแล้ว)
+
+    // โหมดแสดงผล: 'list' (รายการ) หรือ 'table' (ตารางแก้ไข)
+    let viewMode = 'list';
+
+    // แถวที่เพิ่มใหม่ (ยังไม่บันทึก) ในโหมดตาราง — เก็บชั่วคราว
+    let pendingRows = [];  // array ของ { codeGroup, subGroup, name }
 
     // ──────────────────────────────────────────────────────────────
     // Helpers
@@ -553,6 +589,12 @@
             renderSubgroupOptions();
 
             page.setEditing(null);
+
+            // ล้าง pending rows (แถวใหม่ที่ยังไม่บันทึก) เมื่อล้างฟอร์ม
+            pendingRows = [];
+            if (viewMode === 'table') {
+                page.renderTableRows(records);
+            }
         },
 
         // เปลี่ยนกลุ่มในฟอร์ม → เติมกลุ่มย่อยของกลุ่มใหม่
@@ -639,11 +681,364 @@
                 });
         },
 
+        // ── โหมดดูรายการ / ตาราง ──
+
+        isTableMode: function () {
+            return viewMode === 'table';
+        },
+
+        setViewMode: function (mode) {
+            viewMode = mode || 'list';
+
+            const listSection = document.querySelector('.saved-templates');
+            const tableSection = document.querySelector('.master-table-section');
+            const tableViewBtn = el('masterTableViewBtn');
+            const listViewBtn = el('masterListViewBtn');
+
+            if (listSection) {
+                listSection.style.display = viewMode === 'list' ? '' : 'none';
+            }
+            if (tableSection) {
+                tableSection.style.display = viewMode === 'table' ? '' : 'none';
+            }
+            if (tableViewBtn) {
+                tableViewBtn.style.display = viewMode === 'list' ? 'inline-block' : 'none';
+            }
+            if (listViewBtn) {
+                listViewBtn.style.display = viewMode === 'table' ? 'inline-block' : 'none';
+            }
+
+            // เมื่อสลับไปตาราง ให้ render แถวจาก records ปัจจุบัน
+            if (viewMode === 'table') {
+                page.renderTableRows(records);
+            }
+        },
+
+        // ── ตารางแก้ไขแบบ Inline ──
+
+        // เรียกเมื่อเปิดหน้าหนึ่ง ๆ (จาก app.js)
+        // ถ้า records ยังไม่ได้โหลด ให้รอ render แถวตอนโหลดเสร็จแทน
+        readyTable: function () {
+            if (viewMode === 'table' && records.length > 0) {
+                page.renderTableRows(records);
+            }
+        },
+
+        // ล้าง pending rows (ใช้หลังบันทึกสำเร็จ)
+        setPendingRows: function (list) {
+            pendingRows = Array.isArray(list) ? list : [];
+            if (viewMode === 'table') {
+                page.renderTableRows(records);
+            }
+        },
+
+        // เตรียมแถวสำหรับตาราง: ผสม records จริง + pending rows (แถวใหม่)
+        tableData: function () {
+            // ใช้ filtered records ตาม searchText ปัจจุบัน
+            const filtered = records.filter(function (record) {
+                return matches(record, searchText);
+            });
+
+            // แปลงเป็น array ของ objects ที่ใช้แสดงในตาราง
+            // แต่ละแถวมี id (0 = แถวใหม่), codeGroup, subGroup, name, updated_at
+            return filtered.map(function (record) {
+                return {
+                    id: record.id || 0,
+                    codeGroup: record.code_group || '',
+                    subGroup: record.sub_group || '',
+                    name: record.name || '',
+                    updated_at: record.updated_at || ''
+                };
+            }).concat(
+                pendingRows.map(function (row, index) {
+                    return {
+                        id: 0,
+                        codeGroup: row.codeGroup || '',
+                        subGroup: row.subGroup || '',
+                        name: row.name || '',
+                        updated_at: '',
+                        _pendingIndex: index
+                    };
+                })
+            );
+        },
+
+        renderTableRows: function (list) {
+            const tbody = el('masterTableBody');
+            if (!tbody) return;
+
+            const data = list ? page.tableData.call({ records: list, matches: matches, searchText: searchText }) : page.tableData();
+
+            tbody.innerHTML = '';
+
+            if (data.length === 0) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td colspan="6" class="empty-row">ยังไม่มีข้อมูล — กด "+ เพิ่มแถว" เพื่อเพิ่ม หรือกลับไปดูรายการ</td>';
+                tbody.appendChild(tr);
+                return;
+            }
+
+            data.forEach(function (row, index) {
+                const tr = document.createElement('tr');
+                tr.dataset.rowId = row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index));
+
+                // ช่อง check เลือกทั้งแถว (สำหรับลบ)
+                const tdCheck = document.createElement('td');
+                tdCheck.className = 'col-check';
+                const check = document.createElement('input');
+                check.type = 'checkbox';
+                check.className = 'row-check';
+                check.dataset.rowId = row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index));
+                tdCheck.appendChild(check);
+                tr.appendChild(tdCheck);
+
+                // คอลัมน์ ID (hidden ถ้าเป็นแถวใหม่)
+                const tdId = document.createElement('td');
+                tdId.className = 'col-id';
+                tdId.textContent = row.id || 'ใหม่';
+                tr.appendChild(tdId);
+
+                // Code Group — input select
+                const tdGroup = document.createElement('td');
+                tdGroup.className = 'col-code-group';
+                const groupSelect = document.createElement('select');
+                groupSelect.dataset.field = 'codeGroup';
+                groupSelect.dataset.rowId = row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index));
+
+                // เพิ่ม option ว่าง
+                const groupPlaceholder = document.createElement('option');
+                groupPlaceholder.value = '';
+                groupPlaceholder.textContent = '— เลือกกลุ่ม —';
+                groupSelect.appendChild(groupPlaceholder);
+
+                // เติมกลุ่มจาก groups ปัจจุบัน
+                groups.forEach(function (g) {
+                    const opt = document.createElement('option');
+                    opt.value = g.name;
+                    opt.textContent = g.name;
+                    groupSelect.appendChild(opt);
+                });
+
+                // เติม option สำหรับกลุ่มที่ใช้อยู่แต่ยังไม่มีใน groups (เช่นจาก import)
+                if (row.codeGroup && !groups.some(function (g) { return g.name === row.codeGroup; })) {
+                    const opt = document.createElement('option');
+                    opt.value = row.codeGroup;
+                    opt.textContent = row.codeGroup;
+                    groupSelect.appendChild(opt);
+                }
+
+                groupSelect.value = row.codeGroup || '';
+                groupSelect.addEventListener('change', function () {
+                    page.onTableCellChange(row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index)), 'codeGroup', groupSelect.value);
+                });
+                tdGroup.appendChild(groupSelect);
+                tr.appendChild(tdGroup);
+
+                // Sub Group — input select (เติมจากกลุ่มที่เลือก)
+                const tdSub = document.createElement('td');
+                tdSub.className = 'col-sub-group';
+                const subSelect = document.createElement('select');
+                subSelect.dataset.field = 'subGroup';
+                subSelect.dataset.rowId = row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index));
+
+                const subPlaceholder = document.createElement('option');
+                subPlaceholder.value = '';
+                subPlaceholder.textContent = '— ไม่ระบุกลุ่มย่อย —';
+                subSelect.appendChild(subPlaceholder);
+
+                // เติมกลุ่มย่อยของกลุ่มที่เลือกอยู่
+                const currentGroup = groups.find(function (g) { return g.name === groupSelect.value; });
+                if (currentGroup) {
+                    currentGroup.subgroups.forEach(function (sg) {
+                        const opt = document.createElement('option');
+                        opt.value = sg.name;
+                        opt.textContent = sg.name;
+                        subSelect.appendChild(opt);
+                    });
+                }
+
+                // ถ้ามี subGroup ที่ไม่อยู่ในกลุ่มที่เลือก ให้เติม option ไว้ (เช่นกรณี imported)
+                if (row.subGroup && (!currentGroup || !currentGroup.subgroups.some(function (sg) { return sg.name === row.subGroup; }))) {
+                    const opt = document.createElement('option');
+                    opt.value = row.subGroup;
+                    opt.textContent = row.subGroup;
+                    subSelect.appendChild(opt);
+                }
+
+                subSelect.value = row.subGroup || '';
+                subSelect.addEventListener('change', function () {
+                    page.onTableCellChange(row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index)), 'subGroup', subSelect.value);
+                });
+
+                // เมื่อเลือกกลุ่มเปลี่ยน ให้เปลี่ยนกลุ่มย่อยที่ใช้ได้
+                groupSelect.addEventListener('change', function () {
+                    // อัปเดตตัวเลือกกลุ่มย่อยตามกลุ่มใหม่
+                    const newGroup = groups.find(function (g) { return g.name === groupSelect.value; });
+                    subSelect.innerHTML = '';
+                    const ph = document.createElement('option');
+                    ph.value = '';
+                    ph.textContent = '— ไม่ระบุกลุ่มย่อย —';
+                    subSelect.appendChild(ph);
+                    if (newGroup) {
+                        newGroup.subgroups.forEach(function (sg) {
+                            const opt = document.createElement('option');
+                            opt.value = sg.name;
+                            opt.textContent = sg.name;
+                            subSelect.appendChild(opt);
+                        });
+                    }
+                    subSelect.value = row.subGroup || '';
+                });
+                tdSub.appendChild(subSelect);
+                tr.appendChild(tdSub);
+
+                // Name — input text (แก้ไข inline)
+                const tdName = document.createElement('td');
+                tdName.className = 'col-name';
+                const nameInput = document.createElement('input');
+                nameInput.type = 'text';
+                nameInput.dataset.field = 'name';
+                nameInput.dataset.rowId = row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index));
+                nameInput.value = row.name || '';
+                nameInput.className = 'table-cell-input';
+                nameInput.addEventListener('change', function () {
+                    page.onTableCellChange(row.id || ('pending-' + (row._pendingIndex !== undefined ? row._pendingIndex : index)), 'name', nameInput.value);
+                });
+                tdName.appendChild(nameInput);
+                tr.appendChild(tdName);
+
+                // คอลัมน์การดำเนินการ: ปุ่มลบ (เฉพาะแถวจริง), แถวใหม่ใช้ปุ่มลบแค่ลบออกจาก pending
+                const tdActions = document.createElement('td');
+                tdActions.className = 'col-actions';
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'row-actions';
+
+                if (row.id) {
+                    // แถวจริง — ปุ่มลบ
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'danger';
+                    delBtn.textContent = 'ลบ';
+                    delBtn.dataset.action = 'table-delete';
+                    delBtn.dataset.rowId = String(row.id);
+                    actionsDiv.appendChild(delBtn);
+                } else {
+                    // แถวใหม่ (pending) — ปุ่มลบออกจากตาราง
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'danger';
+                    delBtn.textContent = 'ลบ';
+                    delBtn.dataset.action = 'table-delete-pending';
+                    delBtn.dataset.rowId = String(row._pendingIndex);
+                    actionsDiv.appendChild(delBtn);
+                }
+
+                tdActions.appendChild(actionsDiv);
+                tr.appendChild(tdActions);
+
+                tbody.appendChild(tr);
+            });
+
+            // อัปเดตปุ่ม "เลือกทั้งหมด"
+            page.updateSelectAllCheckbox();
+        },
+
+        // เรียกเมื่อมีการแก้ไขในช่องของตาราง (จัดเก็บการเปลี่ยนแปลงชั่วคราว)
+        onTableCellChange: function (rowId, field, value) {
+            // อัปเดตใน records (ถ้าเป็นแถวจริง) หรือใน pendingRows (ถ้าเป็นแถวใหม่)
+            const parsedId = String(rowId);
+            const isPending = parsedId.startsWith('pending-');
+            const realId = isPending ? null : Number(parsedId);
+            const pendingIndex = isPending ? Number(parsedId.replace('pending-', '')) : null;
+
+            if (!isPending) {
+                // แถวจริง — อัปเดตใน records
+                const record = records.find(function (r) { return r.id === realId; });
+                if (record) {
+                    if (field === 'codeGroup') {
+                        record.code_group = value || '';
+                    } else if (field === 'subGroup') {
+                        record.sub_group = value || '';
+                    } else if (field === 'name') {
+                        record.name = value || '';
+                    }
+                }
+            } else if (pendingIndex !== null) {
+                // แถวใหม่ — อัปเดตใน pendingRows
+                const pendingRow = pendingRows[pendingIndex];
+                if (pendingRow) {
+                    if (field === 'codeGroup') {
+                        pendingRow.codeGroup = value || '';
+                    } else if (field === 'subGroup') {
+                        pendingRow.subGroup = value || '';
+                    } else if (field === 'name') {
+                        pendingRow.name = value || '';
+                    }
+                }
+            }
+        },
+
+        // เพิ่มแถวใหม่ (pending) ลงในตาราง
+        addPendingRow: function () {
+            pendingRows.push({ codeGroup: '', subGroup: '', name: '' });
+            page.renderTableRows(records);
+            page.setTableStatus('เพิ่มแถวใหม่แล้ว — กรอกข้อมูลให้ครบก่อนบันทึก', '');
+        },
+
+        // ลบแถว pending ออก
+        deletePendingRow: function (index) {
+            pendingRows.splice(Number(index), 1);
+            page.renderTableRows(records);
+        },
+
+        // ลบแถวจริง (แสดงในตาราง)
+        deleteTableRow: function (rowId) {
+            const id = Number(rowId);
+            const index = records.findIndex(function (r) { return r.id === id; });
+            if (index >= 0) {
+                records.splice(index, 1);
+                page.renderTableRows(records);
+            }
+        },
+
+        // อ่านแถวทั้งหมดในตาราง (รวม pending) เพื่อส่งให้บันทึก
+        readTableRows: function () {
+            const data = page.tableData();
+            return data.map(function (row) {
+                return {
+                    id: row.id || 0,  // 0 = แถวใหม่
+                    codeGroup: row.codeGroup || '',
+                    subGroup: row.subGroup || '',
+                    name: row.name || ''
+                };
+            });
+        },
+
+        // อัปเดตสถานะในตาราง (เช่น บันทึกสำเร็จ/ล้มเหลว)
+        setTableStatus: function (text, kind) {
+            setStatus('masterTableStatus', text, kind);
+        },
+
+        // อัปเดต checkbox "เลือกทั้งหมด" เมื่อมีแถวใหม่/ลบ
+        updateSelectAllCheckbox: function () {
+            const selectAll = el('masterTableSelectAll');
+            if (!selectAll) return;
+
+            const rows = document.querySelectorAll('.row-check');
+            const checkedCount = document.querySelectorAll('.row-check:checked').length;
+            selectAll.checked = rows.length > 0 && checkedCount === rows.length;
+            selectAll.indeterminate = checkedCount > 0 && checkedCount < rows.length;
+        },
+
         // ── รายการ master ──
 
         setSearch: function (text) {
             searchText = String(text || '').trim().toLowerCase();
             page.renderMasterList(records);
+            // ถ้ากำลังอยู่ในโหมดตาราง ให้อัปเดตแถวด้วย
+            if (viewMode === 'table') {
+                page.renderTableRows(records);
+            }
         },
 
         renderMasterList: function (list, errorMessage) {
@@ -711,6 +1106,11 @@
                     });
                 });
             });
+
+            // ถ้ากำลังอยู่ในโหมดตาราง ให้อัปเดตแถวด้วย
+            if (viewMode === 'table') {
+                page.renderTableRows(records);
+            }
         }
     };
 
