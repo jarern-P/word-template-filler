@@ -1616,7 +1616,7 @@
                 const recordId =
                     Number(
                         target.dataset &&
-                        target.dataset.id
+                        (target.dataset.id || target.dataset.rowId)
                     );
 
                 if (action === 'master-edit') {
