@@ -11,25 +11,7 @@
 
     const HTML = [
         '<h1>คลังคำศัพท์</h1>',
-
-        // ── รายการเป็นหลัก (list-first) ──
-        '<section class="saved-templates">',
-        '    <div class="list-head">',
-        '        <h2>คำที่เพิ่มเอง</h2>',
-        '        <button id="wordNewBtn" type="button" class="plain"' +
-            ' data-modal-open="wordModal">+ เพิ่มคำ</button>',
-        '    </div>',
-
-        '    <div class="master-toolbar">',
-        '        <label for="wordSearch">ค้นหา</label>',
-        '        <input type="text" id="wordSearch" placeholder="คำ" autocomplete="off">',
-        '    </div>',
-
-        '    <p id="wordDbStatus" class="db-status"></p>',
-        '    <ul id="wordList" class="saved-list"></ul>',
-        '</section>',
-
-        // ── การตั้งค่า ──
+                // ── การตั้งค่า ──
         '<section class="suggest-settings">',
         '    <h2>การแนะนำคำ</h2>',
 
@@ -48,6 +30,23 @@
         '        <li><kbd>Esc</kbd> ปิดรายการ</li>',
         '        <li><kbd>Shift</kbd> + <kbd>Tab</kbd> ข้ามไปช่องถัดไป</li>',
         '    </ul>',
+        '</section>',
+
+        // ── รายการเป็นหลัก (list-first) ──
+        '<section class="saved-templates">',
+        '    <div class="list-head">',
+        '        <h2>คำที่เพิ่มเอง</h2>',
+        '        <button id="wordNewBtn" type="button" class="plain"' +
+            ' data-modal-open="wordModal">+ เพิ่มคำ</button>',
+        '    </div>',
+
+        '    <div class="master-toolbar">',
+        '        <label for="wordSearch">ค้นหา</label>',
+        '        <input type="text" id="wordSearch" placeholder="คำ" autocomplete="off">',
+        '    </div>',
+
+        '    <p id="wordDbStatus" class="db-status"></p>',
+        '    <ul id="wordList" class="saved-list"></ul>',
         '</section>',
 
         // ── ฟอร์มเพิ่ม/แก้ไข (อยู่ในโมดัล) ──
