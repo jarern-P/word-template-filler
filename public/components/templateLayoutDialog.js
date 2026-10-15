@@ -380,9 +380,12 @@ async function renderDocx(bytes) {
     // ของข้อความและวัตถุที่อ้างจาก paragraph
     if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(function () {
-            if (token === renderToken) {
-                fixRenderedLayout();
-            }
+            if (token !== renderToken) return;
+
+            // ฟอนต์ของเอกสารโหลดครบ = ผลวัดความสูงบรรทัดที่แคชไว้ใช้ไม่ได้แล้ว
+            naturalLineCache.clear();
+
+            fixRenderedLayout();
         });
     }
 
@@ -391,6 +394,14 @@ async function renderDocx(bytes) {
 
     // จับคู่ paragraph + เตรียม contentEditable
     prepareEditing();
+
+    // ความสูงบรรทัดของย่อหน้าว่าง ให้เท่าหนึ่งบรรทัดของ Word
+    // (ต้องทำก่อนจัดตำแหน่งวัตถุลอย — ตำแหน่งแนวตั้งของวัตถุอ้างจากบรรทัด)
+    applyParagraphMarkHeights();
+
+    // เครื่องหมายที่ตัวเรนเดอร์ไม่วาด ให้วาดเพิ่ม (ต้องทำหลัง prepareEditing
+    // เพราะต้องรู้ pair.index ของแต่ละย่อหน้าก่อน)
+    applyXmlMarks();
 
     // ความกว้างแท็บตาม tab stop ของแม่แบบ (ต้องทำหลัง decorateSpecials)
     applyTabStops();
@@ -445,6 +456,9 @@ async function renderDocx(bytes) {
                 }
 
                 if (child.localName === 'p') continue;
+
+                // เครื่องหมายที่เราวาดเพิ่ม (applyXmlMarks) = ไม่นับเป็นข้อความของย่อหน้า
+                if (child.dataset && child.dataset.layoutMark === '1') continue;
 
                 walk(child);
             }
@@ -550,6 +564,210 @@ async function renderDocx(bytes) {
     }
 
     // ──────────────────────────────────────────────────────────────
+    // เครื่องหมายในบรรทัดที่ตัวเรนเดอร์ "ไม่วาด" ให้
+    //
+    // docx-preview รู้จักลูกของ w:r แค่บางตัว ที่เหลือถูกทิ้งเงียบ ๆ
+    // (ตรวจจากโค้ดของไลบรารี: ไม่มีกรณีของ cr / noBreakHyphen / softHyphen
+    // / ptab เลย) เอกสารจาก Word จึงขาดเครื่องหมายพวกนี้ไปทั้งชิ้น:
+    //
+    //   w:cr              ขึ้นบรรทัดใหม่ในย่อหน้า (แบบเดียวกับ w:br) → แทรก <br>
+    //   w:noBreakHyphen   ยัติภังค์แบบห้ามตัดบรรทัด — ไลบรารีวาดเป็น <wbr>
+    //                     ซึ่งไม่มีอักขระ จึงเหลือแค่จุดที่ตัดบรรทัดได้ (ผิดความหมาย)
+    //   w:softHyphen      ยัติภังค์ที่โผล่เฉพาะเมื่อตัดบรรทัด
+    //   w:ptab            แท็บแบบกำหนดตำแหน่งเอง → วาดเป็นแท็บ (โดยประมาณ)
+    //   w:ffData>w:checkBox  ช่องติ๊กของ form field รุ่นเก่าที่ยังไม่มี
+    //                     "ผลลัพธ์ที่ Word แคชไว้" → วาดเป็นกล่อง (ติ๊ก/ไม่ติ๊ก)
+    //
+    // รายการข้างบนเพิ่มได้ด้วยสาเหตุเดียวกัน ถ้าตรวจเจอว่าตัวเรนเดอร์ทิ้งอีก
+    //
+    // สิ่งที่วาดเพิ่มอยู่ในสแปน data-layout-mark="1" ซึ่ง renderedText(),
+    // domFormatRuns() และ isDirectParagraphTextNode() ข้ามไป (เหมือนไม่มีข้อความ)
+    // จึงไม่กระทบการจับคู่ย่อหน้า การค้นหา/แทนที่ การเทียบรูปแบบ และการบันทึก
+    // ไฟล์ — เครื่องหมายที่มีจริงใน XML ไม่ถูกเขียนกลับซ้ำ
+    // ──────────────────────────────────────────────────────────────
+
+    // วาดเครื่องหมายที่ตัวเรนเดอร์ไม่วาด ให้ย่อหน้าที่จับคู่กับต้นฉบับได้
+    // (ย่อหน้าที่จับคู่ไม่ได้ = แก้ไม่ได้อยู่แล้ว จึงไม่วาด เพราะไม่มีที่ให้เขียนกลับ)
+    function applyXmlMarks() {
+        if (!host || !current || !current.pairs) return;
+
+        // w:noBreakHyphen — ตัวเรนเดอร์วาดเป็น <wbr> ซึ่งไม่มีอักขระ จึงเหลือแค่
+        // "จุดที่ตัดบรรทัดได้" (ตรงข้ามกับความหมายของเครื่องหมาย) ทิ้งมันแล้ววาด
+        // อักขระยัติภังค์แบบห้ามตัดบรรทัดแทนด้านล่าง
+        // (<wbr> เกิดจาก w:noBreakHyphen ที่เดียว — ตรวจจากโค้ดของไลบรารี)
+        host.querySelectorAll('article wbr').forEach(function (wbr) {
+            wbr.parentNode.removeChild(wbr);
+        });
+
+        const paragraphs = paragraphNodes();
+
+        if (!paragraphs.length) return;
+
+        current.pairs.forEach(function (pair, node) {
+            const xmlParagraph = paragraphs[pair.index];
+
+            if (!xmlParagraph) return;
+
+            const items = paragraphContentItems(xmlParagraph);
+
+            if (!items.some(function (item) { return item.kind === 'mark'; })) return;
+
+            const map = paragraphTextMap(node);
+            const inserts = [];
+
+            // เดินเทียบเนื้อหาใน XML กับข้อความที่เรนเดอร์แล้ว เพื่อรู้ว่า
+            // เครื่องหมายแต่ละอันอยู่ตรงไหนของข้อความ
+            let offset = 0;
+            let aligned = true;
+
+            for (const item of items) {
+                if (item.kind === 'text') {
+                    if (!item.text) continue;
+
+                    const at = map.text.indexOf(item.text, offset);
+
+                    if (at === -1) {
+                        // เทียบไม่ตรง (ย่อหน้าถูกตัด หรือตัวเรนเดอร์เพิ่มอักขระเอง)
+                        // ไม่วาดดีกว่าเดาตำแหน่ง
+                        aligned = false;
+                        break;
+                    }
+
+                    offset = at + item.text.length;
+                    continue;
+                }
+
+                if (item.kind === 'mark') {
+                    inserts.push({ at: offset, item: item });
+                }
+            }
+
+            if (!aligned || !inserts.length) return;
+
+            // แทรกจากท้ายมาหน้า — การตัด TextNode ของตำแหน่งหลัง
+            // ไม่กระทบตำแหน่งที่ยังไม่ได้แทรก
+            for (let i = inserts.length - 1; i >= 0; i--) {
+                insertMark(node, map, inserts[i].at, inserts[i].item);
+            }
+        });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ความสูงของย่อหน้าที่ "ว่าง" — ต้องเท่าหนึ่งบรรทัดของ Word
+    //
+    // docx-preview ไม่ได้ยกฟอนต์/ขนาดของ "เครื่องหมายย่อหน้า" (w:pPr/w:rPr)
+    // ขึ้นไปที่ <p> ย่อหน้าที่ไม่มีเนื้อหา (บรรทัดว่าง) จึงสูงเท่า 1em ของฟอนต์
+    // ที่สืบทอดมาจาก UI (15px) แทนที่จะเป็นฟอนต์ของเอกสาร (16pt = 21.33px)
+    // → บรรทัดว่างเตี้ยกว่าครึ่ง ข้อความที่ตามมาขยับขึ้นทีละบรรทัด ๆ
+    // ทำให้ของที่ลอยอยู่ (รูป/กล่องข้อความ) ไปทับข้อความ (เช่น แม่แบบ
+    // "บันทึกข้อความ ว119" ที่ตรามหาวิทยาลัยทับบรรทัด "ส่วนงาน")
+    //
+    // Word ใช้ขนาดของเครื่องหมายย่อหน้าเป็นความสูงของบรรทัดว่าง ที่นี่จึงวัด
+    // ความสูง "หนึ่งบรรทัดตามธรรมชาติ" (line-height: normal) ของฟอนต์/ขนาด
+    //นั้นจากเบราว์เซอร์ แล้วตั้ง min-height ให้ย่อหน้า
+    // — ย่อหน้าที่มีเนื้อหาสูงกว่าอยู่แล้วจะไม่ถูกแตะ (min-height เป็นเพียงพื้นล่าง)
+    // ──────────────────────────────────────────────────────────────
+
+    // แคชผลวัด (คีย์ = ฟอนต์|ขนาด px) — ล้างเมื่อฟอนต์โหลดครบ
+    const naturalLineCache = new Map();
+
+    // ความสูงหนึ่งบรรทัดจริง (px) ของฟอนต์/ขนาดหนึ่ง
+    function naturalLineHeight(font, sizePx) {
+        const key = String(font || '') + '|' + sizePx;
+
+        if (naturalLineCache.has(key)) return naturalLineCache.get(key);
+
+        const probe = document.createElement('div');
+
+        probe.style.cssText = 'position:absolute;visibility:hidden;left:-99999px;top:0;' +
+            'white-space:pre;line-height:normal;margin:0;padding:0;border:0;' +
+            'font-size:' + sizePx + 'px;font-family:' +
+            (font ? JSON.stringify(font) + ',' : '') + 'sans-serif;';
+        probe.textContent = 'x';
+        document.body.appendChild(probe);
+
+        const height = probe.getBoundingClientRect().height;
+
+        document.body.removeChild(probe);
+        naturalLineCache.set(key, height);
+
+        return height;
+    }
+
+    // ฟอนต์/ขนาดของเครื่องหมายย่อหน้า (w:pPr/w:rPr) — สืบทอด style แล้ว docDefaults
+    function paragraphMarkFormat(xmlParagraph, settings) {
+        const defaults = (settings && settings.defaults) || {};
+        const styles = settings && settings.styles;
+        const target = { size: null, font: null };
+
+        function merge(format) {
+            if (format.size != null && (target.size == null || format.size > target.size)) {
+                target.size = format.size;
+            }
+
+            if (format.font && !target.font) target.font = format.font;
+        }
+
+        if (!xmlParagraph) return target;
+
+        const pPr = elementChild(xmlParagraph, 'pPr');
+        const pStyle = pPr ? elementChild(pPr, 'pStyle') : null;
+
+        // 1) ที่ย่อหน้ากำหนดเอง
+        merge(readRPrFormat(pPr ? elementChild(pPr, 'rPr') : null));
+
+        // 2) ที่สืบทอดจาก style (ตามสาย w:basedOn)
+        let id = pStyle ? wAttr(pStyle, 'val') : null;
+        let depth = 0;
+
+        while (id && styles && typeof styles.get === 'function' && depth++ < 10) {
+            const style = styles.get(id);
+
+            if (!style) break;
+
+            merge({ size: style.size, font: style.font });
+
+            id = style.basedOn;
+        }
+
+        // 3) ค่าเริ่มต้นของเอกสาร
+        merge({ size: defaults.size, font: defaults.font });
+
+        return target;
+    }
+
+    // ตั้ง min-height ของย่อหน้าตามขนาดเครื่องหมายย่อหน้า (ที่มา: ดูหัวข้อเหนือฟังก์ชัน)
+    function applyParagraphMarkHeights() {
+        if (!host || !current || !current.pairs) return;
+
+        const settings = current.tabSettings || {};
+        const paragraphs = paragraphNodes();
+
+        if (!paragraphs.length) return;
+
+        current.pairs.forEach(function (pair, node) {
+            const xmlParagraph = paragraphs[pair.index];
+
+            if (!xmlParagraph) return;
+
+            const mark = paragraphMarkFormat(xmlParagraph, settings);
+
+            if (!mark.size) return;
+
+            // half-point → px (2/3)
+            const height = naturalLineHeight(mark.font, mark.size * 2 / 3);
+
+            if (!(height > 0)) return;
+
+            const existing = parseFloat(node.style.minHeight) || 0;
+
+            if (Math.abs(existing - height) < 0.25) return;
+
+            node.style.minHeight = height.toFixed(2) + 'px';
+        });
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // ความกว้างแท็บ (w:tab) — กำหนดจาก tab stop ของแม่แบบ
     //
     // เดิมกำหนดความกว้างตายตัว (40px) ทำให้ข้อความหลังแท็บเพี้ยนจากที่ Word
@@ -620,8 +838,31 @@ async function renderDocx(bytes) {
         return value > 0 ? value : DEFAULT_TAB_STOP_TWIPS;
     }
 
-    // word/styles.xml → Map<styleId, { basedOn, stops, clears }>
-    // (tab stop ของ style ถูกย่อหน้าสืบทอดผ่าน w:basedOn แล้วรวมกับของย่อหน้า)
+    // ขนาด + ฟอนต์จาก <w:rPr> (คืนเฉพาะที่มี)
+    function readRPrFormat(rPr) {
+        const format = { size: null, font: null };
+
+        if (!rPr) return format;
+
+        // Word ใช้ขนาดของอักษร complex script (szCs) กับข้อความไทย — เอาค่าที่มากกว่า
+        ['sz', 'szCs'].forEach(function (name) {
+            const node = elementChild(rPr, name);
+            const value = node ? Number(wAttr(node, 'val')) : 0;
+
+            if (value > 0 && value > (format.size || 0)) format.size = value;
+        });
+
+        const fonts = elementChild(rPr, 'rFonts');
+
+        if (fonts) {
+            format.font = wAttr(fonts, 'ascii') || wAttr(fonts, 'hAnsi') || null;
+        }
+
+        return format;
+    }
+
+    // word/styles.xml → Map<styleId, { basedOn, stops, clears, size, font }>
+    // (tab stop / ฟอนต์-ขนาด ถูกย่อหน้าสืบทอดผ่าน w:basedOn)
     function parseStyleTabs(xml) {
         const map = new Map();
         const doc = xml ? parseXml(xml) : null;
@@ -640,14 +881,27 @@ async function renderDocx(bytes) {
 
             collectTabs(tabs, target);
 
+            const format = readRPrFormat(elementChild(style, 'rPr'));
+
             map.set(id, {
                 basedOn: basedOn ? wAttr(basedOn, 'val') : null,
                 stops: target.stops,
-                clears: target.clears
+                clears: target.clears,
+                size: format.size,
+                font: format.font
             });
         });
 
         return map;
+    }
+
+    // word/styles.xml → ค่าเริ่มต้นของเอกสาร (<w:docDefaults><w:rPrDefault>)
+    function parseStyleDefaults(xml) {
+        const doc = xml ? parseXml(xml) : null;
+        const node = doc ? doc.getElementsByTagNameNS(W_NS, 'docDefaults')[0] : null;
+        const rPrDefault = node ? elementChild(node, 'rPrDefault') : null;
+
+        return readRPrFormat(rPrDefault ? elementChild(rPrDefault, 'rPr') : null);
     }
 
     // อ่านค่าแท็บจากไฟล์ .docx ครั้งเดียวต่อการเปิด (ไม่มี JSZip = ใช้ค่ามาตรฐาน)
@@ -671,7 +925,10 @@ async function renderDocx(bytes) {
             }
 
             if (stylesFile) {
-                settings.styles = parseStyleTabs(await stylesFile.async('string'));
+                const stylesXml = await stylesFile.async('string');
+
+                settings.styles = parseStyleTabs(stylesXml);
+                settings.defaults = parseStyleDefaults(stylesXml);
             }
         } catch (error) {
             console.warn('อ่านค่า tab stop จากไฟล์ไม่ได้ (ใช้ค่ามาตรฐานแทน)', error);
@@ -1007,6 +1264,9 @@ async function renderDocx(bytes) {
                 if (child.localName === 'p') continue;
                 if (child.localName === 'br') continue;
                 if (isSpecialSpan(child)) continue;
+
+                // เครื่องหมายที่เราวาดเพิ่ม (applyXmlMarks) = ไม่มีอักขระของตัวเอง
+                if (child.dataset && child.dataset.layoutMark === '1') continue;
 
                 walk(child);
             }
@@ -2905,6 +3165,9 @@ async function renderDocx(bytes) {
         // (ความกว้างแท็บเปลี่ยนการตัดบรรทัด = จุดอ้างอิงของรูป/กล่อง/ตารางเปลี่ยนด้วย)
         applyTabStops();
 
+        // ความสูงบรรทัดของย่อหน้าว่าง (วัดใหม่หลังฟอนต์โหลดครบ — ดู naturalLineHeight)
+        applyParagraphMarkHeights();
+
         const anchors = shapeAnchors(current.xml);
         const containers = shapeContainers();
 
@@ -2982,6 +3245,12 @@ function isDirectParagraphTextNode(node, paragraph) {
             return false;
         }
 
+        // เครื่องหมายที่ applyXmlMarks วาดเพิ่ม (ขึ้นบรรทัดใหม่/ยัติภังค์/ช่องติ๊ก)
+        // ไม่ใช่ข้อความของย่อหน้า — ต้องไม่ถูกนับเป็นอักขระให้แก้/ค้น/แทน
+        if (parent.dataset && parent.dataset.layoutMark === '1') {
+            return false;
+        }
+
         parent = parent.parentElement;
     }
 
@@ -3026,6 +3295,214 @@ function isDirectParagraphTextNode(node, paragraph) {
 // จึงต้องต่อข้อความของย่อหน้าเข้าด้วยกันก่อน แล้วค่อยหาช่วง {{...}} ในสายนั้น
 //
 // ห้าม cleanText() ตรงนี้ — จะลบ \u2003 / PUA แล้ว offset ของ Range เพี้ยน
+// เนื้อหาของย่อหน้าตามลำดับที่ "ควรเห็น" บนจอ — ใช้เทียบกับข้อความที่เรนเดอร์แล้ว
+//
+//   { kind: 'text', text }        ข้อความที่ตัวเรนเดอร์วาดให้แล้ว
+//   { kind: 'mark', mark, ... }   ตัวเรนเดอร์ไม่วาด ต้องวาดเพิ่ม (applyXmlMarks)
+//   { kind: 'skip' }              ตัวเรนเดอร์ข้ามไป และไม่มีตัวอักษรบนจอ
+//
+// เครื่องหมายที่ไลบรารี "วาดเอง" (w:tab → em space, w:sym → อักขระ PUA,
+// w:br → <br>) ต้องนับเป็น text/skip ให้ตรงกับที่ renderedText เห็น
+function paragraphContentItems(xmlParagraph) {
+    const items = [];
+    let field = null;
+    let inResult = false;
+    let resultText = '';
+
+    function pushMark(mark) {
+        items.push({ kind: 'mark', mark: mark });
+    }
+
+    // w:ffData อาจอยู่ใต้ w:fldChar ตรง ๆ (form field รุ่นเก่า)
+    function checkBoxOf(fldChar) {
+        const ffData = elementChild(fldChar, 'ffData');
+
+        return ffData ? elementChild(ffData, 'checkBox') : null;
+    }
+
+    // องค์ประกอบแบบ CT_OnOff (<w:checked/> / <w:default/>) — ไม่ระบุ w:val = เปิด
+    // (คืน null เมื่อไม่มีองค์ประกอบนั้นเลย)
+    function onOff(element) {
+        if (!element) return null;
+
+        const value = wAttr(element, 'val');
+
+        return value == null ? true : value !== '0' && value !== 'false';
+    }
+
+    // run ที่อยู่ใต้ w:del / w:moveFrom ถูกซ่อน (renderChanges ปิดอยู่)
+    function hidden(run) {
+        let node = run.parentNode;
+
+        while (node && node.localName !== 'p') {
+            if (node.localName === 'del' || node.localName === 'moveFrom') return true;
+
+            node = node.parentNode;
+        }
+
+        return false;
+    }
+
+    Array.from(xmlParagraph.getElementsByTagNameNS(W_NS, 'r')).forEach(function (run) {
+        if (hidden(run)) return;
+
+        Array.from(run.childNodes).forEach(function (child) {
+            if (child.nodeType !== 1) return;
+
+            switch (child.localName) {
+                case 't':
+                    if (field && inResult) resultText += child.textContent || '';
+                    items.push({ kind: 'text', text: child.textContent || '' });
+                    break;
+
+                case 'tab':
+                    if (field && inResult) resultText += 'tab';
+                    items.push({ kind: 'text', text: '\u2003' });
+                    break;
+
+                case 'sym': {
+                    // ตัวเรนเดอร์วาดเป็นอักขระ Private Use Area ตัวเดียว
+                    const code = parseInt(wAttr(child, 'char') || '', 16);
+
+                    if (field && inResult) resultText += 'sym';
+                    items.push({
+                        kind: 'text',
+                        text: isFinite(code) ? String.fromCharCode(code) : ''
+                    });
+                    break;
+                }
+
+                case 'noBreakHyphen':
+                    pushMark('noBreakHyphen');
+                    break;
+
+                case 'softHyphen':
+                    pushMark('softHyphen');
+                    break;
+
+                case 'cr':
+                    pushMark('cr');
+                    break;
+
+                case 'ptab':
+                    pushMark('ptab');
+                    break;
+
+                case 'fldChar': {
+                    const type = wAttr(child, 'fldCharType');
+                    const box = type === 'begin' ? checkBoxOf(child) : null;
+
+                    if (box) {
+                        // w:checked / w:default เป็น "ลูก" ของ w:checkBox (CT_OnOff)
+                        // ไม่ใช่ attribute ของ w:checkBox — ไม่ระบุ w:val = เปิด
+                        const checked = onOff(elementChild(box, 'checked'));
+                        const fallback = onOff(elementChild(box, 'default'));
+
+                        field = {
+                            mark: items.length,
+                            checked: checked == null ? fallback === true : checked
+                        };
+                        inResult = false;
+                        resultText = '';
+                    } else if (type === 'end' && field) {
+                        // ไม่มี "ผลลัพธ์ที่ Word แคชไว้" = ต้องวาดกล่องเอง
+                        // (ถ้ามีผลลัพธ์อยู่ ตัวเรนเดอร์วาดข้อความให้แล้ว — ไม่วาดซ้ำ)
+                        if (!resultText) {
+                            items.splice(field.mark, 0, {
+                                kind: 'mark',
+                                mark: 'checkbox',
+                                checked: field.checked
+                            });
+                        }
+
+                        field = null;
+                    } else if (type === 'separate' && field) {
+                        inResult = true;
+                    }
+
+                    break;
+                }
+
+                // ตัวเรนเดอร์ไม่วาดให้ และไม่มีอักขระของตัวเอง (ไม่มีระยะในบรรทัด)
+                case 'br':
+                case 'lastRenderedPageBreak':
+                case 'drawing':
+                case 'pict':
+                case 'object':
+                case 'instrText':
+                    items.push({ kind: 'skip' });
+                    break;
+            }
+        });
+    });
+
+    return items;
+}
+
+// วางเครื่องหมายที่ "ขอบเขต" ของตำแหน่งในข้อความย่อหน้า
+//
+// offset คือตำแหน่งในสายข้อความของ paragraphTextMap — ใช้ได้ทั้งหัวและท้ายก้อน
+// เพราะเครื่องหมายอยู่ระหว่างเนื้อหาสองชิ้นเสมอ
+function insertMark(paragraph, map, offset, item) {
+    let target = null;
+
+    for (const part of map.items) {
+        if (offset >= part.start && offset <= part.end) {
+            target = { node: part.node, offset: offset - part.start };
+            break;
+        }
+    }
+
+    if (!target) return false;
+
+    const range = document.createRange();
+
+    range.setStart(target.node, target.offset);
+    range.collapse(true);
+
+    // ขึ้นบรรทัดใหม่ในย่อหน้า — ตัวเรนเดอร์ใช้ <br> เหมือนกัน
+    if (item.mark === 'cr') {
+        const lineBreak = document.createElement('br');
+
+        lineBreak.setAttribute('data-layout-mark', '1');
+        lineBreak.className = 'layout-mark layout-mark-cr';
+        lineBreak.title = 'ขึ้นบรรทัดใหม่ในย่อหน้า (w:cr)';
+
+        range.insertNode(lineBreak);
+
+        return true;
+    }
+
+    const span = document.createElement('span');
+
+    span.setAttribute('data-layout-mark', '1');
+    span.className = 'layout-special layout-mark layout-mark-' + item.mark;
+    span.contentEditable = 'false';
+    span.setAttribute('spellcheck', 'false');
+
+    if (item.mark === 'checkbox') {
+        // ไม่ใส่ตัวอักษรลงในข้อความ — วาดกล่องด้วย CSS (layout-mark-checkbox)
+        if (item.checked) span.classList.add('checked');
+        span.title = item.checked
+            ? 'ช่องติ๊กของเอกสาร (form field) — ติ๊กอยู่'
+            : 'ช่องติ๊กของเอกสาร (form field) — ยังไม่ติ๊ก';
+    } else if (item.mark === 'ptab') {
+        span.textContent = '\u2003';
+        span.classList.add('layout-tab');
+        span.title = 'แท็บแบบกำหนดตำแหน่งเอง (w:ptab) — แก้จากที่นี่ไม่ได้';
+    } else if (item.mark === 'noBreakHyphen') {
+        span.textContent = '\u2011';
+        span.title = 'ยัติภังค์แบบห้ามตัดบรรทัด (w:noBreakHyphen) — แก้จากที่นี่ไม่ได้';
+    } else {
+        span.textContent = '\u00ad';
+        span.title = 'ยัติภังค์แบบตัดบรรทัดได้ (w:softHyphen) — แก้จากที่นี่ไม่ได้';
+    }
+
+    range.insertNode(span);
+
+    return true;
+}
+
 function paragraphTextMap(paragraph) {
     const items = [];
 

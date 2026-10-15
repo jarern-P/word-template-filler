@@ -3333,6 +3333,42 @@ body.table-ratio-dragging .table-ratio-handle {
     background: #fff3c4;
 }
 
+/* เครื่องหมายในบรรทัดที่ตัวเรนเดอร์ไม่วาด — วาดเพิ่มใน applyXmlMarks()
+   (ขึ้นบรรทัดใหม่ w:cr / ยัติภังค์ w:noBreakHyphen,w:softHyphen
+    / แท็บระบุตำแหน่ง w:ptab / ช่องติ๊กของ form field รุ่นเก่า w:checkBox) */
+.layout-preview .layout-mark {
+    cursor: not-allowed;
+}
+
+/* ยัติภังค์แบบห้ามตัดบรรทัด — ห้ามแยกบรรทัดตรงเครื่องหมาย */
+.layout-preview .layout-mark-noBreakHyphen {
+    white-space: nowrap;
+}
+
+/* ช่องติ๊กของ form field รุ่นเก่า — วาดกล่องด้วย CSS
+   (ไม่ใส่ตัวอักษรลงในข้อความ ไฟล์ต้นฉบับจึงไม่ถูกแก้โดยไม่ตั้งใจ) */
+.layout-preview .layout-mark-checkbox {
+    display: inline-block;
+    position: relative;
+    width: 0.85em;
+    height: 0.85em;
+    margin: 0 0.1em;
+    border: 1px solid currentColor;
+    border-radius: 1px;
+    vertical-align: -0.08em;
+}
+
+.layout-preview .layout-mark-checkbox.checked::after {
+    content: '✓';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8em;
+    line-height: 1;
+}
+
 /* เบราว์เซอร์ไม่รองรับ Custom Highlight API — เตือนด้วยพื้นหลังทั้งย่อหน้า */
 .layout-preview.show-fields-plain .layout-field-para {
     background: linear-gradient(180deg, rgba(255, 240, 138, 0.55), rgba(255, 240, 138, 0));
