@@ -406,6 +406,10 @@ async function renderDocx(bytes) {
     // ความกว้างแท็บตาม tab stop ของแม่แบบ (ต้องทำหลัง decorateSpecials)
     applyTabStops();
 
+    // ย่อหน้าแบบกระจายตัวอักษร (thaiDistribute) — ต้องทำหลังจัดความกว้างแท็บ
+    // เพราะการยืดเปลี่ยนตำแหน่งของทุกอย่างในบรรทัด
+    applyThaiDistribute();
+
     // สำคัญ:
     // ต้องเรียกหลัง docx-preview render เสร็จและหลัง prepareEditing()
     // เพราะ fieldRanges() ต้องอ่าน TextNode จริงจาก DOM
@@ -1218,6 +1222,266 @@ async function renderDocx(bytes) {
 
         groups.forEach(function (tabs, paragraph) {
             sizeParagraphTabs(paragraph, tabs, scale, stepPx, xmlParagraphs, settings);
+        });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ย่อหน้าแบบ "กระจายตัวอักษร" ของ Word (w:jc val=thaiDistribute)
+    //
+    // Word ยืดระยะระหว่างตัวอักษรของทุกบรรทัด (ยกเว้นบรรทัดสุดท้าย) ให้เต็ม
+    // ความกว้างของย่อหน้า แต่เบราว์เซอร์จัดเป็นชิดซ้ายธรรมดา ข้อความบรรทัด
+    // เดียวกันจึงจบก่อนขอบขวา และทุกอย่างทางขวา (รวมแท็บ) เหลื่อมจาก Word
+    // มาก — แม่แบบในโปรเจกต์นี้ตั้งค่านี้ไว้กว่า 70 ย่อหน้าต่อไฟล์
+    //
+    // วิธีทำ: วัดความกว้างจริงของแต่ละบรรทัด แล้วยืดด้วย letter-spacing
+    // เฉพาะบรรทัดนั้น (Word ยืดแบบ inter-character จึงเทียบได้ตรง)
+    // ──────────────────────────────────────────────────────────────
+
+    // ย่อหน้านี้ตั้ง w:jc เป็น thaiDistribute หรือไม่
+    function isThaiDistribute(xmlParagraph) {
+        if (!xmlParagraph) return false;
+
+        const pPr = elementChild(xmlParagraph, 'pPr');
+        const jc = pPr ? elementChild(pPr, 'jc') : null;
+
+        return !!jc && wAttr(jc, 'val') === 'thaiDistribute';
+    }
+
+    // text node ที่เป็น "เนื้อความ" ของย่อหน้า (ข้ามแท็บ/สัญลักษณ์ที่เรนเดอร์เอง)
+    function paragraphTextNodes(paragraph) {
+        const nodes = [];
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+
+        while ((node = walker.nextNode()) !== null) {
+            const parent = node.parentElement;
+
+            if (!parent || !node.data) continue;
+            if (isSpecialSpan(parent)) continue;
+
+            nodes.push(node);
+        }
+
+        return nodes;
+    }
+
+    // ตำแหน่งของอักขระทุกตัวในย่อหน้า จัดกลุ่มเป็น "บรรทัด" ตามขอบบน
+    // คืนรายการบรรทัด: { top, left, right, chars: [{node, start, end}] }
+    function paragraphLines(paragraph) {
+        const nodes = paragraphTextNodes(paragraph);
+        const lines = [];
+
+        nodes.forEach(function (node) {
+            const text = node.data || '';
+            let index = 0;
+
+            while (index < text.length) {
+                // จับช่วงอักขระที่อยู่บรรทัดเดียวกันด้วย rect ต่ออักขระ
+                // (1 อักขระ = 1 ช่วงสั้น ๆ — ต้องรู้ว่า "บรรทัดนี้มีอักขระใด")
+                const start = index;
+                let end = index;
+                let top = null;
+                let left = Infinity;
+                let right = -Infinity;
+
+                while (end < text.length) {
+                    const range = document.createRange();
+
+                    range.setStart(node, end);
+                    range.setEnd(node, end + 1);
+
+                    const rect = range.getBoundingClientRect();
+
+                    // อักขระที่ไม่มีความสูง (วัดไม่ได้) ไม่มีผลต่อบรรทัด
+                    if (!(rect.height > 0)) {
+                        end++;
+                        continue;
+                    }
+
+                    if (top === null) {
+                        top = rect.top;
+                    } else if (Math.abs(rect.top - top) > 1) {
+                        break;
+                    }
+
+                    if (rect.left < left) left = rect.left;
+                    if (rect.right > right) right = rect.right;
+                    end++;
+                }
+
+                if (end === start) break;
+
+                lines.push({
+                    top: top === null ? 0 : top,
+                    left: left === Infinity ? 0 : left,
+                    right: right === -Infinity ? 0 : right,
+                    chars: [{ node: node, start: start, end: end }]
+                });
+
+                index = end;
+            }
+        });
+
+        // รวมช่วงที่อยู่บรรทัดเดียวกัน (มาจากคนละ text node)
+        const merged = [];
+
+        lines.forEach(function (line) {
+            const last = merged[merged.length - 1];
+
+            if (last && Math.abs(last.top - line.top) <= 1) {
+                last.chars.push(line.chars[0]);
+                last.left = Math.min(last.left, line.left);
+                last.right = Math.max(last.right, line.right);
+                return;
+            }
+
+            merged.push(line);
+        });
+
+        return merged;
+    }
+
+    // ยืดบรรทัดของย่อหน้าให้เต็มความกว้างเนื้อหา (เทียบเท่า thaiDistribute)
+    function stretchParagraphLines(paragraph, scale) {
+        const style = window.getComputedStyle(paragraph);
+        const rect = paragraph.getBoundingClientRect();
+        const border = parseFloat(style.borderRightWidth) || 0;
+        const padding = parseFloat(style.paddingRight) || 0;
+        const contentRight = rect.right - (border + padding) * scale;
+        const lines = paragraphLines(paragraph);
+
+        if (lines.length < 2) return;
+
+        // เก็บงานทุกบรรทัดไว้ก่อน แล้วค่อยแก้ DOM ทีหลัง
+        //
+        // สำคัญ: ต้องแก้ "จากท้ายไปหน้า" เพราะการตัด text node (splitText)
+        // ที่ตำแหน่งสูงกว่าไม่กระทบ offset ที่ต่ำกว่า แต่ถ้าทำจากหน้าไปหลัง
+        // offset ของ text node เดียวกันจะเพี้ยนทันที
+        const jobs = [];
+
+        lines.forEach(function (line, index) {
+            // บรรทัดสุดท้ายของย่อหน้าไม่ถูกยืด — ตรงกับ Word
+            if (index === lines.length - 1) return;
+
+            const count = line.chars.reduce(function (sum, part) {
+                return sum + (part.end - part.start);
+            }, 0);
+            const target = contentRight - line.left;
+            const natural = line.right - line.left;
+
+            if (!(count > 0) || !(target > 0) || natural >= target - 0.1) return;
+
+            // ค่าเริ่มต้น: เกลี่ยส่วนที่ขาดให้ทุกอักขระเท่ากัน (ปัดลงเสมอ —
+            // ถ้าปัดขึ้นบรรทัดจะยาวเกินขอบแล้วตัดบรรทัดใหม่)
+            const spacing = Math.floor((target - natural) / count * 100) / 100 / scale;
+
+            if (window.__distDebug) {
+                console.log('DIST ' + JSON.stringify(paragraph.textContent.slice(0, 24)) +
+                    ' line=' + index + ' count=' + count +
+                    ' natural=' + Math.round(natural * 100) / 100 +
+                    ' target=' + Math.round(target * 100) / 100 +
+                    ' spacing=' + spacing);
+            }
+
+            if (!(spacing > 0)) return;
+
+            line.chars.forEach(function (part) {
+                jobs.push({
+                    node: part.node,
+                    start: part.start,
+                    end: part.end,
+                    line: index,
+                    spacing: spacing
+                });
+            });
+        });
+
+        applyDistJobs(jobs);
+
+        // ── จังหวะที่ 2: วัดผลจริงแล้วแก้ให้พอดีเป้า ──
+        //
+        // การเกลี่ยในจังหวะแรกไม่เคยพอดี เพราะอักขระบางตัวไม่กว้าง
+        // (ตัวควบคุม อักขระรวมรูป) แต่ letter-spacing ก็นับมันด้วย
+        // และช่องว่างท้ายบรรทัดถูกตัดทิ้งเมื่อวัดความกว้าง
+        // จึงวัดความกว้างที่ได้จริง แล้วขยายระยะตามสัดส่วนที่ขาด
+        const after = paragraphLines(paragraph);
+
+        after.forEach(function (line, index) {
+            if (index === lines.length - 1) return;
+
+            const target = contentRight - line.left;
+            const width = line.right - line.left;
+            const natural = lines[index] ? lines[index].right - lines[index].left : 0;
+            const added = width - natural;
+
+            if (!(target > 0) || !(width > 0) || !(added > 0)) return;
+
+            const factor = (target - natural) / added;
+
+            if (!(factor > 1) || factor > 6) return;
+
+            paragraph.querySelectorAll('span.layout-thai-dist[data-line="' + index + '"]')
+                .forEach(function (span) {
+                    const spacing = parseFloat(span.style.letterSpacing) || 0;
+
+                    if (!(spacing > 0)) return;
+
+                    // ปัดลง — กันไม่ให้เกินขอบแล้วตัดบรรทัดใหม่
+                    span.style.letterSpacing =
+                        (Math.floor(spacing * factor * 100) / 100).toFixed(2) + 'px';
+                });
+        });
+    }
+
+    // ห่อช่วงอักขระด้วย span ที่กำหนดระยะตัวอักษร
+    //
+    // ต้องทำ "จากท้ายไปหน้า" เพราะการตัด text node (splitText) ที่ตำแหน่งสูงกว่า
+    // ไม่กระทบ offset ที่ต่ำกว่า แต่ถ้าทำจากหน้าไปหลัง offset ของ node เดียวกันจะเพี้ยน
+    function applyDistJobs(jobs) {
+        for (let i = jobs.length - 1; i >= 0; i--) {
+            const job = jobs[i];
+            const span = document.createElement('span');
+
+            span.className = 'layout-thai-dist';
+            span.dataset.line = String(job.line);
+            span.style.letterSpacing = job.spacing.toFixed(2) + 'px';
+
+            // ห่อในที่เดิม — ย้ายออกจาก run แม่ไม่ได้ เพราะจะเสียรูปแบบ
+            let node = job.node;
+
+            if (job.end < node.data.length) node.splitText(job.end);
+            if (job.start > 0) node = node.splitText(job.start);
+
+            node.parentNode.insertBefore(span, node);
+            span.appendChild(node);
+        }
+    }
+
+    // ย่อหน้าที่ Word กระจายตัวอักษร (เรียกซ้ำได้ — เคลียร์ของเดิมก่อน)
+    function applyThaiDistribute() {
+        if (!host || !current) return;
+
+        const wrapper = host.querySelector('.docx-wrapper');
+        const scale = wrapper ? Number(wrapper.style.zoom) || 1 : 1;
+
+        // คืน DOM ก่อนยืดรอบก่อน (การวัดต้องเริ่มจากความกว้างธรรมชาติ)
+        host.querySelectorAll('span.layout-thai-dist').forEach(function (span) {
+            const parent = span.parentNode;
+
+            while (span.firstChild) parent.insertBefore(span.firstChild, span);
+
+            parent.removeChild(span);
+        });
+
+        const xmlParagraphs = paragraphNodes();
+
+        host.querySelectorAll('article p').forEach(function (paragraph) {
+            const pair = current.pairs ? current.pairs.get(paragraph) : null;
+
+            if (!pair) return;
+            if (!isThaiDistribute(xmlParagraphs[pair.index])) return;
+
+            stretchParagraphLines(paragraph, scale);
         });
     }
 
@@ -2460,6 +2724,8 @@ async function renderDocx(bytes) {
     // ข้อความในกล่องข้อความถูกตัดออก — ย่อหน้าที่กล่องยึดอยู่มีตัวกล่องเป็นลูกอยู่
     // จึงต้องข้ามข้อความที่ซ้อนใน foreignObject/[data-layout-text-box] (ดู directTextRects)
     // ค่าที่คืนเป็น px ในพื้นที่เอกสาร (ยังไม่คูณ zoom) เทียบกับมุมซ้ายบนของหน้า
+    // เก็บเป็นกล่องเต็ม (left/top/right/bottom) เพราะนอกจากใช้จับคู่ "คอลัมน์"
+    // แล้ว ยังใช้ตรวจว่าข้อความในกล่องข้อความไปทับข้อความในเอกสารหรือไม่
     function documentTextRuns(section, pageRect, scale) {
         const runs = [];
 
@@ -2467,10 +2733,15 @@ async function renderDocx(bytes) {
             if (paragraph.closest('svg') || paragraph.closest('[data-layout-text-box]')) return;
             if ((paragraph.textContent || '').trim() === '') return;
 
+            const fontSize = parseFloat(window.getComputedStyle(paragraph).fontSize) || 0;
+
             directTextRects(paragraph).forEach(function (rect) {
                 runs.push({
                     left: (rect.left - pageRect.left) / scale,
-                    top: (rect.top - pageRect.top) / scale
+                    top: (rect.top - pageRect.top) / scale,
+                    right: (rect.right - pageRect.left) / scale,
+                    bottom: (rect.bottom - pageRect.top) / scale,
+                    fontSize: fontSize
                 });
             });
         });
@@ -2486,6 +2757,7 @@ async function renderDocx(bytes) {
 
     // บรรทัดทั้งหมดของข้อความ "ในกล่องข้อความ" (ทุกย่อหน้าในกล่อง)
     // ใช้ rect ที่เรนเดอร์จริง จึงไม่ขึ้นกับ padding ภายในกล่อง
+    // แนบขนาดฟอนต์ของย่อหน้ามาด้วย (ใช้ตัด half-leading ตอนเทียบการทับ)
     function textboxLineRects(wrapper) {
         const region = textboxContent(wrapper);
 
@@ -2494,12 +2766,97 @@ async function renderDocx(bytes) {
         const rects = [];
 
         Array.from(region.querySelectorAll('p')).forEach(function (paragraph) {
+            const fontSize = parseFloat(window.getComputedStyle(paragraph).fontSize) || 0;
+
             directTextRects(paragraph).forEach(function (rect) {
+                rect.fontSize = fontSize;
                 rects.push(rect);
             });
         });
 
         return rects;
+    }
+
+    // บรรทัดข้อความในกล่อง — แปลงเป็น px ในพื้นที่เอกสาร (ยังไม่คูณ zoom)
+    // เทียบกับมุมซ้ายบนของหน้า (ใช้เทียบกับผลของ documentTextRuns)
+    function textboxTextRects(wrapper, page) {
+        if (!page) return [];
+
+        const scale = page.scale || 1;
+
+        return textboxLineRects(wrapper).map(function (rect) {
+            return {
+                left: (rect.left - page.rect.left) / scale,
+                top: (rect.top - page.rect.top) / scale,
+                right: (rect.right - page.rect.left) / scale,
+                bottom: (rect.bottom - page.rect.top) / scale,
+                fontSize: (rect.fontSize || 0) / scale
+            };
+        });
+    }
+
+    // แถบตัวอักษรจริงในกล่องบรรทัด (ตัด half-leading ออกทั้งบน/ล่าง)
+    //
+    // กล่องบรรทัด (line box) สูงกว่าตัวอักษรเสมอ — ถ้าเทียบกล่องบรรทัดตรง ๆ
+    // จะนับว่า "ทับ" ทั้งที่ตัวอักษรยังห่างกัน (เช่น กล่องข้อความที่วางต่อ
+    // จากบรรทัดของเอกสารพอดี) การตัด half-leading ทำให้เห็นว่าตัวอักษรทับกันจริงไหม
+    function inkBand(rect) {
+        const size = rect.fontSize || 0;
+        const height = rect.bottom - rect.top;
+        const inset = Math.max(0, (height - size) / 2);
+
+        return { top: rect.top + inset, bottom: rect.bottom - inset };
+    }
+
+    // จำนวนจุดที่ข้อความในกล่องทับข้อความในเอกสาร เมื่อเลื่อนกล่องลง dy (px ในหน้า)
+    // นับเฉพาะที่ตัวอักษร (ไม่ใช่กล่องบรรทัด) ทับกันเกิน 1px ทั้งสองแกน
+    function textOverlapCount(boxRects, runs, dy) {
+        const runBands = runs.map(function (run) {
+            const band = inkBand(run);
+
+            return {
+                left: run.left,
+                right: run.right,
+                top: band.top,
+                bottom: band.bottom
+            };
+        });
+
+        let count = 0;
+
+        boxRects.forEach(function (box) {
+            const band = inkBand(box);
+            const top = band.top + dy;
+            const bottom = band.bottom + dy;
+
+            runBands.forEach(function (run) {
+                const vertical = Math.min(bottom, run.bottom) - Math.max(top, run.top);
+                const horizontal = Math.min(box.right, run.right) - Math.max(box.left, run.left);
+
+                if (vertical > 1 && horizontal > 1) count++;
+            });
+        });
+
+        return count;
+    }
+
+    // นับการทับข้อความถ้าเลื่อนกล่องลง dy (เทียบกับตำแหน่งที่เรนเดอร์อยู่ตอนนี้)
+    function textOverlapAfter(wrapper, info, dy) {
+        if (!info || !info.page || !info.runs || !info.runs.length) return 0;
+
+        const boxRects = textboxTextRects(wrapper, info.page);
+
+        if (!boxRects.length) return 0;
+
+        return textOverlapCount(boxRects, info.runs, dy);
+    }
+
+    // เลื่อนกล่องแนวตั้ง (px ในหน้า) ถ้าไม่ทำให้ข้อความในกล่องไปทับข้อความในเอกสารเพิ่ม
+    // ตำแหน่งเดิมที่ทับอยู่แล้ว = การจับคู่บรรทัดที่ตั้งใจไว้ ยอมให้เลื่อน
+    function applyTextboxMove(item, info, move) {
+        if (textOverlapAfter(item.wrapper, info, move) > textOverlapAfter(item.wrapper, info, 0)) return;
+
+        item.wrapper.style.top = (item.top + move).toFixed(2) + 'px';
     }
 
     // ความสูงบรรทัดตาม computed style (px ในพื้นที่เอกสาร ยังไม่คูณ zoom)
@@ -2624,7 +2981,7 @@ async function renderDocx(bytes) {
     // - บรรทัดแรกต้องใกล้บรรทัดข้อความอยู่แล้ว (คลาดเคลื่อนไม่เกินครึ่งบรรทัด)
     //   ไม่งั้น = ตั้งใจวางเหลื่อม ไม่ดึง
     // - offset ที่จะใช้ต้องเลื่อนได้ไม่เกินครึ่งบรรทัด และต้องดีกว่า "ไม่ขยับ"
-    function snapTextboxToLine(item) {
+    function snapTextboxToLine(item, info) {
         const wrapper = item.wrapper;
         const target = wrapper.closest ? wrapper.closest('p') : null;
 
@@ -2697,9 +3054,7 @@ async function renderDocx(bytes) {
                 if (worst <= tolerance) {
                     const move = delta / scale;
 
-                    if (Math.abs(move) >= 0.25) {
-                        wrapper.style.top = (item.top + move).toFixed(2) + 'px';
-                    }
+                    if (Math.abs(move) >= 0.25) applyTextboxMove(item, info, move);
 
                     return;
                 }
@@ -2778,7 +3133,7 @@ async function renderDocx(bytes) {
 
         if (Math.abs(delta) < 0.25) return;
 
-        wrapper.style.top = (item.top + delta).toFixed(2) + 'px';
+        applyTextboxMove(item, info, delta);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -2943,6 +3298,10 @@ async function renderDocx(bytes) {
                 wrapper: wrapper,
                 left: left === null ? currentLeft : left,
                 top: (top === null ? currentTop : top) - correction,
+                // ตำแหน่งที่เอกสารระบุ (ยังไม่ชดเชย) — ใช้เป็นทางเลือกเมื่อ
+                // การชดเชยทําให้ข้อความในกล่องไปทับข้อความในเอกสาร
+                declaredTop: top === null ? null : top,
+                correction: correction,
                 behind: anchor.behindDoc,
                 // อ้างแนวนอนด้วย align (center/right/inside) หรือไม่ (ดู snapTextboxToColumn)
                 alignH: anchor.horizontal ? anchor.horizontal.align : '',
@@ -2996,8 +3355,25 @@ async function renderDocx(bytes) {
         plan.forEach(function (item) {
             if (!item.textRelative) return;
 
-            snapTextboxToLine(item);
-            snapTextboxToColumn(item, columnsFor(item.wrapper));
+            const info = columnsFor(item.wrapper);
+
+            // การชดเชยแนวตั้ง (Word วัดจากบรรทัดแรกของย่อหน้า, CSS วัดจากขอบย่อหน้า)
+            // ช่วยให้กล่องไปตรงบรรทัดในเอกสารเป็นส่วนใหญ่ แต่บางย่อหน้า
+            // (เช่น ย่อหน้าที่กล่อง "ตำแหน่ง ..." เกาะอยู่) ชดเชยแล้วกล่องจะเลื่อน
+            // ขึ้นไปทับข้อความในเอกสาร ซึ่งตำแหน่งที่เอกสารระบุไม่ได้ทับ
+            // → ใช้ค่าที่เอกสารระบุแทน (ห้ามสร้างข้อความทับกัน)
+            if (item.correction > 0 && item.declaredTop !== null) {
+                const corrected = textOverlapAfter(item.wrapper, info, 0);
+                const declared = textOverlapAfter(item.wrapper, info, item.correction);
+
+                if (declared < corrected) {
+                    item.wrapper.style.top = item.declaredTop.toFixed(2) + 'px';
+                    item.top = item.declaredTop;
+                }
+            }
+
+            snapTextboxToLine(item, info);
+            snapTextboxToColumn(item, info);
         });
     }
 
@@ -3164,6 +3540,10 @@ async function renderDocx(bytes) {
         // ความกว้างแท็บต้องตรง tab stop ก่อนจัดตำแหน่งวัตถุ
         // (ความกว้างแท็บเปลี่ยนการตัดบรรทัด = จุดอ้างอิงของรูป/กล่อง/ตารางเปลี่ยนด้วย)
         applyTabStops();
+
+        // ย่อหน้าแบบกระจายตัวอักษร (thaiDistribute) — ยืดให้เต็มบรรทัดก่อน
+        // เพราะการยืดเปลี่ยนจุดตัดบรรทัด = ตำแหน่งของรูป/กล่องเปลี่ยนตาม
+        applyThaiDistribute();
 
         // ความสูงบรรทัดของย่อหน้าว่าง (วัดใหม่หลังฟอนต์โหลดครบ — ดู naturalLineHeight)
         applyParagraphMarkHeights();

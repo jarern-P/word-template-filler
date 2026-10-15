@@ -3297,6 +3297,11 @@ body.table-ratio-dragging .table-ratio-handle {
 .layout-preview .layout-tab {
     display: inline-block;
     cursor: not-allowed;
+
+    /* ห้ามสืบทอด text-indent ของย่อหน้า (มาจาก w:ind w:firstLine/w:hanging)
+       มิฉะนั้นตัวแท็บ (inline-block) จะถูกเลื่อนเข้าไปอีกเท่าเยื้อง
+       แล้วความกว้างที่คำนวณจาก tab stop จะคลาดไปหนึ่งช่วงเยื้อง */
+    text-indent: 0;
 }
 
 /* จุดนำ (w:leader) ของแท็บ — วาดด้วย background เพื่อไม่ให้กระทบขนาดกล่อง */
