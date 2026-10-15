@@ -166,8 +166,7 @@
         '                <option value="2">200%</option>',
         '            </select>',
         '        </label>',
-        '        <button type="button" id="layoutFindToggle" class="plain" title="ค้นหาและแทนที่ (Ctrl+F)">ค้นหา</button>',
-        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+F ค้นหาและแทนที่ · Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
+        '            <button type="button" id="layoutFindToggle" class="plain" title="ค้นหาและแทนที่ (Ctrl+F)">ค้นหา</button>',        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+F ค้นหาและแทนที่ · Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
         '        <span id="layoutStatus" class="layout-status"></span>',
         '        <div class="layout-find-bar" id="layoutFindBar">',
         '            <input type="text" id="layoutFindQuery" placeholder="ค้นหา..." autocomplete="off" spellcheck="false">',
@@ -176,6 +175,7 @@
         '            <button type="button" id="layoutFindNext" class="plain" title="ถัดไป (Enter)">›</button>',
         '            <button type="button" id="layoutReplaceBtn" class="plain" title="แทนที่ตำแหน่งที่ค้นอยู่">แทนที่</button>',
         '            <button type="button" id="layoutReplaceAllBtn" class="plain" title="แทนที่ทุกตำแหน่ง">แทนที่ทั้งหมด</button>',
+        '            <button type="button" id="layoutFindClose" class="plain" title="ปิดการค้นหา (คงผลค้นหาไว้)" aria-label="ปิดการค้นหา">×</button>',
         '            <span id="layoutFindCount" class="layout-find-count"></span>',
         '        </div>',
         '        <div class="layout-actions">',
@@ -3601,6 +3601,11 @@ async function renderDocx(bytes) {
         // ปิดการแก้ข้อความ = เมนู field ที่เปิดค้างอยู่ต้องปิดด้วย
         if (!editable) closeFieldMenu();
 
+        // ปิดการแก้ข้อความ = แถบค้นหาที่เปิดอยู่ปิดไปด้วย (สูงกว่าดี — ไม่มีโอกาสค้นหา
+        // ในย่อหน้าที่ล็อกแล้ว) แต่ไม่ล้างผลค้นหา/ไฮไลต์ไปก่อน (ผู้ใช้อาจเปิดกลับมา
+        // ได้โดยกด "ค้นหา" อีกครั้ง และเห็นผลค้นหาเดิมเหมือนเดิม)
+        if (!editable && findBarOpen) dismissFindBar();
+
         refreshFormatButtons();
     }
 
@@ -5203,6 +5208,15 @@ function scheduleFieldHighlight() {
         clearFind();
     }
 
+    // ปิดแถบค้นหาเฉพาะแถบ — ไม่ล้างผลค้นหา/ไฮไลต์ (ใช้ได้ตอนผู้ใช้ปิดแถบเอง)
+    function dismissFindBar() {
+        const bar = el('layoutFindBar');
+
+        if (bar) bar.classList.remove('open');
+
+        findBarOpen = false;
+    }
+
     // ล้างผลค้นหา (ไฮไลต์ที่ค้างในเอกสารถูกล้างไปด้วย)
     function clearFind() {
         findMatches = [];
@@ -5591,11 +5605,18 @@ function scheduleFieldHighlight() {
         const findNext = el('layoutFindNext');
         const replaceBtn = el('layoutReplaceBtn');
         const replaceAllBtn = el('layoutReplaceAllBtn');
+        const findClose = el('layoutFindClose');
 
         if (findToggle) {
             findToggle.addEventListener('click', function () {
                 if (findBarOpen) closeFindBar();
                 else openFindBar();
+            });
+        }
+
+        if (findClose) {
+            findClose.addEventListener('click', function () {
+                closeFindBar();
             });
         }
 
