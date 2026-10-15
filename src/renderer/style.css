@@ -2803,6 +2803,82 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* ปุ่มของหน้าจัดตำแหน่งอยู่ชิดขวาของแถบเครื่องมือ */
+
+/* ── แถบค้นหาและแทนที่ ใน toolbar ──
+   ซ่อนไว้ก่อน เปิดด้วยปุ่ม "ค้นหา" หรือ Ctrl+F / Ctrl+H (ดู openFindBar) */
+.layout-find-bar {
+    display: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    margin-left: 8px;
+}
+
+.layout-find-bar.open {
+    display: flex;
+}
+
+.layout-find-bar input {
+    width: 150px;
+    padding: 3px 6px;
+    font-size: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+}
+
+.layout-find-bar input:focus {
+    outline: 1px solid var(--pink-400);
+    outline-offset: -1px;
+}
+
+/* "ตำแหน่งที่เท่าไร/ทั้งหมด" เช่น 2/7 หรือคำว่า "ไม่พบ" */
+.layout-find-count {
+    min-width: 34px;
+    font-size: 11px;
+    color: var(--ink-faint);
+    text-align: center;
+}
+
+.layout-find-bar button {
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    font-size: 11px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.layout-find-bar button:hover {
+    background: var(--surface-hover);
+}
+
+.layout-find-bar button:active {
+    background: var(--surface-active);
+}
+
+.layout-find-bar button.plain {
+    padding: 0 8px;
+}
+
+/* ไฮไลต์ผลค้นหา (CSS Custom Highlight API — เหมือนไฮไลต์ {{field}})
+   ทุกตำแหน่งที่พบ = เหลืองอ่อน, ตำแหน่งที่กำลังอยู่ = ส้มเข้มกว่าให้เห็นชัด */
+::highlight(layout-find) {
+    background-color: #ffe066;
+}
+
+::highlight(layout-find-current) {
+    background-color: #ffab40;
+}
+
 .layout-actions {
     display: flex;
     gap: 8px;

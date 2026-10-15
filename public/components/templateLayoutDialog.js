@@ -100,6 +100,10 @@
     // ชื่อ highlight ของ CSS Custom Highlight API (ไฮไลต์ {{...}} เป็นสีเหลือง)
     const FIELD_HIGHLIGHT = 'layout-field';
 
+    // ไฮไลต์ผลค้นหา (layout-find = ทุกตำแหน่ง, layout-find-current = ตำแหน่งที่อยู่)
+    const FIND_HIGHLIGHT = 'layout-find';
+    const FIND_CURRENT_HIGHLIGHT = 'layout-find-current';
+
     // ไฮไลต์ "ทุกที่ที่ใช้ field นี้" (คลิกขวา → ไฮไลต์ทุกที่) — คนละสีกับ FIELD_HIGHLIGHT
     const FIELD_FOCUS_HIGHLIGHT = 'layout-field-focus';
 
@@ -162,8 +166,18 @@
         '                <option value="2">200%</option>',
         '            </select>',
         '        </label>',
-        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
+        '        <button type="button" id="layoutFindToggle" class="plain" title="ค้นหาและแทนที่ (Ctrl+F)">ค้นหา</button>',
+        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+F ค้นหาและแทนที่ · Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
         '        <span id="layoutStatus" class="layout-status"></span>',
+        '        <div class="layout-find-bar" id="layoutFindBar">',
+        '            <input type="text" id="layoutFindQuery" placeholder="ค้นหา..." autocomplete="off" spellcheck="false">',
+        '            <input type="text" id="layoutReplaceQuery" placeholder="แทนที่ด้วย..." autocomplete="off" spellcheck="false">',
+        '            <button type="button" id="layoutFindPrev" class="plain" title="ก่อนหน้า (Shift+Enter)">‹</button>',
+        '            <button type="button" id="layoutFindNext" class="plain" title="ถัดไป (Enter)">›</button>',
+        '            <button type="button" id="layoutReplaceBtn" class="plain" title="แทนที่ตำแหน่งที่ค้นอยู่">แทนที่</button>',
+        '            <button type="button" id="layoutReplaceAllBtn" class="plain" title="แทนที่ทุกตำแหน่ง">แทนที่ทั้งหมด</button>',
+        '            <span id="layoutFindCount" class="layout-find-count"></span>',
+        '        </div>',
         '        <div class="layout-actions">',
         '            <button type="button" id="layoutResetBtn" class="plain">ย้อนกลับ</button>',
         '            <button type="button" id="layoutDownloadBtn" class="plain">ดาวน์โหลด .docx</button>',
@@ -186,6 +200,9 @@
     let touched = new Set(); // ย่อหน้าที่ถูกแก้ตั้งแต่เรนเดอร์ครั้งล่าสุด
     let highlightTimer = 0;  // กันการไฮไลต์ {{}} ถี่เกินไประหว่างพิมพ์
     let layoutTimer = 0;     // กันการจัดตำแหน่งรูป/กล่องข้อความถี่เกินไประหว่างพิมพ์
+    let findBarOpen = false; // แถบค้นหาเปิดอยู่ไหม
+    let findMatches = [];    // ตำแหน่งที่พบในเอกสาร [{ range, paragraph }]
+    let findIndex = -1;      // ตำแหน่งที่กำลังอยู่ (index ใน findMatches)
 
     function el(id) {
         return document.getElementById(id);
@@ -233,6 +250,9 @@
 
         // ลบไฮไลต์ {{}} ออกจากทะเบียนของเอกสาร (range อ้าง node ที่จะถูกล้าง)
         clearFieldHighlight();
+
+        // แถบค้นหาและไฮไลต์ของมันปิดไปพร้อมหน้าต่าง
+        closeFindBar();
     }
 
     // payload = { name, bytes, xml, save(newXml) -> Promise<newBytes>, download(newXml) }
@@ -260,6 +280,9 @@
 
         const fieldToggle = el('layoutFieldToggle');
         if (fieldToggle) fieldToggle.checked = true;
+
+        // แถบค้นหาเริ่มที่ "ปิด" — เปิดด้วยปุ่มค้นหา หรือ Ctrl+F / Ctrl+H
+        closeFindBar();
 
         setStatus('');
         overlay.classList.add('open');
@@ -290,6 +313,7 @@ async function renderDocx(bytes) {
     // ล้าง highlight เดิมก่อนล้าง DOM
     // เพราะ Range เดิมอ้าง TextNode ที่กำลังจะถูกลบ
     clearFieldHighlight();
+    clearFind();
 
     // ล้าง DOM เดิม
     host.innerHTML = '';
@@ -375,6 +399,9 @@ async function renderDocx(bytes) {
     // ต้องเรียกหลัง docx-preview render เสร็จและหลัง prepareEditing()
     // เพราะ fieldRanges() ต้องอ่าน TextNode จริงจาก DOM
     applyFieldHighlight();
+
+    // แถบค้นหาเปิดอยู่ = ค้นใหม่ เพราะ Range เดิมอ้าง DOM ที่เพิ่งถูกล้างไป
+    if (findBarOpen) runFind(false);
 
     setStatus('');
 }
@@ -4240,6 +4267,351 @@ function scheduleFieldHighlight() {
         updateDirty();
     }
 
+    // คีย์ลัด Ctrl+F / Ctrl+H = เปิดแถบค้นหาและแทนที่
+    function isFindShortcut(event) {
+        return !!
+            (event.ctrlKey || event.metaKey) &&
+            !event.altKey &&
+            !event.shiftKey &&
+            (event.key === 'f' || event.key === 'F' || event.key === 'h' || event.key === 'H');
+    }
+
+    function onFindKeydown(event) {
+        if (!isFindShortcut(event)) return;
+
+        event.preventDefault();
+
+        const input = findInput();
+
+        // ข้อความที่เลือกอยู่ในเอกสาร (อ่านก่อนย้ายโฟกัส) = คำค้น
+        const selected = document.activeElement === input
+            ? ''
+            : String(window.getSelection() || '').trim();
+
+        if (!findBarOpen) openFindBar();
+
+        if (input && selected) {
+            input.value = selected;
+            runFind(false);
+        }
+
+        if (input) {
+            input.focus();
+            input.select();
+        }
+    }
+
+    function findInput() {
+        return el('layoutFindQuery');
+    }
+
+    // คำค้น — ตัดช่องว่างหัว/ท้ายทิ้ง เพื่อไม่ให้พิมพ์เผลอแล้วกลายเป็น "ไม่พบ"
+    function findText() {
+        const input = findInput();
+
+        return input ? input.value.trim() : '';
+    }
+
+    function findReplaceText() {
+        const input = el('layoutReplaceQuery');
+
+        return input ? input.value : '';
+    }
+
+    // เปิดแถบค้นหาและแทนที่
+    function openFindBar() {
+        const bar = el('layoutFindBar');
+        if (!bar) return;
+
+        bar.classList.add('open');
+        findBarOpen = true;
+
+        const input = findInput();
+
+        if (input) {
+            // ค้นจากสิ่งที่พิมพ์ค้างไว้หรือไม่ก็ได้ (ผู้ใช้อาจกลับมาเปิดแถบซ้ำ)
+            runFind(true);
+            input.focus();
+            input.select();
+        }
+    }
+
+    // ปิดแถบค้นหาและแทนที่ (ล้างผลค้นหา/ไฮไลต์ด้วย)
+    function closeFindBar() {
+        const bar = el('layoutFindBar');
+
+        if (bar) bar.classList.remove('open');
+
+        findBarOpen = false;
+        clearFind();
+    }
+
+    // ล้างผลค้นหา (ไฮไลต์ที่ค้างในเอกสารถูกล้างไปด้วย)
+    function clearFind() {
+        findMatches = [];
+        findIndex = -1;
+
+        clearFindHighlights();
+        updateFindCount();
+    }
+
+    function clearFindHighlights() {
+        if (!highlightSupported()) return;
+
+        scope.CSS.highlights.delete(FIND_HIGHLIGHT);
+        scope.CSS.highlights.delete(FIND_CURRENT_HIGHLIGHT);
+    }
+
+    // ── ค้นหา ──
+
+    // ย่อหน้าที่ค้นและแทนที่ได้ = ย่อหน้าเนื้อเรื่องที่แก้ไขได้
+    // (ย่อหน้าที่จับคู่ต้นฉบับไม่ได้ หรือตอนปิด "แก้ไขข้อความ" จะข้ามไป)
+    function findableParagraphs() {
+        return bodyParagraphs().filter(function (paragraph) {
+            return paragraph.isContentEditable;
+        });
+    }
+
+    // หาทุกตำแหน่งของ query ในเอกสาร (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
+    // คืน [{ range, paragraph }] เรียงตามลําดับในเอกสาร
+    //
+    // ใช้ paragraphTextMap/nodeAtOffset (ตัวเดียวกับไฮไลต์ {{field}}) เพราะ
+    // docx-preview แยกข้อความย่อหน้าเดียวเป็นหลาย TextNode (คำ/{{field}} คนละ span)
+    function collectFindMatches(query) {
+        const matches = [];
+
+        if (!query || !host) return matches;
+
+        const needle = query.toLowerCase();
+
+        findableParagraphs().forEach(function (paragraph) {
+            const map = paragraphTextMap(paragraph);
+            const haystack = map.text.toLowerCase();
+
+            let pos = 0;
+
+            while (pos <= haystack.length - needle.length) {
+                const index = haystack.indexOf(needle, pos);
+
+                if (index === -1) break;
+
+                const start = nodeAtOffset(map.items, index, false);
+                const end = nodeAtOffset(map.items, index + query.length, true);
+
+                if (start && end) {
+                    try {
+                        const range = document.createRange();
+
+                        range.setStart(start.node, start.offset);
+                        range.setEnd(end.node, end.offset);
+
+                        matches.push({ range: range, paragraph: paragraph });
+                    } catch (error) {
+                        console.warn('สร้างช่วงข้อความที่ค้นหาไม่สำเร็จ', {
+                            query: query,
+                            error: error
+                        });
+                    }
+                }
+
+                // ค้นต่อจากท้ายคำที่พบ (ไม่นับซ้อนกันเอง)
+                pos = index + query.length;
+            }
+        });
+
+        return matches;
+    }
+
+    // ค้นหาใหม่ทั้งเอกสาร — keepIndex = คงตำแหน่งปัจจุบันไว้ (ใช้หลังการแทนที่)
+    function runFind(keepIndex) {
+        const query = findText();
+        const previous = keepIndex ? findIndex : 0;
+
+        findMatches = collectFindMatches(query);
+
+        if (findMatches.length === 0) {
+            findIndex = -1;
+        } else {
+            // ตำแหน่งที่จำไว้เกินจำนวนที่เหลือ = วนกลับไปตำแหน่งแรก
+            findIndex = previous >= 0 && previous < findMatches.length ? previous : 0;
+        }
+
+        // ไม่มีอะไรให้ค้นเลย เพราะปิด "แก้ไขข้อความ" อยู่ (ย่อหน้าถูกล็อกทั้งหมด)
+        // บอกให้ตรง ๆ ไม่ปล่อยให้เห็นแค่ "ไม่พบ"
+        if (query && findMatches.length === 0 && findableParagraphs().length === 0) {
+            setStatus('ปิด "แก้ไขข้อความ" อยู่ — เปิดก่อนจึงจะค้นหาและแทนที่ได้', 'warn');
+        }
+
+        renderFindHighlights();
+        updateFindCount();
+        scrollToFindMatch();
+    }
+
+    // ไฮไลต์ทุกตำแหน่งที่พบ + ตำแหน่งที่กำลังอยู่
+    function renderFindHighlights() {
+        if (!highlightSupported()) return;
+
+        clearFindHighlights();
+
+        if (findMatches.length === 0) return;
+
+        const all = new scope.Highlight();
+
+        findMatches.forEach(function (match) {
+            all.add(match.range);
+        });
+
+        scope.CSS.highlights.set(FIND_HIGHLIGHT, all);
+
+        const currentMatch = findMatches[findIndex];
+
+        if (currentMatch) {
+            scope.CSS.highlights.set(
+                FIND_CURRENT_HIGHLIGHT,
+                new scope.Highlight(currentMatch.range)
+            );
+        }
+    }
+
+    // ตัวเลข "ตำแหน่งที่เท่าไร/ทั้งหมด" บนแถบค้นหา
+    function updateFindCount() {
+        const counter = el('layoutFindCount');
+
+        if (!counter) return;
+
+        if (findMatches.length === 0) {
+            counter.textContent = findText() ? 'ไม่พบ' : '';
+            return;
+        }
+
+        counter.textContent = (findIndex + 1) + '/' + findMatches.length;
+    }
+
+    // เลื่อนเอกสารให้เห็นตำแหน่งที่ค้นหา (เฉพาะที่อยู่นอกจอ)
+    function scrollToFindMatch() {
+        const match = findMatches[findIndex];
+        const body = el('layoutBody');
+
+        if (!match || !body) return;
+
+        let rect = null;
+
+        try {
+            rect = match.range.getBoundingClientRect();
+        } catch (error) {
+            rect = null;
+        }
+
+        if (!rect || (!rect.width && !rect.height)) return;
+
+        const view = body.getBoundingClientRect();
+
+        if (rect.top < view.top || rect.bottom > view.bottom) {
+            body.scrollTop += rect.top - view.top - (view.height - rect.height) / 2;
+        }
+    }
+
+    // เลื่อนไปตำแหน่งก่อนหน้า/ถัดไป (วนกลับหัว/ท้ายเมื่อสุด)
+    function stepFindMatch(step) {
+        if (findMatches.length === 0) return;
+
+        findIndex = (findIndex + step + findMatches.length) % findMatches.length;
+
+        renderFindHighlights();
+        updateFindCount();
+        scrollToFindMatch();
+    }
+
+    // ── แทนที่ ──
+
+    // แทนที่ข้อความในช่วงที่กำหนดด้วยข้อความล้วน (คงรูปแบบของ run ที่ครอบข้อความไว้)
+    //
+    // แก้ที่ DOM ที่เรนเดอร์อยู่ ไม่ใช่ String ของ word/document.xml — การตัด String
+    // ที่ offset ของ XML จะตัดกลางแท็กและทำให้ไฟล์เสีย
+    // พอเป็น "การแก้ในหน้าเอกสาร" แล้วเส้นทางบันทึกเดิม (collectEdits →
+    // Replace.setParagraphTexts) จะเขียนข้อความใหม่ลง XML ตอนกดบันทึกเอง
+    function replaceRange(match, text) {
+        try {
+            match.range.deleteContents();
+
+            if (text) match.range.insertNode(document.createTextNode(text));
+        } catch (error) {
+            console.warn('แทนที่ข้อความไม่สำเร็จ', error);
+            return false;
+        }
+
+        // นับเป็น "แก้ไข" เหมือนพิมพ์เอง — ปุ่มบันทึก/ไฮไลต์/สถานะอัปเดตตาม
+        touchParagraph(match.paragraph);
+        scheduleFieldHighlight();
+        scheduleLayoutFix();
+        updateDirty();
+
+        return true;
+    }
+
+    // แทนที่ตำแหน่งที่กำลังอยู่ แล้วเลื่อนไปตำแหน่งถัดไป (เหมือน Word)
+    function replaceCurrentMatch() {
+        const query = findText();
+
+        if (!query) {
+            setStatus('กรุณาระบุข้อความที่ค้นหา', 'warn');
+            return;
+        }
+
+        if (findMatches.length === 0) runFind(false);
+
+        const target = findMatches[findIndex];
+
+        if (!target) {
+            setStatus('ไม่พบข้อความที่จะแทนที่', 'warn');
+            return;
+        }
+
+        if (!replaceRange(target, findReplaceText())) {
+            setStatus('แทนที่ข้อความไม่สำเร็จ', 'error');
+            return;
+        }
+
+        // ค้นใหม่ (ตำแหน่งขยับแล้ว) โดยคง index เดิม = เลื่อนไปตำแหน่งถัดไปเอง
+        runFind(true);
+
+        setStatus('แทนที่แล้ว 1 ตำแหน่ง', 'ok');
+    }
+
+    // แทนที่ทุกตำแหน่ง — ทำจากท้ายมาหน้า เพื่อไม่ให้ช่วงที่อยู่ก่อนหน้าถูกทำให้เสีย
+    function replaceAllMatches() {
+        const query = findText();
+
+        if (!query) {
+            setStatus('กรุณาระบุข้อความที่ค้นหา', 'warn');
+            return;
+        }
+
+        if (findMatches.length === 0) runFind(false);
+
+        if (findMatches.length === 0) {
+            setStatus('ไม่พบข้อความที่จะแทนที่', 'warn');
+            return;
+        }
+
+        const text = findReplaceText();
+        let done = 0;
+
+        for (let i = findMatches.length - 1; i >= 0; i--) {
+            if (replaceRange(findMatches[i], text)) done++;
+        }
+
+        runFind(false);
+
+        setStatus(
+            'แทนที่ทั้งหมด ' + done + ' ตำแหน่ง' +
+            (findMatches.length > 0
+                ? ' · ยังเหลือ ' + findMatches.length + ' ตำแหน่งที่ตรงกับคำค้น (ข้อความที่แทนลงไปตรงกับคำค้น)'
+                : ''),
+            'ok'
+        );
+    }
+
     // กด Enter เพิ่มย่อหน้าใหม่ไม่ได้ — w:p ใหม่ต้องสร้างใน Word
     function onKeydown(event) {
         if (event.key !== 'Enter') return;
@@ -4299,7 +4671,9 @@ function scheduleFieldHighlight() {
     }
 
     function buildOverlay() {
-        if (overlay) return;
+        if (overlay) {
+            return;
+        }
 
         overlay = document.createElement('div');
         overlay.className = 'layout-overlay';
@@ -4315,6 +4689,9 @@ function scheduleFieldHighlight() {
         overlay.querySelectorAll('[data-layout-close]').forEach(function (node) {
             node.addEventListener('click', close);
         });
+
+        // สร้าง popup ค้นหาและแทนที่ (สร้างหลังจาก overlay พร้อมแล้ว)
+        // ช่องค้นหาและแทนที่ถูกเพิ่มใน getHTML() แล้ว (layout-find-bar)
 
         const editToggle = el('layoutEditToggle');
         if (editToggle) editToggle.addEventListener('change', applyEditToggle);
@@ -4349,8 +4726,93 @@ function scheduleFieldHighlight() {
             if (current && select && select.value === 'fit') applyZoom();
         });
 
+        // --- แถบค้นหา / แทนที่ ---
+        const findToggle = el('layoutFindToggle');
+        const findQuery = findInput();
+        const replaceQuery = el('layoutReplaceQuery');
+        const findPrev = el('layoutFindPrev');
+        const findNext = el('layoutFindNext');
+        const replaceBtn = el('layoutReplaceBtn');
+        const replaceAllBtn = el('layoutReplaceAllBtn');
+
+        if (findToggle) {
+            findToggle.addEventListener('click', function () {
+                if (findBarOpen) closeFindBar();
+                else openFindBar();
+            });
+        }
+
+        if (findQuery) {
+            // พิมพ์แล้วค้นใหม่ทันที (กลับไปตำแหน่งแรกเสมอ)
+            findQuery.addEventListener('input', function () {
+                runFind(false);
+            });
+
+            findQuery.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    // กันไม่ให้ handler ชั้น document ปิดหน้าต่างต่อ
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeFindBar();
+                    return;
+                }
+
+                if (event.key !== 'Enter') return;
+
+                event.preventDefault();
+
+                if (findMatches.length === 0) runFind(false);
+                else stepFindMatch(event.shiftKey ? -1 : 1);
+            });
+        }
+
+        if (replaceQuery) {
+            replaceQuery.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeFindBar();
+                    return;
+                }
+
+                if (event.key !== 'Enter') return;
+
+                event.preventDefault();
+                replaceCurrentMatch();
+            });
+        }
+
+        if (findPrev) {
+            findPrev.addEventListener('click', function () {
+                if (findMatches.length === 0) runFind(false);
+                else stepFindMatch(-1);
+            });
+        }
+
+        if (findNext) {
+            findNext.addEventListener('click', function () {
+                if (findMatches.length === 0) runFind(false);
+                else stepFindMatch(1);
+            });
+        }
+
+        if (replaceBtn) {
+            replaceBtn.addEventListener('click', replaceCurrentMatch);
+        }
+
+        if (replaceAllBtn) {
+            replaceAllBtn.addEventListener('click', replaceAllMatches);
+        }
+
         const saveBtn = el('layoutSaveBtn');
-        if (saveBtn) saveBtn.addEventListener('click', save);
+
+        // ต้องเรียก save(false) ไม่ใช่ส่ง event ตรง ๆ — ไม่งั้น event กลายเป็นค่า
+        // silent=true แล้วกล่องยืนยันการบันทึกจะถูกข้ามไป
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function () {
+                save(false);
+            });
+        }
 
         const downloadBtn = el('layoutDownloadBtn');
         if (downloadBtn) downloadBtn.addEventListener('click', download);
@@ -4399,10 +4861,23 @@ function scheduleFieldHighlight() {
         });
 
         document.addEventListener('keydown', function (event) {
+            // Ctrl+F / Ctrl+H = เปิดแถบค้นหาและแทนที่ (ทำงานเมื่อ overlay เปิดอยู่)
+            if (isFindShortcut(event) && overlay.classList.contains('open')) {
+                event.preventDefault();
+                onFindKeydown(event);
+                return;
+            }
+
             if (event.key !== 'Escape') return;
             if (!overlay.classList.contains('open')) return;
 
-            // Esc ทีละชั้น: กล่องแก้ field → เมนูคลิกขวา → ไฮไลต์ field → ปิดหน้าต่าง
+            // Esc ทีละชั้น: แถบค้นหา → กล่องแก้ field → เมนูคลิกขวา → ไฮไลต์ field → ปิดหน้าต่าง
+            if (findBarOpen) {
+                event.preventDefault();
+                closeFindBar();
+                return;
+            }
+
             if (fieldModalOpen()) {
                 event.preventDefault();
                 closeFieldDialog();
