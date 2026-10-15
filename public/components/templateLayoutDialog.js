@@ -166,7 +166,7 @@
         '                <option value="2">200%</option>',
         '            </select>',
         '        </label>',
-        '            <button type="button" id="layoutFindToggle" class="plain" title="ค้นหาและแทนที่ (Ctrl+F)">ค้นหา</button>',        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+F ค้นหาและแทนที่ · Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
+        '        <span class="layout-hint">คลิกข้อความในเอกสารแล้วพิมพ์แก้ได้เลย · กด Ctrl+F ค้นหาและแทนที่ · Ctrl+Space เพื่อแทรก {{field}} ที่เคอร์เซอร์ · เลือกข้อความแล้วจัดรูปแบบจากปุ่มด้านบน · หัว/ท้ายกระดาษกับสัญลักษณ์ของเอกสารแก้ไม่ได้</span>',
         '        <span id="layoutStatus" class="layout-status"></span>',
         '        <div class="layout-find-bar" id="layoutFindBar">',
         '            <input type="text" id="layoutFindQuery" placeholder="ค้นหา..." autocomplete="off" spellcheck="false">',
@@ -5131,11 +5131,12 @@ function scheduleFieldHighlight() {
 
     // คีย์ลัด Ctrl+F / Ctrl+H = เปิดแถบค้นหาและแทนที่
     function isFindShortcut(event) {
-        return !!
+        return (
             (event.ctrlKey || event.metaKey) &&
             !event.altKey &&
             !event.shiftKey &&
-            (event.key === 'f' || event.key === 'F' || event.key === 'h' || event.key === 'H');
+            (event.code === 'KeyF' || event.code === 'KeyH')
+        );
     }
 
     function onFindKeydown(event) {
@@ -5662,15 +5663,27 @@ function scheduleFieldHighlight() {
 
         if (findPrev) {
             findPrev.addEventListener('click', function () {
-                if (findMatches.length === 0) runFind(false);
-                else stepFindMatch(-1);
+                if (findMatches.length === 0) {
+                    runFind(false);
+                    if (!findText()) {
+                        setStatus('ระบุคำค้นหาแล้วกด Enter ค้นหา ก่อนจะใช้ลูกศรได้', 'warn');
+                    } else {
+                        setStatus('ไม่พบคำว่า ' + findText(), 'warn');
+                    }
+                } else stepFindMatch(-1);
             });
         }
 
         if (findNext) {
             findNext.addEventListener('click', function () {
-                if (findMatches.length === 0) runFind(false);
-                else stepFindMatch(1);
+                if (findMatches.length === 0) {
+                    runFind(false);
+                    if (!findText()) {
+                        setStatus('ระบุคำค้นหาแล้วกด Enter ค้นหา ก่อนจะใช้ลูกศรได้', 'warn');
+                    } else {
+                        setStatus('ไม่พบคำว่า ' + findText(), 'warn');
+                    }
+                } else stepFindMatch(1);
             });
         }
 
