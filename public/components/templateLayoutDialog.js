@@ -1265,8 +1265,30 @@ async function renderDocx(bytes) {
         return nodes;
     }
 
-    // ตำแหน่งของอักขระทุกตัวในย่อหน้า จัดกลุ่มเป็น "บรรทัด" ตามขอบบน
-    // คืนรายการบรรทัด: { top, left, right, chars: [{node, start, end}] }
+    // อักขระ/ช่วงอักขระ อยู่ "บรรทัดเดียวกัน" หรือไม่
+    //
+    // เทียบขอบบนของกล่องตรง ๆ ไม่ได้ เพราะบรรทัดเดียวในเอกสารมักมี run หลายขนาด
+    // (ตัวอย่างจริง: "เรื่อง" 20pt + เนื้อความ 16pt) ตัวใหญ่กล่องเริ่มสูงกว่า
+    // ขอบบนต่างกันถึง 4px → ย่อหน้าบรรทัดเดียวถูกตัดเป็นหลาย "บรรทัด" แล้ว
+    // ยืดตัวอักษรผิด ๆ (ระยะห่างเป็นร้อย px) จนข้อความตกไปบรรทัดถัดไป
+    //
+    // กล่องของอักขระ = ascent–descent ของฟอนต์ที่ขนาดนั้น เมื่อจุดอ้างอิงเดียวกัน
+    // (baseline เดียวกัน) จุดกึ่งกลางกล่องจึงต่างกันไม่กี่ px ส่วนคนละบรรทัด
+    // ห่างกันเท่าระยะบรรทัด (20px+) จึงเทียบที่จุดกึ่งกลาง และยอมให้ต่างได้
+    // ไม่เกินครึ่งของกล่องที่เตี้ยกว่า
+    function sameLine(box, line) {
+        const lineHeight = line.bottom - line.top;
+        const boxHeight = box.bottom - box.top;
+
+        if (!(lineHeight > 0) || !(boxHeight > 0)) return false;
+
+        const tolerance = Math.min(lineHeight, boxHeight) / 2;
+
+        return Math.abs((box.top + box.bottom) / 2 - (line.top + line.bottom) / 2) <= tolerance;
+    }
+
+    // ตำแหน่งของอักขระทุกตัวในย่อหน้า จัดกลุ่มเป็น "บรรทัด"
+    // คืนรายการบรรทัด: { top, bottom, left, right, chars: [{node, start, end}] }
     function paragraphLines(paragraph) {
         const nodes = paragraphTextNodes(paragraph);
         const lines = [];
@@ -1280,7 +1302,7 @@ async function renderDocx(bytes) {
                 // (1 อักขระ = 1 ช่วงสั้น ๆ — ต้องรู้ว่า "บรรทัดนี้มีอักขระใด")
                 const start = index;
                 let end = index;
-                let top = null;
+                let line = null;
                 let left = Infinity;
                 let right = -Infinity;
 
@@ -1298,10 +1320,13 @@ async function renderDocx(bytes) {
                         continue;
                     }
 
-                    if (top === null) {
-                        top = rect.top;
-                    } else if (Math.abs(rect.top - top) > 1) {
+                    if (line === null) {
+                        line = { top: rect.top, bottom: rect.bottom };
+                    } else if (!sameLine(rect, line)) {
                         break;
+                    } else {
+                        if (rect.top < line.top) line.top = rect.top;
+                        if (rect.bottom > line.bottom) line.bottom = rect.bottom;
                     }
 
                     if (rect.left < left) left = rect.left;
@@ -1312,7 +1337,8 @@ async function renderDocx(bytes) {
                 if (end === start) break;
 
                 lines.push({
-                    top: top === null ? 0 : top,
+                    top: line === null ? 0 : line.top,
+                    bottom: line === null ? 0 : line.bottom,
                     left: left === Infinity ? 0 : left,
                     right: right === -Infinity ? 0 : right,
                     chars: [{ node: node, start: start, end: end }]
@@ -1328,10 +1354,12 @@ async function renderDocx(bytes) {
         lines.forEach(function (line) {
             const last = merged[merged.length - 1];
 
-            if (last && Math.abs(last.top - line.top) <= 1) {
+            if (last && sameLine(line, last)) {
                 last.chars.push(line.chars[0]);
                 last.left = Math.min(last.left, line.left);
                 last.right = Math.max(last.right, line.right);
+                last.top = Math.min(last.top, line.top);
+                last.bottom = Math.max(last.bottom, line.bottom);
                 return;
             }
 
