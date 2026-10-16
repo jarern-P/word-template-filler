@@ -3473,8 +3473,10 @@
     // คัดลอกแม่แบบ (หน้ารายการแม่แบบ → ปุ่ม "คัดลอก")
     //
     // สร้างรายการใหม่จากของเดิมทั้งชุด (ไฟล์ .docx + type + ล็อกตำแหน่ง +
-    // placeholder + โครงตาราง) แล้วตั้งชื่อเป็น "ชื่อ (สำเนา)"
-    // โดยไม่แตะแม่แบบต้นฉบับ
+    // placeholder + โครงตาราง) โดยไม่แตะแม่แบบต้นฉบับ
+    //
+    // ก่อนสร้างจะเปิดกล่องให้ตั้งชื่อสำเนาเอง (ค่าเริ่มต้น = "ชื่อเดิม (สำเนา)")
+    // ยกเลิกกล่อง = ไม่คัดลอก
     // ──────────────────────────────────────────────────────────────
 
     // ชื่อสำเนาที่ยังไม่ซ้ำกับแม่แบบที่มีอยู่ (กันชื่อซ้ำจนแยกรายการไม่ออก)
@@ -3498,6 +3500,44 @@
         }
 
         return name;
+    }
+
+    // ชื่อนี้มีแม่แบบอื่นใช้อยู่แล้วหรือยัง (ใช้ก่อนสร้างสำเนาที่ตั้งชื่อเอง)
+    //
+    // ฐานข้อมูลบังคับชื่อแม่แบบไม่ให้ซ้ำ (templates.name UNIQUE) จึงต้องเช็คก่อนบันทึก
+    // ไม่งั้นผู้ใช้จะเจอ error "UNIQUE constraint failed"
+    function templateNameTaken(name) {
+
+        const wanted =
+            String(name || '').trim();
+
+        if (!wanted) {
+            return false;
+        }
+
+        return (templateRecords || []).some(function (item) {
+
+            return String(item.name || '').trim() === wanted;
+        });
+    }
+
+    // ชื่อที่ยังว่าง — เติมเลขในวงเล็บต่อท้ายให้เอง (เช่น "ใบลา (2)")
+    function freeTemplateName(baseName) {
+
+        const base =
+            String(baseName || '').trim() || 'แม่แบบ';
+
+        if (!templateNameTaken(base)) {
+            return base;
+        }
+
+        let index = 2;
+
+        while (templateNameTaken(base + ' (' + index + ')')) {
+            index++;
+        }
+
+        return base + ' (' + index + ')';
     }
 
     async function onCopyTemplate(recordId) {
@@ -3526,8 +3566,51 @@
                 return;
             }
 
-            const name =
+            // ให้ตั้งชื่อสำเนาเองได้ — เติมชื่อเดิม + " (สำเนา)" ให้ก่อน
+            // (ถ้าชื่อนั้นซ้ำอยู่แล้วจะเติมเลขต่อท้ายให้เป็น "(สำเนา 2)" ตามเดิม)
+            const suggested =
                 copyTemplateName(record.name);
+
+            const typed =
+                await scope.AppDialog.prompt(
+                    'ตั้งชื่อแม่แบบใหม่\n\n' +
+                    'ไฟล์ .docx และค่าตั้งทั้งหมดของ "' + record.name + '" ' +
+                    'จะถูกคัดลอกมาที่แม่แบบใหม่นี้',
+                    suggested,
+                    { title: 'คัดลอกแม่แบบ', okText: 'คัดลอก' }
+                );
+
+            // ปิด/ยกเลิกกล่อง = ไม่ต้องคัดลอก
+            if (typed === null) {
+                return;
+            }
+
+            // เว้นว่าง = ใช้ชื่อที่ระบบแนะนำ (ชื่อเดิม + " (สำเนา)")
+            let name =
+                String(typed).trim() ||
+                suggested;
+
+            // ชื่อซ้ำกับแม่แบบที่มีอยู่ = ให้ตั้งใหม่ในกล่องเดิม
+            // (พร้อมเติมชื่อที่ยังว่างให้) — ฐานข้อมูลไม่ยอมให้ชื่อซ้ำ
+            while (templateNameTaken(name)) {
+
+                const retyped =
+                    await scope.AppDialog.prompt(
+                        'ชื่อ "' + name + '" ถูกใช้อยู่แล้ว\n' +
+                        'ตั้งชื่ออื่นสำหรับสำเนา',
+                        freeTemplateName(name),
+                        { title: 'ชื่อซ้ำ', okText: 'คัดลอก' }
+                    );
+
+                // ปิด/ยกเลิกกล่อง = ไม่ต้องคัดลอก
+                if (retyped === null) {
+                    return;
+                }
+
+                name =
+                    String(retyped).trim() ||
+                    freeTemplateName(name);
+            }
 
             const bytes =
                 record.docx instanceof Uint8Array
