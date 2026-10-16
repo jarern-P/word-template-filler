@@ -85,6 +85,28 @@ contextBridge.exposeInMainWorld(
         dbHistoryClear: () =>
             ipcRenderer.invoke("db:history-clear"),
 
+        // ── ไฟล์ฐานข้อมูล (สำรอง / ย้ายเครื่อง) ──
+
+        // ตำแหน่ง/ขนาด/จำนวนข้อมูลของฐานข้อมูลปัจจุบัน
+        dbInfo: () =>
+            ipcRenderer.invoke("db:info"),
+
+        // ดาวน์โหลดสำเนาฐานข้อมูลไปเก็บไว้ (ได้ไฟล์ในโฟลเดอร์ Downloads)
+        dbExport: () =>
+            ipcRenderer.invoke("db:export"),
+
+        // ตรวจไฟล์ฐานข้อมูลที่จะนำเข้า — payload = { data }
+        dbImportPrepare: (payload) =>
+            ipcRenderer.invoke("db:import-prepare", payload),
+
+        // แทนที่ฐานข้อมูลเดิมด้วยไฟล์ที่ตรวจไว้
+        dbImportApply: () =>
+            ipcRenderer.invoke("db:import-apply"),
+
+        // ทิ้งไฟล์ที่ตรวจไว้ (ผู้ใช้ยกเลิก)
+        dbImportDiscard: () =>
+            ipcRenderer.invoke("db:import-discard"),
+
         // ─────────────────────────────
         // File
         // ─────────────────────────────

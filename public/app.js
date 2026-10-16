@@ -8,6 +8,7 @@
     const MASTER_PAGE = 'master-data';
     const WORDS_PAGE = 'word-suggest';
     const HISTORY_PAGE = 'history';
+    const DATABASE_PAGE = 'database';
 
     // สวิตช์เปิด/ปิดการแนะนำคำเป็นค่าติดตั้งของเครื่องนี้ ไม่ใช่ข้อมูลของ template
     // จึงเก็บใน localStorage ไม่ต้องเพิ่มตารางในฐานข้อมูล
@@ -30,7 +31,8 @@
         'template-config': 'TemplateConfigPage',
         'master-data': 'MasterDataPage',
         'word-suggest': 'WordSuggestPage',
-        'history': 'HistoryPage'
+        'history': 'HistoryPage',
+        'database': 'DatabasePage'
     };
 
     // ──────────────────────────────────────────────────────────────
@@ -1148,6 +1150,28 @@
                     return;
                 }
 
+                // นำเข้าไฟล์ฐานข้อมูลแทนที่ของเดิม (หน้าฐานข้อมูล)
+                if (
+                    target &&
+                    target.id === 'databaseImportInput'
+                ) {
+
+                    const databasePage =
+                        getComponent(DATABASE_PAGE);
+
+                    if (
+                        databasePage &&
+                        databasePage.onImportFileChosen
+                    ) {
+
+                        databasePage.onImportFileChosen(
+                            event
+                        );
+                    }
+
+                    return;
+                }
+
                 // สวิตช์เปิด/ปิดการแนะนำคำ (หน้า "คำแนะนำ")
                 if (
                     target &&
@@ -1620,6 +1644,40 @@
                     return;
                 }
 
+                // ดาวน์โหลดสำเนาไฟล์ฐานข้อมูล (หน้าฐานข้อมูล)
+                if (id === 'databaseExportBtn') {
+
+                    const databasePage =
+                        getComponent(DATABASE_PAGE);
+
+                    if (
+                        databasePage &&
+                        databasePage.exportDatabase
+                    ) {
+
+                        databasePage.exportDatabase();
+                    }
+
+                    return;
+                }
+
+                // เปิดกล่องเลือกไฟล์ฐานข้อมูลเพื่อนำเข้า (หน้าฐานข้อมูล)
+                if (id === 'databaseImportBtn') {
+
+                    const databasePage =
+                        getComponent(DATABASE_PAGE);
+
+                    if (
+                        databasePage &&
+                        databasePage.pickImportFile
+                    ) {
+
+                        databasePage.pickImportFile();
+                    }
+
+                    return;
+                }
+
                 // ดาวน์โหลดข้อมูล master เป็นไฟล์ Excel
                 if (id === 'masterExportBtn') {
 
@@ -1996,7 +2054,25 @@
         refreshMasterList();
         refreshWordList();
         refreshHistory();
-    }    // ──────────────────────────────────────────────────────────────
+        refreshDatabaseInfo();
+    }
+
+    // หน้าฐานข้อมูล: แสดงตำแหน่ง/ขนาด/จำนวนข้อมูลของไฟล์ฐานข้อมูลจริง
+    function refreshDatabaseInfo() {
+
+        const component =
+            getComponent(DATABASE_PAGE);
+
+        if (
+            component &&
+            component.refresh
+        ) {
+
+            component.refresh();
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // File / Template handlers
     // ──────────────────────────────────────────────────────────────
 
@@ -6191,7 +6267,11 @@
                 currentPage
             );
 
-        component.resetFileInput();
+        // หน้าที่จัดการ UI เอง (standalone เช่น หน้าฐานข้อมูล) ไม่มีช่องไฟล์ .docx
+        if (component.resetFileInput) {
+
+            component.resetFileInput();
+        }
 
         // ล้างค่าแล้วเริ่มแม่แบบใหม่ = ยังไม่มีไฟล์ในมือ
         // หน้า Template Configuration จึงต้องมีช่องเลือกไฟล์ .docx กลับมา
@@ -6207,6 +6287,20 @@
         fillForm(
             currentPage
         );
+    }
+
+    // หลังนำเข้าฐานข้อมูลใหม่ (หน้าฐานข้อมูล): ข้อมูลในหน่วยความจำเป็นของฐานข้อมูลเก่า
+    // ทั้งแม่แบบที่โหลดอยู่ ค่าที่กรอกไว้ และรายการที่อ่านมาแล้ว จึงล้างทิ้งแล้วอ่านใหม่
+    function reloadAllData() {
+
+        resetAll();
+
+        refreshTemplateList();
+        refreshMasterGroups();
+        refreshMasterList();
+        refreshWordList();
+        refreshHistory();
+        refreshDatabaseInfo();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -6288,6 +6382,11 @@
         // ใช้โดยหน้า Template Configuration ตอนกด "+ สร้างแม่แบบใหม่"
         resetAll:
             resetAll,
+
+        // อ่านข้อมูลทุกหน้าจากฐานข้อมูลใหม่
+        // ใช้โดยหน้าฐานข้อมูลหลังนำเข้าไฟล์ฐานข้อมูลทับของเดิม
+        reloadAllData:
+            reloadAllData,
 
         // type ที่ตั้งค่าไว้ในหน้า
         // Template Configuration

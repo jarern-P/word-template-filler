@@ -1482,6 +1482,297 @@ ipcMain.handle(
 
 
 // ============================================================
+// Database File (สำรอง / ย้ายเครื่อง)
+// ============================================================
+//
+// ไฟล์ฐานข้อมูลจริงชื่อ templates.db ที่โฟลเดอร์ data ของแอป (แอปเป็นคนกำหนดที่และชื่อ)
+// หน้าที่ของฝั่งนี้:
+//   db:info           -> ตำแหน่ง/ขนาด/จำนวนข้อมูลของฐานข้อมูลปัจจุบัน
+//   db:export         -> คัดลอกฐานข้อมูลออกมาเป็นไฟล์ใน Downloads
+//   db:import-prepare -> ตรวจไฟล์ที่ผู้ใช้เลือก (ยังไม่แทนที่)
+//   db:import-apply   -> สลับไฟล์ที่ตรวจแล้วเข้าแทนที่ฐานข้อมูลเดิม
+//   db:import-discard -> ทิ้งไฟล์ที่ตรวจไว้ (ผู้ใช้ยกเลิก)
+
+// ชื่อไฟล์สำรอง: templates-2026-10-16.db (วันที่ของเครื่องผู้ใช้)
+function databaseBackupFileName() {
+
+    const now =
+        new Date();
+
+    const pad =
+        value => String(value).padStart(2, "0");
+
+
+    return (
+        DB_FILE.replace(/\.db$/i, "") +
+        "-" +
+        now.getFullYear() +
+        "-" +
+        pad(now.getMonth() + 1) +
+        "-" +
+        pad(now.getDate()) +
+        ".db"
+    );
+}
+
+
+// ------------------------------------------------------------
+// ตำแหน่ง/ขนาด/จำนวนข้อมูลของฐานข้อมูลปัจจุบัน
+// ------------------------------------------------------------
+
+ipcMain.handle(
+    "db:info",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "database-info",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ------------------------------------------------------------
+// ดาวน์โหลดฐานข้อมูล (สำรองข้อมูล / ย้ายไปเครื่องอื่น)
+// ------------------------------------------------------------
+
+ipcMain.handle(
+    "db:export",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const exported =
+                await dbRequest(
+                    "export-database",
+                    {}
+                );
+
+
+            // เซฟลงโฟลเดอร์ Downloads เหมือนไฟล์ .docx ของหน้ารายงาน
+            // (ชื่อซ้ำในวันเดียวกันจะเติมเลข (1), (2) ให้เอง)
+            const dir =
+                app.getPath("downloads");
+
+            await fs.promises.mkdir(
+                dir,
+                {
+                    recursive: true
+                }
+            );
+
+
+            const filePath =
+                await writeDownloadFile(
+                    dir,
+                    databaseBackupFileName(),
+                    Buffer.from(
+                        exported.result.data
+                    )
+                );
+
+
+            console.log(
+                "Exported database:",
+                filePath
+            );
+
+
+            return {
+
+                ok: true,
+
+                result: {
+
+                    filePath,
+
+                    // ชื่อจริงที่ได้ (อาจมีเลข (1) ต่อท้าย)
+                    fileName:
+                        path.basename(filePath),
+
+                    byteLength:
+                        exported.result.byteLength
+                }
+            };
+
+        } catch (error) {
+
+            console.error(
+                "db:export error:",
+                error
+            );
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ------------------------------------------------------------
+// ตรวจไฟล์ฐานข้อมูลที่จะนำเข้า (ยังไม่แตะฐานข้อมูลเดิม)
+// ------------------------------------------------------------
+
+ipcMain.handle(
+    "db:import-prepare",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const prepared =
+                await dbRequest(
+                    "prepare-import",
+                    {
+                        data:
+                            payload &&
+                            payload.data
+                    }
+                );
+
+
+            return prepared;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ------------------------------------------------------------
+// แทนที่ฐานข้อมูลเดิมด้วยไฟล์ที่ตรวจไว้
+// ------------------------------------------------------------
+
+ipcMain.handle(
+    "db:import-apply",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "apply-import",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ------------------------------------------------------------
+// ทิ้งไฟล์ที่ตรวจไว้ (ผู้ใช้ยกเลิกการนำเข้า)
+// ------------------------------------------------------------
+
+ipcMain.handle(
+    "db:import-discard",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "discard-import",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // DB History Add
 // ============================================================
 

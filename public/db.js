@@ -338,6 +338,55 @@
 
         },
 
+        // ── ไฟล์ฐานข้อมูล (สำรอง / ย้ายเครื่อง) ──
+
+        // { dbPath, byteLength, counts: { templates, master, words, history } }
+        info: function () {
+
+            return dbRequest(
+                'dbInfo'
+            );
+
+        },
+
+        // คืน { filePath, fileName, byteLength } ของไฟล์ที่บันทึกใน Downloads
+        exportDatabase: function () {
+
+            return dbRequest(
+                'dbExport'
+            );
+
+        },
+
+        // ตรวจไฟล์ฐานข้อมูลที่จะนำเข้า — payload = { data }
+        // ยังไม่แตะฐานข้อมูลเดิม (คืนจำนวนข้อมูลที่พบในไฟล์)
+        prepareImport: function (payload) {
+
+            return dbRequest(
+                'dbImportPrepare',
+                payload
+            );
+
+        },
+
+        // แทนที่ฐานข้อมูลเดิมด้วยไฟล์ที่ตรวจไว้
+        applyImport: function () {
+
+            return dbRequest(
+                'dbImportApply'
+            );
+
+        },
+
+        // ผู้ใช้ยกเลิก = ทิ้งไฟล์ที่ตรวจไว้
+        discardImport: function () {
+
+            return dbRequest(
+                'dbImportDiscard'
+            );
+
+        },
+
     };
 
 })(window);

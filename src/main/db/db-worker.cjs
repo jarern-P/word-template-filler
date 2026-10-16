@@ -2701,6 +2701,484 @@ function handleCheckSchema(payload) {
 
 
 // ============================================================
+// Export / Import ไฟล์ฐานข้อมูล (สำรอง / ย้ายเครื่อง)
+// ============================================================
+
+// หัวไฟล์ของ SQLite ใช้เช็คเร็ว ๆ ก่อนเขียนไฟล์ลงดิสก์
+const SQLITE_MAGIC = "SQLite format 3\0";
+
+// ตารางของแอปนี้ — ต้องมีตาราง templates จึงถือว่าเป็นฐานข้อมูลของแอป
+const APP_TABLE = "templates";
+
+// ตารางที่นับจำนวนไว้แสดงให้ผู้ใช้เห็น (ตารางที่ยังไม่มีในไฟล์รุ่นเก่านับเป็น 0)
+const COUNTED_TABLES = [
+    "templates",
+    "master",
+    "words",
+    "history"
+];
+
+// ไฟล์ชั่วคราวสำหรับสำรอง/นำเข้า
+// ต้องอยู่ในโฟลเดอร์ data เดียวกันเสมอ เพราะ rename ข้ามไดรฟ์/พาร์ทิชันไม่ได้
+function tempDbPath(tag) {
+
+    return path.join(
+        dbDir,
+        "templates." + tag + ".db"
+    );
+}
+
+function removeIfExists(filePath) {
+
+    try {
+
+        fs.rmSync(
+            filePath,
+            {
+                force: true
+            }
+        );
+
+    } catch (error) {
+
+        // ลบไม่ได้ (ถูกล็อก/ไม่มีสิทธิ์) — ให้ขั้นตอนถัดไปรายงานเอง
+        console.error(
+            "ลบไฟล์ไม่สำเร็จ:",
+            filePath,
+            error
+        );
+    }
+}
+
+// ข้อความสำหรับใส่ใน SQL (path ของ Windows อาจมี ' เช่น C:\Users\O'Brien)
+function sqlString(text) {
+
+    return "'" + String(text).replace(/'/g, "''") + "'";
+}
+
+// จำนวนข้อมูลในแต่ละตารางของฐานข้อมูลที่เปิดอยู่
+// ใช้ได้ทั้งกับ db หลัก และกับไฟล์ที่เปิดตรวจชั่วคราว
+function tableCounts(handle) {
+
+    const counts = {};
+
+    COUNTED_TABLES.forEach(name => {
+
+        try {
+
+            counts[name] = handle
+                .prepare(
+                    "SELECT COUNT(*) AS total FROM " + name
+                )
+                .get()
+                .total;
+
+        } catch (error) {
+
+            // ไฟล์รุ่นเก่าอาจยังไม่มีตารางนี้
+            counts[name] = 0;
+        }
+    });
+
+    return counts;
+}
+
+// อ่านจำนวนข้อมูล/ตรวจความสมบูรณ์ของไฟล์ฐานข้อมูลหนึ่งไฟล์
+// โยน error ภาษาไทยเมื่อไฟล์ไม่ใช่ฐานข้อมูลของแอปนี้
+function inspectDatabaseFile(filePath, byteLength) {
+
+    let probe = null;
+
+    try {
+
+        probe = new Database(
+            filePath,
+            {
+                readonly: true,
+                fileMustExist: true
+            }
+        );
+
+
+        const integrity =
+            probe.pragma(
+                "integrity_check",
+                {
+                    simple: true
+                }
+            );
+
+
+        if (String(integrity).toLowerCase() !== "ok") {
+
+            throw new Error(
+                "ไฟล์ฐานข้อมูลเสียหาย (integrity_check: " +
+                integrity +
+                ")"
+            );
+        }
+
+
+        const tables =
+            probe
+                .prepare(`
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'table'
+                `)
+                .all()
+                .map(row => row.name);
+
+
+        if (tables.indexOf(APP_TABLE) === -1) {
+
+            throw new Error(
+                "ไฟล์นี้ไม่ใช่ฐานข้อมูลของแอปนี้ (ไม่พบตาราง " +
+                APP_TABLE +
+                ")"
+            );
+        }
+
+
+        return {
+            byteLength,
+            counts: tableCounts(probe)
+        };
+
+    } finally {
+
+        if (probe) {
+            probe.close();
+        }
+    }
+}
+
+
+// ------------------------------------------------
+// Info: ตำแหน่ง/ขนาด/จำนวนข้อมูลของฐานข้อมูลปัจจุบัน
+// ------------------------------------------------
+
+function handleDatabaseInfo(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                dbPath,
+                byteLength: fs.statSync(dbPath).size,
+                counts: tableCounts(db)
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ------------------------------------------------
+// Export: คืน byte ของฐานข้อมูลทั้งไฟล์
+// ------------------------------------------------
+
+// ใช้ VACUUM INTO จึงได้สำเนาที่สมบูรณ์ในไฟล์เดียว
+// (ข้อมูลที่ค้างใน journal/wal ถูกเขียนรวมให้แล้ว — ต่างจากการคัดลอกไฟล์ตรง ๆ)
+// ไฟล์ปลายทาง (Downloads) เป็นหน้าที่ของ main process ตั้งชื่อ
+async function handleExportDatabase(message) {
+
+    const tmpPath =
+        tempDbPath("export");
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        // VACUUM INTO ไม่ยอมเขียนทับไฟล์ที่มีอยู่
+        removeIfExists(tmpPath);
+
+        db.exec(
+            "VACUUM INTO " + sqlString(tmpPath)
+        );
+
+
+        const bytes =
+            await fs.promises.readFile(tmpPath);
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                data: bytes,
+                byteLength: bytes.length,
+                dbPath
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    } finally {
+
+        removeIfExists(tmpPath);
+    }
+}
+
+
+// ------------------------------------------------
+// Prepare Import: ตรวจไฟล์ที่ผู้ใช้เลือก ก่อนแตะฐานข้อมูลเดิม
+// ------------------------------------------------
+
+// เขียนไฟล์ลงโฟลเดอร์ data (ยังไม่แทนที่อะไร) แล้วตรวจว่าใช้ได้จริง
+// ไฟล์ที่ตรวจแล้วจะถูกเก็บไว้ให้ handleApplyImport ใช้ต่อ / ยกเลิกแล้วลบทิ้ง
+async function handlePrepareImport(message) {
+
+    const payload =
+        message.payload || {};
+
+    const tmpPath =
+        tempDbPath("import");
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        const bytes =
+            payload.data;
+
+        if (!bytes || !bytes.length) {
+            throw new Error("ไม่ได้รับไฟล์ฐานข้อมูล");
+        }
+
+
+        const buffer =
+            Buffer.from(bytes);
+
+
+        // เช็คจากหัวไฟล์ก่อน เพื่อให้ไฟล์ผิดประเภท (.docx/.xlsx) ถูกปฏิเสธทันที
+        if (
+            buffer
+                .subarray(0, SQLITE_MAGIC.length)
+                .toString("latin1") !== SQLITE_MAGIC
+        ) {
+
+            throw new Error(
+                "ไฟล์นี้ไม่ใช่ฐานข้อมูล SQLite — กรุณาเลือกไฟล์ที่ได้จาก " +
+                "ปุ่ม \"ดาวน์โหลดฐานข้อมูล\" ของแอปนี้"
+            );
+        }
+
+
+        removeIfExists(tmpPath);
+
+        await fs.promises.writeFile(
+            tmpPath,
+            buffer
+        );
+
+
+        const info =
+            inspectDatabaseFile(
+                tmpPath,
+                buffer.length
+            );
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: info
+        });
+
+    } catch (error) {
+
+        // ตรวจไม่ผ่าน = ไม่เก็บไฟล์ที่ใช้ไม่ได้ไว้ในโฟลเดอร์ข้อมูล
+        removeIfExists(tmpPath);
+
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ------------------------------------------------
+// Apply Import: สลับไฟล์ที่ตรวจแล้วเข้าแทนฐานข้อมูลเดิม
+// ------------------------------------------------
+
+// ชื่อไฟล์ปลายทางต้องเป็น templates.db เสมอ (แอปอ้างชื่อนี้ตายตัว)
+// ไฟล์ที่ผู้ใช้เลือกจะชื่ออะไรก็ได้ — ที่นี่เปลี่ยนชื่อให้เอง
+function handleApplyImport(message) {
+
+    const tmpPath =
+        tempDbPath("import");
+
+    // ไฟล์เดิมถูกย้ายมาพักไว้ที่นี่จนกว่าจะเปิดไฟล์ใหม่สำเร็จ
+    const backupPath =
+        path.join(
+            dbDir,
+            "templates.before-import.bak"
+        );
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        if (!fs.existsSync(tmpPath)) {
+
+            throw new Error(
+                "ไม่พบไฟล์ที่ตรวจไว้ — กรุณาเลือกไฟล์ฐานข้อมูลใหม่"
+            );
+        }
+
+
+        // ปิดฐานข้อมูลเดิมก่อนสลับไฟล์ (ยังเปิดอยู่ = ไฟล์ถูกล็อก เปลี่ยนทับไม่ได้)
+        db.close();
+        db = null;
+
+
+        // -wal / -shm / -journal ของฐานข้อมูลเดิมเป็นของไฟล์เดิม
+        // ห้ามค้างคู่กับไฟล์ใหม่ ไม่งั้น SQLite อาจเอา journal เก่ามาใช้กับไฟล์ใหม่
+        removeIfExists(dbPath + "-wal");
+        removeIfExists(dbPath + "-shm");
+        removeIfExists(dbPath + "-journal");
+
+
+        // เก็บไฟล์เดิมไว้ก่อนสลับ — เผื่อเปิดไฟล์ใหม่ไม่ได้จริง ๆ จะได้คืนกลับ
+        removeIfExists(backupPath);
+        fs.renameSync(dbPath, backupPath);
+
+        fs.renameSync(tmpPath, dbPath);
+
+
+        try {
+
+            // เปิดไฟล์ใหม่ + เติม/อัปเดตโครงสร้างให้ตรงรุ่นนี้ (migration + SCHEMA)
+            openDatabase();
+
+        } catch (openError) {
+
+            // ไฟล์ใหม่เปิดไม่ได้ = คืนไฟล์เดิมกลับให้ผู้ใช้ทำงานต่อได้
+            removeIfExists(dbPath);
+            fs.renameSync(backupPath, dbPath);
+            openDatabase();
+
+            throw openError;
+        }
+
+
+        // สำเร็จแล้ว จึงทิ้งไฟล์เดิมได้
+        removeIfExists(backupPath);
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                dbPath,
+                byteLength: fs.statSync(dbPath).size,
+                counts: tableCounts(db)
+            }
+        });
+
+    } catch (error) {
+
+        // ไม่ให้แอปเหลือสภาพที่ฐานข้อมูลถูกปิดค้างไว้
+        if (!db) {
+
+            try {
+                openDatabase();
+
+            } catch (reopenError) {
+
+                console.error(
+                    "เปิดฐานข้อมูลเดิมกลับไม่สำเร็จ:",
+                    reopenError
+                );
+            }
+        }
+
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ------------------------------------------------
+// Discard Import: ผู้ใช้ยกเลิก = ทิ้งไฟล์ที่ตรวจไว้
+// ------------------------------------------------
+
+function handleDiscardImport(message) {
+
+    try {
+
+        removeIfExists(
+            tempDbPath("import")
+        );
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                removed: true
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // Message Loop
 // ============================================================
 
@@ -2961,6 +3439,49 @@ parentPort.on("message", (message) => {
             case "history-clear":
 
                 handleHistoryClear(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // ไฟล์ฐานข้อมูล (สำรอง / ย้ายเครื่อง)
+            // ------------------------------------------------
+
+            case "database-info":
+
+                handleDatabaseInfo(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "export-database":
+
+                handleExportDatabase(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "prepare-import":
+
+                handlePrepareImport(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "apply-import":
+
+                handleApplyImport(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "discard-import":
+
+                handleDiscardImport(message);
 
                 break;
 

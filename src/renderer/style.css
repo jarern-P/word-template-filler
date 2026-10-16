@@ -2566,6 +2566,38 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* ============================================================
+   หน้าฐานข้อมูล (สำรอง / ย้ายเครื่อง)
+   ============================================================ */
+
+.db-file-info {
+    margin: 14px 0 0;
+    padding: 14px 16px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.db-file-info p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--ink-soft);
+    /* path ของไฟล์ยาวมาก (userData/data/templates.db) ต้องขึ้นบรรทัดใหม่ได้ */
+    word-break: break-all;
+}
+
+.db-file-info p + p {
+    margin-top: 4px;
+}
+
+.db-file-label {
+    display: inline-block;
+    min-width: 110px;
+    font-weight: 700;
+    color: var(--ink);
+}
+
+/* ============================================================
    ฟอนต์ของเอกสาร Word (ใช้กับหน้าจัดตำแหน่ง)
    ------------------------------------------------------------
    เอกสารราชการมักระบุฟอนต์ที่เครื่องผู้ใช้อาจไม่ได้ติดตั้ง
