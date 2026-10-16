@@ -46,8 +46,10 @@
 
         '    <div class="master-toolbar">',
         '        <label for="masterSearch">ค้นหา</label>',
+        '        <select id="masterFilterGroup" aria-label="กรองตาม Code Group"></select>',
+        '        <select id="masterFilterSubgroup" aria-label="กรองตาม Sub Group"></select>',
         '        <input type="text" id="masterSearch"' +
-            ' placeholder="name / code group / sub group" autocomplete="off">',
+        ' placeholder="name / code group / sub group" autocomplete="off">',
         '    </div>',
         '    <p id="masterDbStatus" class="db-status"></p>',
         '</section>',
@@ -152,9 +154,16 @@
     const GROUP_FALLBACK = '(ไม่ระบุกลุ่ม)';
     const SUBGROUP_FALLBACK = '(ไม่ระบุกลุ่มย่อย)';
 
+    const ALL_GROUPS = '';     // value ของตัวกรอง "ทุกกลุ่ม"
+    const ALL_SUBGROUPS = '';  // value ของตัวกรอง "ทุกกลุ่มย่อย"
+
     let records = [];      // รายการ master ล่าสุดที่โหลดมาจากฐานข้อมูล
     let groups = [];       // กลุ่ม/กลุ่มย่อยที่กำหนดไว้ล่วงหน้า
     let searchText = '';   // คำค้นปัจจุบัน (ตัวพิมพ์เล็กแล้ว)
+
+    // ตัวกรองจาก dropdown ในแถบค้นหา ('' = ไม่กรอง)
+    let groupFilter = ALL_GROUPS;
+    let subgroupFilter = ALL_SUBGROUPS;
 
     // โหมดแสดงผล: 'list' (รายการ) หรือ 'table' (ตารางแก้ไข)
     let viewMode = 'list';
@@ -198,14 +207,23 @@
         list.appendChild(item);
     }
 
-    function matches(record, keyword) {
-        if (!keyword) return true;
+    // ตรงกับตัวกรองกลุ่ม/กลุ่มย่อย และคำค้นปัจจุบันหรือไม่
+    function matches(record) {
+        if (groupFilter && groupNameOf(record) !== groupFilter) {
+            return false;
+        }
+
+        if (subgroupFilter && (record.sub_group || '') !== subgroupFilter) {
+            return false;
+        }
+
+        if (!searchText) return true;
 
         return [
             record.code_group,
             record.sub_group,
             record.name
-        ].join(' ').toLowerCase().indexOf(keyword) !== -1;
+        ].join(' ').toLowerCase().indexOf(searchText) !== -1;
     }
 
     function findGroup(name) {
@@ -294,6 +312,116 @@
 
         // จำว่า "ปิดเพราะตั้งใจ" เพื่อให้ clearDisabledFields ของ app.js
         // ไม่ปลด disabled ทิ้งหลังทำงานกับฐานข้อมูล
+        if (select.disabled) {
+            select.dataset.keepDisabled = '1';
+        } else {
+            delete select.dataset.keepDisabled;
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ตัวกรองกลุ่ม / กลุ่มย่อย ของแถบค้นหา
+    // ──────────────────────────────────────────────────────────────
+
+    // ชื่อกลุ่มที่ใช้กรอง — รายการที่ไม่ระบุกลุ่มใช้ GROUP_FALLBACK
+    // (ไม่ปล่อยเป็น '' เพราะ '' คือ value ของตัวเลือก "ทุกกลุ่ม" จะชนกัน)
+    function groupNameOf(record) {
+        return record.code_group || GROUP_FALLBACK;
+    }
+
+    // กลุ่มที่เลือกกรองได้ = กลุ่มที่มีอยู่จริงในรายการ (ใช้แนวเดียวกับ popup เลือกข้อมูลหลัก)
+    function filterGroupNames() {
+        const names = [];
+
+        records.forEach(function (record) {
+            const name = groupNameOf(record);
+
+            if (names.indexOf(name) === -1) {
+                names.push(name);
+            }
+        });
+
+        return names;
+    }
+
+    // กลุ่มย่อยที่เลือกกรองได้ = กลุ่มย่อยของกลุ่มที่กรองอยู่ (ยังไม่กรอง = รวมทุกกลุ่ม)
+    function filterSubgroupNames() {
+        const names = [];
+
+        records.forEach(function (record) {
+            if (groupFilter && groupNameOf(record) !== groupFilter) return;
+            if (!record.sub_group) return;
+
+            if (names.indexOf(record.sub_group) === -1) {
+                names.push(record.sub_group);
+            }
+        });
+
+        return names;
+    }
+
+    // เติมตัวเลือกกลุ่มของแถบค้นหา (คงค่าที่กรองอยู่)
+    function renderFilterGroupOptions() {
+        const select = el('masterFilterGroup');
+        if (!select) return;
+
+        const names = filterGroupNames();
+
+        select.innerHTML = '';
+
+        const all = document.createElement('option');
+        all.value = ALL_GROUPS;
+        all.textContent = 'ทุกกลุ่ม';
+        select.appendChild(all);
+
+        names.forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            select.appendChild(option);
+        });
+
+        // กลุ่มที่กรองไว้อาจไม่มีอยู่ในรายการแล้ว (ถูกลบ/เปลี่ยนชื่อไป)
+        if (groupFilter && names.indexOf(groupFilter) === -1) {
+            groupFilter = ALL_GROUPS;
+        }
+
+        select.value = groupFilter;
+
+        renderFilterSubgroupOptions();
+    }
+
+    // เติมตัวเลือกกลุ่มย่อยตามกลุ่มที่กรองอยู่ (คงค่าที่กรองอยู่)
+    function renderFilterSubgroupOptions() {
+        const select = el('masterFilterSubgroup');
+        if (!select) return;
+
+        const names = filterSubgroupNames();
+
+        select.innerHTML = '';
+
+        const all = document.createElement('option');
+        all.value = ALL_SUBGROUPS;
+        all.textContent = 'ทุกกลุ่มย่อย';
+        select.appendChild(all);
+
+        names.forEach(function (name) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            select.appendChild(option);
+        });
+
+        // กลุ่มย่อยที่กรองไว้อาจไม่มีอยู่ในรายการแล้ว
+        if (subgroupFilter && names.indexOf(subgroupFilter) === -1) {
+            subgroupFilter = ALL_SUBGROUPS;
+        }
+
+        select.value = subgroupFilter;
+
+        // ไม่มีกลุ่มย่อยให้เลือก = ปิดช่องไว้ (ห้าม app.js ปลด disabled ทิ้ง)
+        select.disabled = names.length === 0;
+
         if (select.disabled) {
             select.dataset.keepDisabled = '1';
         } else {
@@ -742,11 +870,11 @@
 
         // เตรียมแถวสำหรับตาราง: ผสม records จริง + pending rows (แถวใหม่)
         // แถวใหม่ (pending) ให้แสดงอยู่บนสุด เพื่อให้เห็นและกรอกได้ง่าย
-        tableData: function () {
-            // ใช้ filtered records ตาม searchText ปัจจุบัน
-            const filtered = records.filter(function (record) {
-                return matches(record, searchText);
-            });
+        tableData: function (list) {
+            const source = Array.isArray(list) ? list : records;
+
+            // ใช้ filtered records ตามตัวกรอง/คำค้นปัจจุบัน
+            const filtered = source.filter(matches);
 
             // แปลงเป็น array ของ objects ที่ใช้แสดงในตาราง
             // แต่ละแถวมี id (0 = แถวใหม่), codeGroup, subGroup, name, updated_at
@@ -777,7 +905,7 @@
             const tbody = el('masterTableBody');
             if (!tbody) return;
 
-            const data = list ? page.tableData.call({ records: list, matches: matches, searchText: searchText }) : page.tableData();
+            const data = page.tableData(list);
 
             tbody.innerHTML = '';
 
@@ -1051,11 +1179,29 @@
             }
         },
 
+        // เปลี่ยนตัวกรองกลุ่มจาก dropdown ในแถบค้นหา
+        // กลุ่มเปลี่ยน = กลุ่มย่อยที่กรองไว้ไม่เกี่ยวกันแล้ว จึงล้างตัวกรองกลุ่มย่อย
+        setGroupFilter: function (value) {
+            groupFilter = value || ALL_GROUPS;
+            subgroupFilter = ALL_SUBGROUPS;
+
+            renderFilterSubgroupOptions();
+            page.renderMasterList(records);
+        },
+
+        setSubgroupFilter: function (value) {
+            subgroupFilter = value || ALL_SUBGROUPS;
+            page.renderMasterList(records);
+        },
+
         renderMasterList: function (list, errorMessage) {
             const ul = el('masterList');
             if (!ul) return;
 
             records = Array.isArray(list) ? list : [];
+
+            // ตัวเลือกตัวกรองสร้างจากรายการล่าสุด (กลุ่ม/กลุ่มย่อยที่หายไปแล้วจะหายจากตัวเลือกด้วย)
+            renderFilterGroupOptions();
 
             ul.innerHTML = '';
 
@@ -1069,9 +1215,7 @@
                 return;
             }
 
-            const filtered = records.filter(function (record) {
-                return matches(record, searchText);
-            });
+            const filtered = records.filter(matches);
 
             if (filtered.length === 0) {
                 appendEmpty(ul, 'ไม่พบข้อมูลที่ค้นหา');

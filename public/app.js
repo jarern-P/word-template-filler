@@ -1172,6 +1172,36 @@
                     return;
                 }
 
+                // ตัวกรองกลุ่มในแถบค้นหาของหน้า Master Data → กรองรายการทันที
+                if (
+                    target &&
+                    target.id === 'masterFilterGroup'
+                ) {
+
+                    getComponent(
+                        MASTER_PAGE
+                    ).setGroupFilter(
+                        target.value
+                    );
+
+                    return;
+                }
+
+                // ตัวกรองกลุ่มย่อยในแถบค้นหาของหน้า Master Data → กรองรายการทันที
+                if (
+                    target &&
+                    target.id === 'masterFilterSubgroup'
+                ) {
+
+                    getComponent(
+                        MASTER_PAGE
+                    ).setSubgroupFilter(
+                        target.value
+                    );
+
+                    return;
+                }
+
                 captureValue(target);
             }
         );

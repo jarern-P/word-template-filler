@@ -529,11 +529,13 @@ input[type="checkbox"] {
 /* ──────────────────────────────────────────────────────────────
    dropdown (select) — ลบหน้าตาเดิมของ OS แล้ววาดลูกศรชมพูเอง
    ใช้ร่วมกันทั้ง select ในฟอร์ม / ช่องชื่อ template / popup Master Data
+   / ตัวกรองกลุ่ม–กลุ่มย่อยในแถบค้นหาของหน้า Master Data
    ────────────────────────────────────────────────────────────── */
 
 .field select,
 .template-meta select,
-.lookup-toolbar select {
+.lookup-toolbar select,
+.master-toolbar select {
     appearance: none;
     -webkit-appearance: none;
     padding-right: 42px;
@@ -547,7 +549,8 @@ input[type="checkbox"] {
 
 .field select:hover,
 .template-meta select:hover,
-.lookup-toolbar select:hover {
+.lookup-toolbar select:hover,
+.master-toolbar select:hover {
     background-color: var(--pink-50);
     background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c9427a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
     border-color: var(--pink-400);
@@ -1075,6 +1078,32 @@ button.danger:hover {
     outline: none;
     border-color: var(--pink-400);
     box-shadow: var(--focus-ring);
+}
+
+/* dropdown กรองกลุ่ม / กลุ่มย่อย ของแถบค้นหา (หน้า Master Data) */
+.master-toolbar select {
+    flex: 0 1 220px;
+    min-width: 0;
+    padding: 10px 42px 10px 16px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--ink);
+    background-color: var(--surface);
+    border: 1px solid var(--line-input);
+    border-radius: var(--radius-pill);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.master-toolbar select:focus {
+    outline: none;
+    border-color: var(--pink-400);
+    box-shadow: var(--focus-ring);
+}
+
+/* ไม่มีกลุ่มย่อยให้เลือก = ช่องถูกปิด */
+.master-toolbar select:disabled {
+    cursor: default;
+    opacity: 0.6;
 }
 
 /* หัวกลุ่มของรายการ master */
