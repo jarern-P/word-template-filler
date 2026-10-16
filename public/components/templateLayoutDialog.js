@@ -181,6 +181,10 @@
         '        <div class="layout-actions">',
         '            <button type="button" id="layoutResetBtn" class="plain">ย้อนกลับ</button>',
         '            <button type="button" id="layoutDownloadBtn" class="plain">ดาวน์โหลด .docx</button>',
+        // อัปโหลดไฟล์ใหม่ทับไฟล์เดิม — เหมือนปุ่มในหน้าแก้ไข (ดู replaceFile ใน payload)
+        // ใช้ id ของหน้านี้เอง เพราะ id ในหน้าแก้ไข (replaceTemplateBtn) มีอยู่พร้อมกันไม่ได้
+        '            <button type="button" id="layoutReplaceFileBtn" class="danger">อัปโหลดไฟล์ใหม่ทับไฟล์เดิม</button>',
+        '            <input type="file" id="layoutReplaceFileInput" accept=".docx" hidden>',
         '            <button type="button" id="layoutSaveBtn">บันทึกกลับเข้าไป</button>',
         '        </div>',
         '    </div>',
@@ -2047,7 +2051,7 @@ async function renderDocx(bytes) {
     }
 
     function setBusy(busy) {
-        ['layoutSaveBtn', 'layoutDownloadBtn', 'layoutResetBtn'].forEach(function (id) {
+        ['layoutSaveBtn', 'layoutDownloadBtn', 'layoutResetBtn', 'layoutReplaceFileBtn'].forEach(function (id) {
             const btn = el(id);
             if (btn) btn.disabled = busy;
         });
@@ -2155,6 +2159,96 @@ async function renderDocx(bytes) {
             console.error(error);
             setStatus('ดาวน์โหลดไม่สำเร็จ: ' + messageOf(error), 'error');
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // อัปโหลดไฟล์ใหม่ทับไฟล์เดิม
+    // ──────────────────────────────────────────────────────────────
+
+    // ปุ่มในแถบเครื่องมือเปิดช่องเลือกไฟล์ (input ถูกซ่อนไว้)
+    function openReplacePicker() {
+        const input = el('layoutReplaceFileInput');
+        if (input) input.click();
+    }
+
+    // เลือกไฟล์แล้ว: ยืนยัน → ให้ app.js เขียนทับในฐานข้อมูล → เรนเดอร์ไฟล์ใหม่
+    // การเขียนฐานข้อมูลอยู่ใน app.js (ตัวนี้ไม่รู้จัก Db) ผ่าน payload.replaceFile
+    async function onReplaceFileChosen(event) {
+        const input = event.target;
+        const file = input.files && input.files[0];
+
+        // ล้างค่าทันที เพื่อให้เลือกไฟล์เดิมซ้ำได้ (และเมื่อกดยกเลิกในกล่องยืนยัน)
+        input.value = '';
+
+        if (!file || !current) return;
+
+        const payload = current.payload || {};
+
+        if (typeof payload.replaceFile !== 'function') {
+            setStatus('หน้านี้ยังแทนที่ไฟล์ไม่ได้', 'warn');
+            return;
+        }
+
+        const pending = pendingEdits();
+
+        if (!(await scope.AppDialog.confirm(
+            'ยืนยันการแทนที่ไฟล์?\n\n' +
+            'ไฟล์ต้นฉบับของ "' + (payload.name || 'แม่แบบนี้') +
+            '" จะถูกทับด้วย "' + (file.name || 'ไฟล์ใหม่') + '" ทันที\n' +
+            'ค่า type / ล็อกตำแหน่ง / placeholder / ตาราง ของ field ' +
+            'ที่มีอยู่ทั้งสองไฟล์จะถูกเก็บไว้\n' +
+            (pending > 0
+                ? 'ข้อความที่แก้ค้างในหน้านี้ ' + pending + ' จุดจะถูกทิ้งไป\n'
+                : '') +
+            'ต้องการดำเนินการต่อหรือไม่?',
+            { title: 'ยืนยันการแทนที่ไฟล์', okText: 'แทนที่ไฟล์', danger: true }
+        ))) {
+            return;
+        }
+
+        setBusy(true);
+        setStatus('กำลังแทนที่ไฟล์...');
+
+        let bytes = null;
+        let xml = '';
+
+        try {
+            const data = new Uint8Array(await file.arrayBuffer());
+            const result = await payload.replaceFile(data, file.name || '');
+
+            bytes = (result && result.bytes) || data;
+            xml = (result && result.xml) || '';
+        } catch (error) {
+            console.error(error);
+            setBusy(false);
+
+            // error.expected = ไฟล์ที่อ่านได้แต่ไม่ใช่ .docx ที่ใช้ได้ (ข้อความไทยพร้อมใช้)
+            // ที่เหลือคือไฟล์เปิดเป็น zip ไม่ได้ เช่น .docx เสียหาย หรือส่งไฟล์ผิดนามสกุลมา
+            setStatus(
+                'แทนที่ไฟล์ไม่สำเร็จ: ' +
+                (error && error.expected
+                    ? error.message
+                    : 'อ่านไฟล์ DOCX ไม่ได้'),
+                'error'
+            );
+
+            return;
+        }
+
+        // ย่อหน้าที่แก้ค้าง / ผลค้นหา / คู่ TextNode ของไฟล์เดิมไม่มีความหมายกับไฟล์ใหม่
+        touched = new Set();
+        findMatches = [];
+        findIndex = -1;
+        current.pairs = new Map();
+        current.xml = xml;
+
+        await renderDocx(bytes);
+        setBusy(false);
+
+        setStatus(
+            'แทนที่ไฟล์ต้นฉบับแล้ว — ' + (file.name || 'ไฟล์ใหม่'),
+            'ok'
+        );
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -5746,6 +5840,12 @@ function scheduleFieldHighlight() {
 
         const downloadBtn = el('layoutDownloadBtn');
         if (downloadBtn) downloadBtn.addEventListener('click', download);
+
+        const replaceFileBtn = el('layoutReplaceFileBtn');
+        if (replaceFileBtn) replaceFileBtn.addEventListener('click', openReplacePicker);
+
+        const replaceFileInput = el('layoutReplaceFileInput');
+        if (replaceFileInput) replaceFileInput.addEventListener('change', onReplaceFileChosen);
 
         const resetBtn = el('layoutResetBtn');
         if (resetBtn) {

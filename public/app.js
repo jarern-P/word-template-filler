@@ -3938,6 +3938,18 @@
                         );
                     },
 
+                // อัปโหลดไฟล์ใหม่ทับไฟล์เดิม (ปุ่มในหน้าจัดตำแหน่ง)
+                // คืน { bytes, xml } ของไฟล์ใหม่ไปเรนเดอร์ต่อ
+                replaceFile:
+                    async function (bytes, fileName) {
+
+                        return await replaceLayoutFile(
+                            record,
+                            bytes,
+                            fileName
+                        );
+                    },
+
                 // ค่าตั้งของ field สำหรับเมนูคลิกขวา (type / ล็อกตำแหน่ง / placeholder)
                 getFieldConfig:
                     function (field) {
@@ -3999,6 +4011,112 @@
         return await zip.generateAsync({
             type: 'uint8array'
         });
+    }
+
+    // แทนที่ไฟล์ต้นฉบับของแม่แบบด้วยไฟล์ใหม่ทั้งไฟล์ (ปุ่มในหน้าจัดตำแหน่ง)
+    //
+    // ต่างจาก saveLayoutEdits ที่เขียนกลับเฉพาะ word/document.xml — ตัวนี้รับไฟล์
+    // .docx ใหม่มาทั้งไฟล์ (เหมือนปุ่ม "อัปโหลดไฟล์ใหม่ทับไฟล์เดิม" ของหน้าแก้ไข)
+    // ค่า type / ล็อกตำแหน่ง / placeholder / ตาราง ของ field ที่มีอยู่ทั้งสองไฟล์
+    // ถูกเก็บไว้ — field ที่หายไปพร้อมไฟล์เดิมถูกตัดทิ้ง
+    async function replaceLayoutFile(record, bytes, fileName) {
+
+        const xml =
+            await readDocumentXml(
+                bytes
+            );
+
+        const fields =
+            scope.Extract.extractFields(
+                xml
+            );
+
+        const types =
+            keepFieldsInConfig(record.types, fields);
+
+        const locks =
+            keepFieldsInConfig(record.locks, fields);
+
+        const placeholders =
+            keepFieldsInConfig(record.placeholders, fields);
+
+        const tables =
+            keepFieldsInConfig(record.tables, fields);
+
+        await ensureDb();
+
+        await scope.Db.save({
+
+            id:
+                record.id,
+
+            name:
+                record.name,
+
+            fileName:
+                fileName || record.file_name,
+
+            docx:
+                bytes,
+
+            fields:
+                fields,
+
+            types:
+                types,
+
+            locks:
+                locks,
+
+            placeholders:
+                placeholders,
+
+            tables:
+                tables
+        });
+
+        // record ในหน่วยความจำต้องตรงกับไฟล์ใหม่
+        // (บันทึก/ดาวน์โหลดครั้งถัดไปในหน้าจัดตำแหน่งจะต่อจากไฟล์ใหม่)
+        record.docx = bytes;
+        record.file_name = fileName || record.file_name;
+        record.fields = fields;
+        record.types = types;
+        record.locks = locks;
+        record.placeholders = placeholders;
+        record.tables = tables;
+
+        // ถ้าแม่แบบนี้กำลังเปิดแก้ไขอยู่ในหน้า "ตั้งค่าแม่แบบ"
+        // state ในหน่วยความจำต้องตรงกับไฟล์ใหม่ด้วย
+        if (
+            state.templateId === record.id &&
+            currentPage === CONFIG_PAGE
+        ) {
+
+            state.docxBytes = bytes;
+            state.xml = xml;
+            state.fileName = record.file_name;
+            state.fields = fields;
+
+            keepConfigForFields(
+                fields,
+                getComponent(CONFIG_PAGE)
+            );
+
+            fillForm(CONFIG_PAGE);
+            resetInteractionState();
+        }
+
+        setDbStatus(
+            'แทนที่ไฟล์ต้นฉบับแล้ว: ' +
+            record.name
+        );
+
+        await refreshTemplateList();
+
+        return {
+            bytes: bytes,
+            xml: xml
+        };
     }
 
     // บันทึกผลจากหน้าจัดตำแหน่งลงฐานข้อมูล
