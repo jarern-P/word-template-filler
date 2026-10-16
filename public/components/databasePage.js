@@ -162,8 +162,17 @@
             setStatus(
                 'databaseStatus',
                 'บันทึกไฟล์ฐานข้อมูลแล้ว: ' + saved.fileName +
-                ' (' + formatSize(saved.byteLength) + ') → ' + saved.filePath
+                ' (' + formatSize(saved.byteLength) + ') → ' + saved.filePath,
+                'ok'
             );
+
+            const success = el('databaseExportSuccess');
+            if (success) {
+                success.textContent = 'บันทึกไฟล์ฐานข้อมูลแล้ว: ' + saved.fileName +
+                    ' (' + formatSize(saved.byteLength) + ') → ' + saved.filePath;
+                success.className = 'db-status ok';
+                success.style.display = 'block';
+            }
 
             await refresh();
 
@@ -175,6 +184,13 @@
                 'ดาวน์โหลดฐานข้อมูลไม่สำเร็จ: ' + error.message,
                 'error'
             );
+
+            const success = el('databaseExportSuccess');
+            if (success) {
+                success.textContent = '';
+                success.className = 'db-status error';
+                success.style.display = 'block';
+            }
 
             await scope.AppDialog.alert(
                 'ดาวน์โหลดฐานข้อมูลไม่สำเร็จ: ' + error.message
@@ -237,10 +253,11 @@
             if (!confirmed) {
                 await scope.Db.discardImport();
 
-                setStatus(
-                    'databaseImportStatus',
-                    'ยกเลิกการนำเข้าฐานข้อมูล — ข้อมูลเดิมไม่ถูกแตะ'
-                );
+            setStatus(
+                'databaseImportStatus',
+                'ยกเลิกการนำเข้าฐานข้อมูล — ข้อมูลเดิมไม่ถูกแตะ',
+                'warn'
+            );
 
                 return;
             }
@@ -258,7 +275,8 @@
             setStatus(
                 'databaseImportStatus',
                 'นำเข้าฐานข้อมูลแล้ว: ' + describeCounts(result.counts) +
-                ' (' + formatSize(result.byteLength) + ')'
+                ' (' + formatSize(result.byteLength) + ')',
+                'ok'
             );
 
         } catch (error) {
@@ -274,6 +292,13 @@
                 'นำเข้าฐานข้อมูลไม่สำเร็จ: ' + error.message +
                 '\n\nข้อมูลเดิมยังอยู่ครบ'
             );
+
+            const success = el('databaseExportSuccess');
+            if (success) {
+                success.textContent = '';
+                success.className = 'db-status';
+                success.style.display = 'none';
+            }
 
         } finally {
             setBusy(false);
