@@ -1444,6 +1444,17 @@ async function renderDocx(bytes) {
 
             span.className = 'layout-thai-dist';
             span.dataset.line = String(job.line);
+
+            // ต้องบอกให้สืบทอดรูปแบบจากรันที่ห่ออยู่เอง
+            //
+            // docx-preview ตั้งค่าเริ่มต้นของเอกสารไว้เป็นกฎที่จับ span ทุกตัว
+            // (.docx span { font-family: <ฟอนต์เริ่มต้นของเอกสาร>; font-size: 11pt })
+            // กฎที่จับ "ตัว span เองโดยตรง" ชนะค่าที่สืบทอดมาจากแม่เสมอ — ต่อให้
+            // แม่มีฟอนต์เป็นสไตล์ในบรรทัดก็ตาม span ที่เราสร้างจึงกลายเป็นฟอนต์/ขนาด
+            // เริ่มต้นของเอกสาร (ไม่ใช่ของรัน) ทำให้ข้อความในย่อหน้า thaiDistribute
+            // ทั้งย่อหน้าหน้าตาต่างจากย่อหน้าอื่น
+            span.style.font = 'inherit';
+
             span.style.letterSpacing = job.spacing.toFixed(2) + 'px';
 
             // ห่อในที่เดิม — ย้ายออกจาก run แม่ไม่ได้ เพราะจะเสียรูปแบบ
