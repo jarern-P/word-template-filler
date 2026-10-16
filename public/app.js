@@ -310,14 +310,43 @@
         URL.revokeObjectURL(url);
     }
 
+    // ช่องกรอกที่เก็บค่าลง pageMeta ของหน้าปัจจุบัน ([data-persist])
+    //
+    // ต้องรวมช่องที่อยู่ในโมดัลของหน้าด้วย — PageModal.mount ย้าย .page-modal
+    // ไปเกาะ <body> (หนี backdrop-filter ของ .main) ช่อง "ชื่อ แม่แบบ"
+    // จึงไม่ใช่ลูกของ .mainContent อีก ค้นจาก mainEl อย่างเดียวจะไม่เจอ
+    // แล้วชื่อแม่แบบที่โหลดมาแก้ไขไม่ถูกเติมกลับเข้าช่อง
+    function persistFields() {
+
+        const fields = [];
+
+        if (mainEl) {
+
+            mainEl
+                .querySelectorAll('[data-persist]')
+                .forEach(function (el) {
+
+                    fields.push(el);
+                });
+        }
+
+        document
+            .querySelectorAll('.page-modal [data-persist]')
+            .forEach(function (el) {
+
+                fields.push(el);
+            });
+
+        return fields;
+    }
+
     // เติมค่าใน [data-persist] ของหน้าปัจจุบันกลับจาก pageMeta
     function applyMeta(page) {
 
         const meta =
             getPageMeta(page);
 
-        mainEl
-            .querySelectorAll('[data-persist]')
+        persistFields()
             .forEach(function (el) {
 
                 const key =
