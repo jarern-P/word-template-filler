@@ -442,6 +442,9 @@
     // วางแผนแก้ข้อความทั้งย่อหน้า (offset อ้างอิงข้อความต้นฉบับของย่อหน้านี้)
     function buildEdits(textNodes, parts, fullText, matches, values, locked, warnings, applied) {
         const edits = [];
+        // การลบตัวแปรที่ว่าง + ช่องว่างรอบ ๆ แยกเก็บไว้ก่อน เพื่อไม่ให้ซ้ำกับ
+        // การชดเชยช่องว่างของ field ที่ล็อกตำแหน่งไว้
+        const blankEdits = [];
 
         const context = {
             textNodes: textNodes,
@@ -456,17 +459,86 @@
             previousEnd: 0
         };
 
+        // ค่าที่จะเขียนของแต่ละ field — field ที่ไม่ได้กรอกจะถูกลบทั้งตัวแปร
+        // พร้อมช่องว่างรอบ ๆ เหมือนในแม่แบบไม่มีตัวแปรนั้นอยู่เลย
+        const fieldValues = matches.map(function (match) {
+            return normalizeValue(values[match.field]);
+        });
+
+        const blank = fieldValues.map(function (value) {
+            return value.trim() === '';
+        });
+
+        // มีข้อความ (ที่ไม่ใช่ช่องว่าง) อยู่หลัง field นี้ถึงท้ายย่อหน้าหรือไม่
+        // field ที่ว่างด้วยกันไม่นับเป็นข้อความ
+        function hasContentAfter(index) {
+            let position = matches[index].end;
+
+            for (let j = index + 1; j <= matches.length; j++) {
+                const nextStart = j < matches.length ? matches[j].start : fullText.length;
+
+                if (/\S/.test(fullText.slice(position, nextStart))) return true;
+                if (j === matches.length) return false;
+                if (!blank[j]) return true;
+
+                position = matches[j].end;
+            }
+
+            return false;
+        }
+
+        let cursor = 0;              // ต้นข้อความช่วงที่ยังไม่ได้จัดการ
+        let contentBefore = false;   // มีข้อความก่อน field ที่กำลังประมวลผล
+
         for (let i = 0; i < matches.length; i++) {
             const match = matches[i];
             const next = matches[i + 1] || null;
 
-            const value = normalizeValue(values[match.field]);
+            const value = fieldValues[i];
+
+            // ข้อความคงที่ระหว่าง field ก่อนหน้ากับ field นี้ (ไม่ถูกแก้)
+            if (/\S/.test(fullText.slice(cursor, match.start))) contentBefore = true;
 
             context.font = findRunFont(textNodes, parts, match.start);
             context.nextStart = next ? next.start : null;
 
             const rawWidth = measure(match.raw, context.font);
             const valueWidth = measure(value, context.font);
+
+            // field ที่ไม่ได้กรอก = ไม่มีตัวแปรนั้นอยู่เลย
+            // ลบ {{field}} และช่องว่างที่ติดอยู่ทั้งหมด (ไม่เหลือแม้แต่ช่องเดียว)
+            // ไม่ชดเชยตำแหน่งด้วยช่องว่าง — การขึ้นบรรทัดใหม่ที่ว่างจะถูกลบทีหลัง
+            if (blank[i]) {
+                const rightLimit = next ? next.start : fullText.length;
+
+                let left = match.start;
+
+                while (
+                    left > cursor &&
+                    SPACE_CHARS.indexOf(fullText.charAt(left - 1)) !== -1
+                ) {
+                    left--;
+                }
+
+                let right = match.end;
+
+                while (
+                    right < rightLimit &&
+                    SPACE_CHARS.indexOf(fullText.charAt(right)) !== -1
+                ) {
+                    right++;
+                }
+
+                // ต้นย่อหน้า (ก่อน field ไม่มีข้อความ) = เก็บบรรทัดหน้า (indent) ไว้
+                const contentAfter = hasContentAfter(i);
+                const start = (contentBefore || !contentAfter) ? left : match.start;
+
+                blankEdits.push({ start: start, end: right, text: '' });
+
+                cursor = right;
+                context.previousEnd = match.end;
+                continue;
+            }
 
             if (locked[match.field] === true) {
                 // ตำแหน่งเริ่มต้นของ field
@@ -486,6 +558,24 @@
 
             context.widthDelta += valueWidth - rawWidth;
             context.previousEnd = match.end;
+
+            cursor = match.end;
+            contentBefore = true;
+        }
+
+        // ช่องว่างที่ถูกลบไปพร้อมตัวแปรที่ว่างแล้ว ไม่ต้องให้การล็อกตำแหน่ง
+        // ลบซ้ำในตำแหน่งเดียวกัน (แต่การ "เพิ่ม" ช่องว่างที่ขอบยังต้องเก็บไว้)
+        if (blankEdits.length > 0) {
+            const kept = edits.filter(function (edit) {
+                return !blankEdits.some(function (blank) {
+                    return edit.end > edit.start &&
+                        edit.start >= blank.start &&
+                        edit.end <= blank.end;
+                });
+            });
+
+            edits.length = 0;
+            edits.push(...kept, ...blankEdits);
         }
 
         return edits;
@@ -669,11 +759,149 @@
         });
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // เก็บกวาดบรรทัดว่างจาก field ที่ไม่ได้กรอก
+    //
+    // ถ้าลบตัวแปรออกแล้วย่อหน้าไม่เหลือข้อความ (หรือเหลือแต่การขึ้นบรรทัดใหม่)
+    // จะลบการขึ้นบรรทัดใหม่ที่ว่างทิ้ง และลบย่อหน้านั้นทั้งย่อหน้าถ้าไม่มีอะไรเหลือ
+    // ──────────────────────────────────────────────────────────────
+
+    // element ที่ทำให้ย่อหน้ามี "เนื้อหา" อื่นที่ไม่ใช่ข้อความ (ห้ามลบย่อหน้า)
+    const PARAGRAPH_BLOCKERS = [
+        'drawing', 'pict', 'object', 'txbxContent', 'tbl', 'sectPr',
+        'pageBreakBefore'
+    ];
+
+    // ตัวแบ่งบรรทัดที่ลบได้ (w:br ธรรมดา / w:cr)
+    // w:br type="page" หรือ "column" เป็นการจัดหน้า — ต้องเก็บไว้
+    function isRemovableBreak(node) {
+        if (node.localName === 'cr') return true;
+        if (node.localName !== 'br') return false;
+
+        const type = node.getAttribute('w:type');
+
+        return type === null || type === '' || type === 'textWrapping';
+    }
+
+    // รายการที่มองเห็นในย่อหน้าตามลำดับ: ข้อความ / ตัวแบ่งบรรทัด / เนื้อหาอื่น
+    // (แท็บและข้อความที่มีแต่ช่องว่างไม่นับเป็นเนื้อหา)
+    function paragraphTokens(paragraph) {
+        const tokens = [];
+
+        (function walk(node) {
+            for (const child of Array.from(node.childNodes)) {
+                if (child.nodeType !== 1) continue;
+
+                const name = child.localName;
+
+                if (name === 't') {
+                    tokens.push({ type: 'text', text: child.textContent || '' });
+                } else if (name === 'br' || name === 'cr') {
+                    tokens.push({
+                        type: isRemovableBreak(child) ? 'break' : 'content',
+                        node: child
+                    });
+                } else if (PARAGRAPH_BLOCKERS.indexOf(name) !== -1) {
+                    tokens.push({ type: 'content', node: child });
+                } else if (name === 'tab') {
+                    tokens.push({ type: 'space', node: child });
+                } else {
+                    walk(child);
+                }
+            }
+        })(paragraph);
+
+        return tokens;
+    }
+
+    // ลบการขึ้นบรรทัดใหม่ที่ทำให้เกิดบรรทัดว่าง:
+    // - ขึ้นบรรทัดใหม่ต้น/ท้ายย่อหน้า (ไม่มีข้อความก่อน/หลัง)
+    // - ขึ้นบรรทัดใหม่ติดกันหลายอัน (เหลืออันเดียว)
+    function trimEmptyLineBreaks(paragraph) {
+        const tokens = paragraphTokens(paragraph);
+
+        // มีเนื้อหาหลัง token นี้หรือไม่
+        const contentAfter = new Array(tokens.length).fill(false);
+        let seen = false;
+
+        for (let i = tokens.length - 1; i >= 0; i--) {
+            contentAfter[i] = seen;
+
+            const token = tokens[i];
+
+            if (token.type === 'content' ||
+                (token.type === 'text' && /\S/.test(token.text))) {
+                seen = true;
+            }
+        }
+
+        let contentBefore = false;
+        let breakBefore = false;
+
+        for (let i = 0; i < tokens.length; i++) {
+            const token = tokens[i];
+
+            if (token.type === 'break') {
+                if (!contentBefore || !contentAfter[i] || breakBefore) {
+                    token.node.parentNode.removeChild(token.node);
+                } else {
+                    breakBefore = true;
+                }
+
+                continue;
+            }
+
+            // แท็บ/ข้อความล้วนช่องว่าง: ไม่ทำให้ breakBefore กลับเป็น false
+            if (token.type === 'content' ||
+                (token.type === 'text' && /\S/.test(token.text))) {
+                contentBefore = true;
+                breakBefore = false;
+            }
+        }
+    }
+
+    // ย่อหน้าไม่เหลือข้อความจริงและไม่มีเนื้อหาสำคัญ → ลบทั้งย่อหน้า (ไม่เหลือบรรทัดว่าง)
+    function removeBlankParagraph(paragraph) {
+        const text = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'))
+            .map(function (node) { return node.textContent || ''; })
+            .join('');
+
+        if (/\S/.test(text)) return false;
+
+        for (const name of PARAGRAPH_BLOCKERS) {
+            if (paragraph.getElementsByTagNameNS(W_NS, name).length > 0) return false;
+        }
+
+        // ตัวแบ่งหน้าที่เหลืออยู่ (type="page") ห้ามลบทั้งย่อหน้า
+        for (const node of paragraph.getElementsByTagNameNS(W_NS, 'br')) {
+            if (!isRemovableBreak(node)) return false;
+        }
+
+        const parent = paragraph.parentNode;
+        if (!parent) return false;
+
+        // Word ต้องมีย่อหน้าอย่างน้อยหนึ่งอันในกล่องเดียวกัน (เช่น ในเซลล์ตาราง)
+        const siblings = Array.from(parent.childNodes).filter(function (child) {
+            return child.nodeType === 1 && child.localName === 'p';
+        });
+
+        if (siblings.length <= 1) return false;
+
+        parent.removeChild(paragraph);
+        return true;
+    }
+
+    function cleanupBlankFieldParagraph(paragraph) {
+        trimEmptyLineBreaks(paragraph);
+        removeBlankParagraph(paragraph);
+    }
+
     // locked = field ที่ติ๊ก "ล็อกตำแหน่ง" ไว้ในหน้า Template Configuration
     function replaceInParagraph(paragraph, regex, values, locked, warnings, applied, highlight) {
         if (paragraph.getElementsByTagNameNS(W_NS, 't').length === 0) return;
 
         let iterations = 0;
+        let sawBlank = false;
 
         while (iterations++ < MAX_ITERATIONS_PER_PARAGRAPH) {
             // อ่านใหม่ทุกรอบ — ถ้ารอบก่อนหน้าไฮไลต์จนตัด run จะได้รายชื่อ node ครบ
@@ -682,7 +910,18 @@
             const fullText = parts.join('');
 
             const matches = findMatches(regex, fullText);
-            if (matches.length === 0) return;
+
+            if (matches.length === 0) {
+                if (sawBlank) cleanupBlankFieldParagraph(paragraph);
+                return;
+            }
+
+            // มี field ที่ไม่ได้กรอกในย่อหน้านี้ → เก็บกวาดบรรทัดว่างหลังแทนค่า
+            if (matches.some(function (match) {
+                return normalizeValue(values[match.field]).trim() === '';
+            })) {
+                sawBlank = true;
+            }
 
             const ranges = highlight ? [] : null;
 
@@ -697,6 +936,8 @@
         }
 
         console.warn('หยุดแทนค่าใน paragraph หนึ่งเพราะถึงขีดจำกัดรอบ');
+
+        if (sawBlank) cleanupBlankFieldParagraph(paragraph);
     }
 
     // ──────────────────────────────────────────────────────────────
