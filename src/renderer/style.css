@@ -3101,6 +3101,13 @@ body.table-ratio-dragging .table-ratio-handle {
     overflow: visible;
 }
 
+/* ซ่อนช่องว่างเปล่าในตารางของหน้าจัดตำแหน่ง (docx-preview) เพื่อไม่ให้ช่องเปล่า
+   ที่ติดมากับเทมเพลตแย่งความกว้างตาราง — ใช้กับช่องว่างเปล่าที่ไม่มีเนื้อหาใด ๆ 
+   (ถ้าช่องนั้นมีช่องว่าง/子ども element อยู่แม้แต่ตัวเดียว จะไม่ซ่อน) */
+.layout-preview .docx-wrapper table td:empty {
+    display: none !important;
+}
+
 /* ช่องแก้ไขหลัก — เอกสารทั้งหมดเป็นช่อง input เดียว (ไม่แบ่งกรอบต่อย่อหน้า)
    บอกด้วยกรอบจาง ๆ ตอนชี้เมาส์/โฟกัส */
 .layout-preview .layout-edit[contenteditable="true"]:hover {
