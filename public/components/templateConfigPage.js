@@ -132,6 +132,19 @@
         return box;
     }
 
+    // คำอธิบาย type list — วาง {{field}} ที่ไหนก็ได้เหมือน field ข้อความ
+    function createListHint(field) {
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.dataset.listHint = field;
+        hint.hidden = true;
+        hint.textContent =
+            'วาง {{' + field + '}} ที่ไหนก็ได้ (เหมือน field ข้อความ) — ' +
+            'หน้ารายงานจะเพิ่มแถวได้ทีละข้อ และตอนสร้างเอกสารแต่ละข้อจะขึ้นบรรทัดใหม่ ' +
+            'โดยเริ่มตรงตำแหน่งของ {{' + field + '}}';
+        return hint;
+    }
+
     // select เลือก type + ช่อง placeholder + checkbox "ล็อกตำแหน่ง" ของ field นั้น
     function createTypeSelect(field) {
         const wrapper = document.createElement('div');
@@ -182,6 +195,7 @@
         wrapper.appendChild(row);
         wrapper.appendChild(createPlaceholderInput(field));
         wrapper.appendChild(createTableConfig(field));
+        wrapper.appendChild(createListHint(field));
         return wrapper;
     }
 
@@ -804,8 +818,18 @@
 
         const control = scope.FormPage.findControl(field);
         const isTable = !!control && control.value === 'table';
+        const isList = !!control && control.value === 'list';
 
         nodes.box.hidden = !isTable;
+
+        // คำอธิบาย type list (วาง {{field}} ที่ไหนก็ได้)
+        const formElement = document.getElementById('form');
+
+        if (formElement) {
+            formElement.querySelectorAll('[data-list-hint]').forEach(function (node) {
+                if (node.dataset.listHint === field) node.hidden = !isList;
+            });
+        }
 
         // ช่อง placeholder ไม่ใช้กับตาราง (ชื่อคอลัมน์บอกความหมายอยู่แล้ว)
         const form = document.getElementById('form');

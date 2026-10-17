@@ -147,6 +147,14 @@
             scope.ReportPage.resetTables();
         }
 
+        // ล้างแถวของ type list ที่กรอกไว้ในหน้ารายงาน
+        if (
+            scope.ReportPage &&
+            scope.ReportPage.resetLists
+        ) {
+            scope.ReportPage.resetLists();
+        }
+
         // ล้างชุดข้อมูลที่นำเข้าจาก Excel (ผูกกับ template ที่โหลดอยู่)
         if (
             scope.ReportPage &&
@@ -1431,6 +1439,46 @@
                     return;
                 }
 
+                // ปุ่มเพิ่มแถวของ type list (หน้ารายงาน)
+                const addListRowBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-list-add]')
+                        : null;
+
+                if (addListRowBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.addListRow) {
+                        report.addListRow(addListRowBtn.dataset.listAdd);
+                    }
+
+                    return;
+                }
+
+                // ปุ่มลบแถวของ type list (หน้ารายงาน)
+                const removeListRowBtn =
+                    event.target.closest
+                        ? event.target.closest('[data-list-remove]')
+                        : null;
+
+                if (removeListRowBtn) {
+
+                    const report =
+                        getComponent(DEFAULT_PAGE);
+
+                    if (report.removeListRow) {
+
+                        report.removeListRow(
+                            removeListRowBtn.dataset.listRemove,
+                            Number(removeListRowBtn.dataset.listRow)
+                        );
+                    }
+
+                    return;
+                }
+
                 // ปุ่มผสานช่องกับช่องถัดไป (หน้ารายงาน)
                 const mergeCellBtn =
                     event.target.closest
@@ -2269,6 +2317,20 @@
             : {};
     }
 
+    // รายการของหน้ารายงาน (type = List) — หลายข้อในตัวแปรเดียว
+    function collectLists() {
+
+        const component =
+            getComponent(currentPage);
+
+        return (
+            component &&
+            component.getListValues
+        )
+            ? component.getListValues()
+            : {};
+    }
+
     // ดูตัวอย่างข้อความในเอกสารก่อนดาวน์โหลด
     //
     // ตัวอย่างสร้างจาก xml ต้นฉบับ (แทน {{field}} เองในหน้าตัวอย่าง) จึงรู้ว่าค่าไหน
@@ -2320,13 +2382,36 @@
         const tables =
             collectTables();
 
+        // รายการ (type List) — แสดงเป็นหลายบรรทัดในตัวอย่าง โดยคั่นด้วยขึ้นบรรทัดใหม่
+        const lists =
+            collectLists();
+
+        const previewValues =
+            Object.assign({}, values);
+
+        Object.keys(lists).forEach(function (field) {
+
+            const items =
+                (lists[field] && lists[field].items) || [];
+
+            previewValues[field] = items
+                .map(function (item) {
+                    return String(item == null ? '' : item).trim();
+                })
+                .filter(function (item) {
+                    return item !== '';
+                })
+                .join('\n');
+        });
+
         // รันจริงหนึ่งรอบ เพื่อให้ getWarnings/getApplied เป็นของค่าที่กรอกอยู่ตอนนี้
         scope.Replace.replaceFields(
             state.xml,
             values,
             locks,
             tables,
-            fieldHighlightOn()
+            fieldHighlightOn(),
+            lists
         );
 
         const notes = [];
@@ -2396,7 +2481,7 @@
             xml:
                 state.xml,
             values:
-                values,
+                previewValues,
             tables:
                 tables,
             notes:
@@ -2425,7 +2510,7 @@
         // header ของ checkbox ใน Excel ใช้ชื่อฟิลด์ + placeholder
         // (อัปโหลดกลับแล้วแมปคอลัมน์ได้จากชื่อฟิลด์)
         return state.fields.filter(function (field) {
-            return types[field] !== 'table';
+            return types[field] !== 'table' && types[field] !== 'list';
         }).map(function (field) {
 
             // checkbox: ใช้ "ชื่อฟิลด์ + placeholder" เป็นหัวคอลัมน์ในไฟล์ส่งออก
@@ -2909,7 +2994,8 @@
                         values,
                         locks,
                         collectTables(),
-                        fieldHighlightOn()
+                        fieldHighlightOn(),
+                        collectLists()
                     );
 
                 // ล็อกตำแหน่งได้ครบหรือไม่ + ปรับช่องว่างไปเท่าไร แจ้งบนหน้ารายงาน
@@ -5271,6 +5357,26 @@
 
                 if (filled) {
                     values[field] = tables[field];
+                }
+            });
+        }
+
+        // รายการ (List) เก็บเป็น { items: [...] } เพื่อกดใช้ซ้ำแล้วได้ทุกข้อ
+        if (report.getListValues) {
+
+            const lists =
+                report.getListValues();
+
+            Object.keys(lists).forEach(function (field) {
+
+                const items = (lists[field] && lists[field].items) || [];
+
+                const filled = items.some(function (item) {
+                    return String(item == null ? '' : item).trim() !== '';
+                });
+
+                if (filled) {
+                    values[field] = lists[field];
                 }
             });
         }

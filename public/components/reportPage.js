@@ -103,6 +103,11 @@
                 return createTable(field);
             }
 
+            // รายการ: หลายแถว ข้อความเดียวต่อแถว (เพิ่ม/ลบได้)
+            if (getConfiguredTypes()[field] === 'list') {
+                return createList(field);
+            }
+
             return scope.FieldTypes.createFieldControl(
                 getConfiguredTypes()[field],
                 field,
@@ -407,6 +412,191 @@
         // แถบจัดรูปแบบถูกสร้างใหม่ (ปุ่ม disabled) — ซิงก์กับช่องที่เลือกอยู่อีกครั้ง
         updateFormatBar(field);
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // type list (รายการ)
+    //
+    // แถวละ 1 ข้อความ (เพิ่ม/ลบได้) — เก็บเป็น array ของ string
+    // ตอนสร้างเอกสาร ข้อที่ 1 อยู่ตรงตำแหน่งของ {{field}} และข้อถัดไปขึ้นบรรทัดใหม่
+    // เริ่มตรงตำแหน่งเดียวกัน (รายละเอียดอยู่ที่ replace.js)
+    // ──────────────────────────────────────────────────────────────
+    const listRows = {};
+
+    // แถวของ list ต้องมีอย่างน้อย 1 แถวเสมอ
+    function normalizeListItems(field) {
+        const stored = listRows[field];
+
+        const items = (Array.isArray(stored) ? stored : []).map(function (value) {
+            return String(value == null ? '' : value);
+        });
+
+        if (items.length === 0) items.push('');
+
+        listRows[field] = items;
+        return items;
+    }
+
+    // อ่านค่าที่พิมพ์อยู่ในช่องของ list กลับเข้า state (ก่อนเพิ่ม/ลบ/อ่านค่าออกไป)
+    function readListInputs(field) {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        const items = normalizeListItems(field);
+
+        form.querySelectorAll('[data-list-input]').forEach(function (input) {
+            if (input.dataset.listInput !== field) return;
+
+            const index = Number(input.dataset.listRow);
+
+            if (index >= 0 && index < items.length) {
+                items[index] = input.value;
+            }
+        });
+    }
+
+    function findListWidget(field) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-list-field]').forEach(function (node) {
+            if (node.dataset.listField === field) found = node;
+        });
+
+        return found;
+    }
+
+    function createList(field) {
+        const items = normalizeListItems(field);
+        const placeholder = getConfiguredPlaceholders()[field];
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-control list-field';
+        wrapper.dataset.listField = field;
+
+        const rows = document.createElement('div');
+        rows.className = 'list-rows';
+
+        items.forEach(function (value, index) {
+            const row = document.createElement('div');
+            row.className = 'list-row';
+
+            const number = document.createElement('span');
+            number.className = 'list-index';
+            number.textContent = (index + 1) + '.';
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'list-input';
+            input.dataset.listInput = field;
+            input.dataset.listRow = String(index);
+            input.autocomplete = 'off';
+            input.placeholder = placeholder || ('กรอก ' + field);
+            input.value = value;
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'list-row-remove';
+            remove.dataset.listRemove = field;
+            remove.dataset.listRow = String(index);
+            remove.textContent = '×';
+            remove.title = 'ลบแถวนี้';
+            remove.setAttribute('aria-label', 'ลบแถวนี้');
+
+            row.appendChild(number);
+            row.appendChild(input);
+            row.appendChild(remove);
+            rows.appendChild(row);
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'list-actions';
+
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'plain list-add-row';
+        add.dataset.listAdd = field;
+        add.textContent = '＋ เพิ่มแถว';
+
+        actions.appendChild(add);
+
+        wrapper.appendChild(rows);
+        wrapper.appendChild(actions);
+        return wrapper;
+    }
+
+    // วาด list ของ field นั้นใหม่ (หลังเพิ่ม/ลบแถว)
+    function renderList(field) {
+        const current = findListWidget(field);
+        if (!current || !current.parentNode) return;
+
+        current.parentNode.replaceChild(createList(field), current);
+    }
+
+    page.addListRow = function (field) {
+        readListInputs(field);
+        normalizeListItems(field).push('');
+        renderList(field);
+    };
+
+    page.removeListRow = function (field, rowIndex) {
+        readListInputs(field);
+
+        const items = normalizeListItems(field);
+        const index = Number(rowIndex);
+
+        if (!(index >= 0 && index < items.length)) return;
+
+        items.splice(index, 1);
+
+        // เหลืออย่างน้อย 1 แถวเสมอ เพื่อให้พิมพ์ต่อได้ทันที
+        if (items.length === 0) items.push('');
+
+        renderList(field);
+    };
+
+    // ข้อมูลของ list ทั้งหมด (ส่งให้ replace.js ตอนสร้างเอกสาร)
+    page.getListValues = function () {
+        const types = getConfiguredTypes();
+        const lists = {};
+
+        Object.keys(types).forEach(function (field) {
+            if (types[field] !== 'list') return;
+
+            readListInputs(field);
+            lists[field] = { items: normalizeListItems(field).slice() };
+        });
+
+        return lists;
+    };
+
+    // เติมแถวของ list กลับเข้าฟอร์ม (ใช้ตอนกดใช้ซ้ำจากประวัติ)
+    page.syncLists = function (values) {
+        if (!values) return;
+
+        Object.keys(values).forEach(function (field) {
+            const spec = values[field];
+
+            if (!spec || typeof spec !== 'object' || !Array.isArray(spec.items)) return;
+
+            const items = spec.items.map(function (value) {
+                return String(value == null ? '' : value);
+            });
+
+            if (items.length === 0) items.push('');
+
+            listRows[field] = items;
+            renderList(field);
+        });
+    };
+
+    // ล้างแถวของ list ทั้งหมด (ตอนเปลี่ยน template / ล้างฟอร์ม)
+    page.resetLists = function () {
+        Object.keys(listRows).forEach(function (field) {
+            delete listRows[field];
+        });
+    };
 
     // ──────────────────────────────────────────────────────────────
     // จัดรูปแบบช่อง (จัดตำแหน่ง / ตัวหนา / ตัวเอียง)
@@ -794,6 +984,7 @@
         baseApplyValues.call(page, source);
         page.syncCurrencyInputs(source);
         page.syncTables(values);
+        page.syncLists(values);
         syncRowsBar();
     };
 

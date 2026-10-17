@@ -18,6 +18,7 @@
         { value: 'checkbox', label: 'Checkbox (ติ๊ก/ไม่ติ๊ก)', input: 'checkbox' },
         { value: 'textarea', label: 'Long text (ข้อความยาว)', input: 'textarea' },
         { value: 'email', label: 'Email', input: 'email' },
+        { value: 'list', label: 'List (รายการ)', input: 'list' },
         { value: 'table', label: 'Table (ตาราง)', input: 'table' }
     ];
 

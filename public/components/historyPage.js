@@ -116,6 +116,11 @@
         return !!value && typeof value === 'object' && Array.isArray(value.rows);
     }
 
+    // ค่าของ field ที่เป็น type List เก็บเป็น { items: [...] }
+    function isListValue(value) {
+        return !!value && typeof value === 'object' && Array.isArray(value.items);
+    }
+
     // เฉพาะช่องที่กรอกค่าจริง (ช่องว่างไม่ได้ถูกเก็บอยู่แล้ว แต่กันไว้ให้ทน)
     function filledEntries(record) {
         const values = (record && record.values) || {};
@@ -126,6 +131,12 @@
             if (value === null || value === undefined) return false;
             if (isTableValue(value)) return value.rows.length > 0;
 
+            if (isListValue(value)) {
+                return value.items.some(function (item) {
+                    return String(item == null ? '' : item).trim() !== '';
+                });
+            }
+
             return String(value).trim() !== '';
         });
     }
@@ -134,6 +145,14 @@
     function describeValue(value) {
         if (isTableValue(value)) {
             return 'ตาราง ' + value.rows.length + ' แถว';
+        }
+
+        if (isListValue(value)) {
+            const count = value.items.filter(function (item) {
+                return String(item == null ? '' : item).trim() !== '';
+            }).length;
+
+            return 'รายการ ' + count + ' ข้อ';
         }
 
         return truncate(value, PREVIEW_LENGTH);
@@ -146,6 +165,7 @@
 
         if (value === null || value === undefined) return '';
         if (isTableValue(value)) return '';
+        if (isListValue(value)) return '';
 
         return String(value).trim();
     }

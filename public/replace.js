@@ -1454,6 +1454,267 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // type list (รายการ)
+    //
+    // ตัวแปรเดียว แต่พิมพ์ได้หลายข้อ (แถวละข้อ) — ข้อแรกอยู่ในตำแหน่งของ
+    // {{field}} และข้อถัดไปขึ้นบรรทัดใหม่ในย่อหน้าเดิม โดยเริ่มที่ตำแหน่งเดียวกับ
+    // ตัวแปร (ตั้ง left/hanging indent ให้เฉพาะย่อหน้านั้น)
+    // ──────────────────────────────────────────────────────────────
+
+    const TWIPS_PER_CM = 1440 / 2.54;
+
+    // ลำดับลูกของ w:pPr ตาม schema (ใช้แทรก w:ind ให้ถูกตำแหน่ง)
+    const PPR_ORDER = [
+        'pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr',
+        'widowControl', 'numPr', 'suppressLineNumbers', 'pBdr', 'shd', 'tabs',
+        'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct',
+        'topLinePunct', 'autoSpaceDE', 'autoSpaceDN', 'bidi',
+        'adjustRightInd', 'snapToGrid', 'spacing', 'ind', 'contextualSpacing',
+        'mirrorIndents', 'suppressOverlap', 'jc', 'textDirection',
+        'textAlignment', 'textboxTightWrap', 'outlineLvl', 'divId', 'cnfStyle',
+        'rPr', 'sectPr', 'pPrChange'
+    ];
+
+    function insertParagraphProp(props, node) {
+        const order = PPR_ORDER.indexOf(node.localName);
+
+        if (order === -1) {
+            props.appendChild(node);
+            return;
+        }
+
+        for (const child of Array.from(props.childNodes)) {
+            if (child.nodeType !== 1) continue;
+
+            const at = PPR_ORDER.indexOf(child.localName);
+
+            if (at > order) {
+                props.insertBefore(node, child);
+                return;
+            }
+        }
+
+        props.appendChild(node);
+    }
+
+    // ตำแหน่งเริ่มต้นของบรรทัดแรก/บรรทัดถัดไปของย่อหน้า (twips)
+    // (อ่านจาก w:ind ตรง ๆ — ไม่รวมค่าที่สืบทอดมาจากสไตล์)
+    function paragraphIndentTwips(paragraph) {
+        const pPr = paragraph.getElementsByTagNameNS(W_NS, 'pPr')[0];
+        const ind = pPr ? pPr.getElementsByTagNameNS(W_NS, 'ind')[0] : null;
+
+        const read = function (name) {
+            const value = ind ? Number(ind.getAttribute('w:' + name)) : 0;
+            return isFinite(value) ? value : 0;
+        };
+
+        const left = ind && ind.hasAttribute('w:start') ? read('start') : read('left');
+        const firstLineX = left + read('firstLine') - read('hanging');
+
+        return { firstLineX: firstLineX };
+    }
+
+    // ความกว้างของข้อความก่อน placeholder (twips) — วัดด้วยฟอนต์ของแต่ละ run
+    // คืน null เมื่อยังไม่มีตัววัดจริง (ตัววัดสำรองไม่รู้ความกว้างเป็น cm)
+    function widthBeforeTwips(textNodes, parts, start) {
+        if (measure.unit !== 'cm') return null;
+
+        let width = 0;
+        let position = 0;
+
+        for (let i = 0; i < textNodes.length; i++) {
+            const text = parts[i] || '';
+            const end = position + text.length;
+
+            if (position >= start) break;
+
+            const upTo = Math.min(end, start);
+
+            if (upTo > position) {
+                width +=
+                    measure(
+                        text.slice(0, upTo - position),
+                        findRunFont(textNodes, parts, position)
+                    ) * TWIPS_PER_CM;
+            }
+
+            position = end;
+        }
+
+        return Math.round(width);
+    }
+
+    // ตั้ง indent ให้บรรทัดถัดไปของย่อหน้าเริ่มที่ targetX
+    // โดยบรรทัดแรกยังเริ่มที่ firstLineX เดิม (ใช้ left + hanging)
+    function setListIndent(paragraph, firstLineX, targetX) {
+        const doc = paragraph.ownerDocument;
+
+        let pPr = paragraph.getElementsByTagNameNS(W_NS, 'pPr')[0];
+
+        if (!pPr) {
+            pPr = el(doc, 'pPr');
+            paragraph.insertBefore(pPr, paragraph.firstChild);
+        }
+
+        let ind = pPr.getElementsByTagNameNS(W_NS, 'ind')[0];
+
+        if (!ind) {
+            ind = el(doc, 'ind');
+            insertParagraphProp(pPr, ind);
+        }
+
+        [
+            'w:leftChars', 'w:start', 'w:startChars', 'w:firstLine',
+            'w:firstLineChars', 'w:hanging', 'w:hangingChars'
+        ].forEach(function (name) {
+            ind.removeAttribute(name);
+        });
+
+        ind.setAttribute('w:left', String(Math.round(targetX)));
+
+        const hanging = Math.round(targetX - firstLineX);
+
+        if (hanging > 0) ind.setAttribute('w:hanging', String(hanging));
+    }
+
+    // ข้อความของ list ที่ใช้ได้ (ตัดแถวว่าง/ช่องว่างหัวท้าย)
+    function listItems(spec) {
+        const items = spec && Array.isArray(spec.items) ? spec.items : [];
+
+        return items.map(function (item) {
+            return normalizeValue(item).trim();
+        }).filter(function (item) {
+            return item !== '';
+        });
+    }
+
+    // แทน {{field}} ด้วยรายการ — ใช้รูปแบบ (rPr) ของ run ที่ตัวแปรอยู่
+    // คืน true = แทนแบบแยกบรรทัดได้ (ใช้ปรับ indent ได้)
+    function replaceListPlaceholder(paragraph, match, items) {
+        const isolated = isolateRange(paragraph, match.start, match.end);
+
+        const doc = paragraph.ownerDocument;
+        const nodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+        const parts = nodes.map(function (node) {
+            return node.textContent || '';
+        });
+
+        if (!isolated) {
+            // ตัด run ไม่ได้ (มี element อื่นปนใน run) — อย่างน้อยต้องไม่เหลือ {{field}}
+            applyEdit(nodes, match.start, match.end - match.start, items.join(' '));
+            return false;
+        }
+
+        let position = 0;
+        let firstRun = null;
+        let lastRun = null;
+
+        for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
+            const nodeStart = position;
+            const nodeEnd = position + (parts[i] || '').length;
+
+            position = nodeEnd;
+
+            if (nodeEnd <= match.start || nodeStart >= match.end) continue;
+
+            if (!firstRun) firstRun = node.parentNode;
+            lastRun = node.parentNode;
+
+            node.textContent = '';
+        }
+
+        if (!firstRun || !lastRun || lastRun.localName !== 'r') return false;
+
+        const props = directChild(firstRun, 'rPr');
+
+        const makeTextRun = function (text) {
+            const run = el(doc, 'r');
+
+            if (props) run.appendChild(props.cloneNode(true));
+
+            const node = el(doc, 't');
+            setText(node, text);
+            run.appendChild(node);
+
+            return run;
+        };
+
+        const makeBreakRun = function () {
+            const run = el(doc, 'r');
+
+            if (props) run.appendChild(props.cloneNode(true));
+            run.appendChild(el(doc, 'br'));
+
+            return run;
+        };
+
+        const parent = lastRun.parentNode;
+        const anchor = lastRun.nextSibling;
+
+        items.forEach(function (item, index) {
+            if (index > 0) parent.insertBefore(makeBreakRun(), anchor);
+            parent.insertBefore(makeTextRun(item), anchor);
+        });
+
+        return true;
+    }
+
+    function insertLists(doc, lists) {
+        const fields = Object.keys(lists).filter(function (field) {
+            return listItems(lists[field]).length > 0;
+        });
+
+        if (fields.length === 0) return;
+
+        const regex = buildFieldRegex(fields);
+        if (!regex) return;
+
+        const paragraphs = Array.from(doc.getElementsByTagNameNS(W_NS, 'p'));
+
+        for (const paragraph of paragraphs) {
+            const textNodes = Array.from(paragraph.getElementsByTagNameNS(W_NS, 't'));
+            if (textNodes.length === 0) continue;
+
+            const parts = textNodes.map(function (node) {
+                return node.textContent || '';
+            });
+
+            const fullText = parts.join('');
+            const matches = findMatches(regex, fullText);
+
+            if (matches.length === 0) continue;
+
+            // ตำแหน่งอ้างอิง = ตัวแปรซ้ายสุดในย่อหน้า
+            const width = widthBeforeTwips(textNodes, parts, matches[0].start);
+            const indent = paragraphIndentTwips(paragraph);
+
+            let needsIndent = false;
+
+            // แทนจากขวาไปซ้าย เพื่อให้ offset ของตัวแปรทางซ้ายยังถูกต้อง
+            for (let i = matches.length - 1; i >= 0; i--) {
+                const match = matches[i];
+                const items = listItems(lists[match.field]);
+
+                if (items.length === 0) continue;
+
+                const aligned = replaceListPlaceholder(paragraph, match, items);
+
+                if (aligned && items.length > 1) needsIndent = true;
+            }
+
+            // เยื้องเฉพาะเมื่อตัวแปรอยู่หลังข้อความบนบรรทัดนี้จริง
+            if (needsIndent && width !== null && width > 0) {
+                setListIndent(
+                    paragraph,
+                    indent.firstLineX,
+                    indent.firstLineX + width
+                );
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // แก้ข้อความทั้งย่อหน้า (ใช้โดยหน้าจัดตำแหน่ง)
     //
     // หน้าจัดตำแหน่งเรนเดอร์เอกสารด้วย docx-preview แล้วให้ผู้ใช้พิมพ์แก้ข้อความ
@@ -1823,8 +2084,9 @@
     let lastApplied = [];
 
     // tables = { field: { columns, rows, rowSpans } } ของ field ที่เป็น type Table
+    // lists  = { field: { items: [...] } } ของ field ที่เป็น type List
     // highlight = true → ใส่ w:highlight สีเหลืองที่ข้อความซึ่งถูกแทนที่ค่า
-    function replaceFields(xml, values, lockedFields, tables, highlight) {
+    function replaceFields(xml, values, lockedFields, tables, highlight, lists) {
         lastWarnings = [];
         lastApplied = [];
 
@@ -1833,7 +2095,10 @@
         const tableValues =
             tables && typeof tables === 'object' ? tables : {};
 
-        // ค่าปกติ (ข้อความ) — field ที่เป็นตารางแยกออกไปสร้างเป็นตาราง
+        const listValues =
+            lists && typeof lists === 'object' ? lists : {};
+
+        // ค่าปกติ (ข้อความ) — field ที่เป็นตาราง/list แยกออกไปทำคนละทาง
         const scalarValues = {};
 
         if (values) {
@@ -1844,9 +2109,23 @@
             });
         }
 
+        // list ที่ไม่มีข้อเลย = เหมือน field ที่ว่าง (ลบตัวแปร + บรรทัดว่างตามปกติ)
+        Object.keys(listValues).forEach(function (field) {
+            if (listItems(listValues[field]).length > 0) {
+                delete scalarValues[field];
+            } else {
+                scalarValues[field] = '';
+            }
+        });
+
+        const hasListItems = Object.keys(listValues).some(function (field) {
+            return listItems(listValues[field]).length > 0;
+        });
+
         if (
             Object.keys(scalarValues).length === 0 &&
-            Object.keys(tableValues).length === 0
+            Object.keys(tableValues).length === 0 &&
+            !hasListItems
         ) {
             return xml;
         }
@@ -1879,6 +2158,10 @@
                 );
             }
         }
+
+        // 3) field ที่เป็น list: เขียนเป็นหลายบรรทัดตรงตำแหน่งของ {{field}}
+        // (ทำหลัง field ปกติ เพื่อให้วัดความกว้างของข้อความก่อนตัวแปรได้ตรงจริง)
+        insertLists(doc, listValues);
 
         return new XMLSerializer().serializeToString(doc);
     }

@@ -1791,6 +1791,8 @@ button.danger:hover {
     color: var(--pink-700);
     background: var(--pink-100);
     border-radius: var(--radius-sm);
+    /* type list แสดงหลายข้อในตัวแปรเดียว — ให้ขึ้นบรรทัดใหม่ตามที่กรอก */
+    white-space: pre-line;
 }
 
 /* field ที่ยังไม่ได้กรอก — ต้องเห็นชัดว่าเอกสารยังไม่ครบ */
@@ -2342,6 +2344,76 @@ body.table-ratio-dragging .table-ratio-handle {
 
 .field-table button.table-row-remove:hover {
     background: #ffe6ee;
+}
+
+/* ── หน้ารายงาน: type list (เพิ่ม/ลบแถว ข้อละ 1 ช่อง) ── */
+
+.field-control.list-field {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.list-field .list-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.list-field .list-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.list-field .list-index {
+    min-width: 26px;
+    font-size: 13px;
+    color: var(--ink-faint);
+    text-align: right;
+}
+
+.list-field input.list-input {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line-input);
+    border-radius: var(--radius-sm);
+}
+
+.list-field input.list-input:focus {
+    outline: none;
+    border-color: var(--pink-400);
+    box-shadow: var(--focus-ring);
+}
+
+.list-field button.list-row-remove {
+    margin: 0;
+    padding: 4px 10px;
+    font-size: 15px;
+    line-height: 1.2;
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: #fbd6e2;
+    box-shadow: none;
+}
+
+.list-field button.list-row-remove:hover {
+    background: #ffe6ee;
+}
+
+.list-field .list-actions {
+    display: flex;
+}
+
+.list-field button.list-add-row {
+    margin-top: 0;
+    padding: 9px 18px;
+    font-size: 14px;
 }
 
 /* ── แถบจัดรูปแบบช่องของตาราง (หน้ารายงาน) ── */
