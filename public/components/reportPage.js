@@ -73,6 +73,12 @@
         return (scope.App && scope.App.getFieldPlaceholders) ? scope.App.getFieldPlaceholders() : {};
     }
 
+    // ชื่อกลุ่ม (Group) ของ type List — ตั้งไว้ที่หน้า Template Configuration
+    // list ที่ใช้ชื่อกลุ่มเดียวกัน = แถวเดียวกัน (คอลัมน์ละ field, แชร์จำนวนแถว)
+    function getConfiguredListGroups() {
+        return (scope.App && scope.App.getListGroups) ? scope.App.getListGroups() : {};
+    }
+
     // โหมด "ตัวเลข/ตัวหนังสือ" ปัจจุบันของช่อง currency ทุกช่อง (เก็บไว้ที่ FieldTypes)
     function getCurrencyModes() {
         const modes = {};
@@ -152,10 +158,86 @@
         return highlightOn;
     };
 
+    // ──────────────────────────────────────────────────────────────
+    // จัดวาง field ในหน้ารายงาน
+    //
+    // list ที่ใช้กลุ่มเดียวกัน = อยู่ "แถวเดียวกัน" (คอลัมน์ละ field)
+    // จึงรวมสมาชิกเป็นบล็อกเดียว ณ ตำแหน่งแรกที่พบ แล้วข้ามตัวที่เหลือ
+    // กลุ่มที่มีสมาชิกตัวเดียว / list ที่ไม่มีกลุ่ม = แถวของตัวเองเหมือนเดิม
+    function reportLayout(fields) {
+        const types = getConfiguredTypes();
+        const groups = getConfiguredListGroups();
+
+        // สมาชิกของแต่ละกลุ่ม เรียงตามลำดับที่พบในเอกสาร
+        const members = {};
+
+        fields.forEach(function (field) {
+            if (types[field] !== 'list') return;
+
+            const group = groups[field] || '';
+            if (!group) return;
+
+            if (!members[group]) members[group] = [];
+            members[group].push(field);
+        });
+
+        const placed = {};
+        const layout = [];
+
+        fields.forEach(function (field) {
+            const group = types[field] === 'list'
+                ? (groups[field] || '')
+                : '';
+
+            const list = group ? members[group] : null;
+
+            if (!list || list.length < 2) {
+                layout.push({ field: field });
+                return;
+            }
+
+            if (placed[group]) return;
+
+            placed[group] = true;
+            layout.push({ group: group, members: list });
+        });
+
+        return layout;
+    }
+
     // วาดฟอร์มใหม่ = DOM ถูกแทนที่ทั้งหมด → คืนสถานะสวิตช์
     const baseRenderForm = page.renderForm;
     page.renderForm = function (fields) {
-        baseRenderForm.call(page, fields);
+        const layout = reportLayout(fields || []);
+
+        // วาดด้วย field ตัวแรกของแต่ละรายการ (กลุ่ม = สมาชิกตัวแรกเป็นตัวแทน)
+        baseRenderForm.call(
+            page,
+            layout.map(function (entry) {
+                return entry.group ? entry.members[0] : entry.field;
+            })
+        );
+
+        // แทน widget ของตัวแทนด้วยบล็อกคอลัมน์ของกลุ่ม
+        // พร้อมเปลี่ยนหัวข้อของรายการนั้นเป็นชื่อกลุ่ม
+        layout.forEach(function (entry) {
+            if (!entry.group) return;
+
+            const single = findSingleListWidget(entry.members[0]);
+
+            if (!single || !single.parentNode) return;
+
+            const wrapper = single.parentNode;
+            const label = wrapper.querySelector('label');
+
+            if (label) label.textContent = 'กลุ่ม: ' + entry.group;
+
+            wrapper.replaceChild(
+                createListGroupBlock(entry.group),
+                single
+            );
+        });
+
         syncHighlightToggle();
         syncRowsBar();
     };
@@ -420,9 +502,48 @@
     // ตอนสร้างเอกสาร ข้อที่ 1 อยู่ตรงตำแหน่งของ {{field}} และข้อถัดไปขึ้นบรรทัดใหม่
     // เริ่มตรงตำแหน่งเดียวกัน (รายละเอียดอยู่ที่ replace.js)
     // ──────────────────────────────────────────────────────────────
+    // แถวของ list แต่ละ field — กลุ่มแชร์แค่ "จำนวนแถว" (ไม่แชร์ค่า)
     const listRows = {};
 
-    // แถวของ list ต้องมีอย่างน้อย 1 แถวเสมอ
+    function listGroupOf(field) {
+        return getConfiguredListGroups()[field] || '';
+    }
+
+    // field ทุกตัวที่ใช้กลุ่มเดียวกัน (รวม field เอง)
+    function listFieldsInGroup(group) {
+        const types = getConfiguredTypes();
+        const groups = getConfiguredListGroups();
+
+        return Object.keys(types).filter(function (field) {
+            return types[field] === 'list' && (groups[field] || '') === group;
+        });
+    }
+
+    // จำนวนแถวของกลุ่ม = ของสมาชิกที่ยาวที่สุด (อย่างน้อย 1)
+    function groupRowCount(group) {
+        let count = 1;
+
+        listFieldsInGroup(group).forEach(function (field) {
+            count = Math.max(count, normalizeListItems(field).length);
+        });
+
+        return count;
+    }
+
+    // ทำให้ทุก field ในกลุ่มมีจำนวนแถวเท่ากัน (เติมช่องว่างท้ายแถว)
+    function alignGroupRows(group) {
+        const count = groupRowCount(group);
+
+        listFieldsInGroup(group).forEach(function (field) {
+            const items = normalizeListItems(field);
+
+            while (items.length < count) items.push('');
+        });
+
+        return count;
+    }
+
+    // แถวของ list ต้องมีอย่างน้อย 1 แถวเสมอ (ค่าเก็บแยกตาม field)
     function normalizeListItems(field) {
         const stored = listRows[field];
 
@@ -454,7 +575,31 @@
         });
     }
 
+    // widget ของ list — list ที่อยู่กลุ่มเดียวกันใช้บล็อกร่วมกัน (คอลัมน์เดียว)
     function findListWidget(field) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        const group = listGroupOf(field);
+        let found = null;
+
+        if (group) {
+            form.querySelectorAll('[data-list-group-field]').forEach(function (node) {
+                if (node.dataset.listGroupField === group) found = node;
+            });
+
+            return found;
+        }
+
+        form.querySelectorAll('[data-list-field]').forEach(function (node) {
+            if (node.dataset.listField === field) found = node;
+        });
+
+        return found;
+    }
+
+    // widget เดี่ยวของ field (ยังไม่ถูกแทนเป็นบล็อกกลุ่ม)
+    function findSingleListWidget(field) {
         const form = document.getElementById('form');
         if (!form) return null;
 
@@ -471,9 +616,20 @@
         const items = normalizeListItems(field);
         const placeholder = getConfiguredPlaceholders()[field];
 
+        const group = listGroupOf(field);
+
         const wrapper = document.createElement('div');
         wrapper.className = 'field-control list-field';
         wrapper.dataset.listField = field;
+
+        // list ที่อยู่กลุ่มเดียวกัน (สมาชิกตัวเดียว) — บอกให้เห็นว่าอยู่กลุ่ม
+        if (group && listFieldsInGroup(group).length > 1) {
+            const badge = document.createElement('p');
+            badge.className = 'hint list-group-badge';
+            badge.textContent =
+                'กลุ่ม: ' + group + ' — แสดงรวมกับ list อื่นในกลุ่มเป็นแถวเดียวกัน';
+            wrapper.appendChild(badge);
+        }
 
         const rows = document.createElement('div');
         rows.className = 'list-rows';
@@ -526,40 +682,168 @@
         return wrapper;
     }
 
+    // บล็อกของ list ที่ใช้กลุ่มเดียวกัน — 1 แถว = 1 ชุดข้อมูล
+    //
+    // ใช้โครงเดียวกับ list ปกติ:
+    // .list-row > .list-index + input.list-input (คอลัมน์ละ field) + .list-row-remove
+    // ทุกช่องในแถวมีค่าเป็นของตัวเอง — กลุ่มแชร์เฉพาะจำนวนแถว
+    function createListGroupBlock(group) {
+        const members = listFieldsInGroup(group);
+        const count = alignGroupRows(group);
+        const placeholders = getConfiguredPlaceholders();
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'field-control list-field list-group-field';
+        wrapper.dataset.listGroupField = group;
+
+        const badge = document.createElement('p');
+        badge.className = 'hint list-group-badge';
+        badge.textContent =
+            'กลุ่ม: ' + group + ' — คอลัมน์: ' + members.join(' · ') +
+            ' (1 แถวคือ 1 ชุดข้อมูล)';
+        wrapper.appendChild(badge);
+
+        const rows = document.createElement('div');
+        rows.className = 'list-rows';
+
+        for (let index = 0; index < count; index++) {
+            const row = document.createElement('div');
+            row.className = 'list-row';
+
+            const number = document.createElement('span');
+            number.className = 'list-index';
+            number.textContent = (index + 1) + '.';
+            row.appendChild(number);
+
+            members.forEach(function (field) {
+                const items = normalizeListItems(field);
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'list-input';
+                input.dataset.listInput = field;
+                input.dataset.listRow = String(index);
+                input.autocomplete = 'off';
+                input.placeholder = placeholders[field] || ('กรอก ' + field);
+                input.value = items[index] || '';
+                row.appendChild(input);
+            });
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'list-row-remove';
+            remove.dataset.listRemove = members[0];
+            remove.dataset.listRow = String(index);
+            remove.textContent = '×';
+            remove.title = 'ลบแถวนี้';
+            remove.setAttribute('aria-label', 'ลบแถวนี้');
+            row.appendChild(remove);
+
+            rows.appendChild(row);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'list-actions';
+
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'plain list-add-row';
+        add.dataset.listAdd = members[0];
+        add.textContent = '＋ เพิ่มแถว';
+        add.title = 'เพิ่มแถวให้ทุกช่องในกลุ่ม';
+        actions.appendChild(add);
+
+        wrapper.appendChild(rows);
+        wrapper.appendChild(actions);
+
+        return wrapper;
+    }
+
     // วาด list ของ field นั้นใหม่ (หลังเพิ่ม/ลบแถว)
     function renderList(field) {
+        const group = listGroupOf(field);
         const current = findListWidget(field);
+
         if (!current || !current.parentNode) return;
 
-        current.parentNode.replaceChild(createList(field), current);
+        current.parentNode.replaceChild(
+            group ? createListGroupBlock(group) : createList(field),
+            current
+        );
     }
 
     page.addListRow = function (field) {
-        readListInputs(field);
-        normalizeListItems(field).push('');
+        const group = listGroupOf(field);
+        const targets = group ? listFieldsInGroup(group) : [field];
+
+        targets.forEach(readListInputs);
+
+        if (group && targets.length > 1) {
+            alignGroupRows(group);
+        }
+
+        targets.forEach(function (target) {
+            normalizeListItems(target).push('');
+        });
+
         renderList(field);
     };
 
     page.removeListRow = function (field, rowIndex) {
-        readListInputs(field);
+        const group = listGroupOf(field);
+        const targets = group ? listFieldsInGroup(group) : [field];
+        const index = Number(rowIndex);
 
+        targets.forEach(readListInputs);
+
+        if (group && targets.length > 1) {
+            alignGroupRows(group);
+        }
+
+        const items = normalizeListItems(field);
+
+        if (!(index >= 0 && index < items.length)) return;
+
+        targets.forEach(function (target) {
+            const targetItems = normalizeListItems(target);
+
+            if (index < targetItems.length) targetItems.splice(index, 1);
+
+            // เหลืออย่างน้อย 1 แถวเสมอ เพื่อให้พิมพ์ต่อได้ทันที
+            if (targetItems.length === 0) targetItems.push('');
+        });
+
+        renderList(field);
+    };
+
+    // พิมพ์ในช่องไหน = เก็บค่านั้นของ field นั้น
+    // (กลุ่มแชร์จำนวนแถว แต่แต่ละคอลัมน์มีค่าเป็นของตัวเอง)
+    page.syncListInput = function (field, rowIndex, value) {
         const items = normalizeListItems(field);
         const index = Number(rowIndex);
 
         if (!(index >= 0 && index < items.length)) return;
 
-        items.splice(index, 1);
-
-        // เหลืออย่างน้อย 1 แถวเสมอ เพื่อให้พิมพ์ต่อได้ทันที
-        if (items.length === 0) items.push('');
-
-        renderList(field);
+        items[index] = String(value == null ? '' : value);
     };
 
     // ข้อมูลของ list ทั้งหมด (ส่งให้ replace.js ตอนสร้างเอกสาร)
     page.getListValues = function () {
         const types = getConfiguredTypes();
+        const groups = getConfiguredListGroups();
         const lists = {};
+        const aligned = {};
+
+        // ทุกช่องในกลุ่มต้องมีจำนวนแถวเท่ากันก่อนอ่านค่า
+        Object.keys(groups).forEach(function (field) {
+            if (types[field] !== 'list') return;
+
+            const group = groups[field] || '';
+            if (!group || aligned[group]) return;
+
+            aligned[group] = true;
+            alignGroupRows(group);
+        });
 
         Object.keys(types).forEach(function (field) {
             if (types[field] !== 'list') return;
@@ -575,6 +859,8 @@
     page.syncLists = function (values) {
         if (!values) return;
 
+        const groupsToRender = {};
+
         Object.keys(values).forEach(function (field) {
             const spec = values[field];
 
@@ -587,7 +873,24 @@
             if (items.length === 0) items.push('');
 
             listRows[field] = items;
+
+            const group = listGroupOf(field);
+
+            // กลุ่มที่มีสมาชิกหลายตัว = วาดบล็อกร่วมครั้งเดียว (คอลัมน์)
+            if (group && listFieldsInGroup(group).length > 1) {
+                groupsToRender[group] = true;
+                return;
+            }
+
             renderList(field);
+        });
+
+        Object.keys(groupsToRender).forEach(function (group) {
+            alignGroupRows(group);
+
+            const members = listFieldsInGroup(group);
+
+            if (members.length > 0) renderList(members[0]);
         });
     };
 

@@ -4722,8 +4722,9 @@ function scheduleFieldHighlight() {
     // ──────────────────────────────────────────────────────────────
     // คลิกขวาที่ {{field}} — แก้ไขรายละเอียดของ field นั้น / ไฮไลต์ทุกที่ที่ใช้
     //
-    // รายละเอียดที่แก้ได้ในที่นี้ = type / ล็อกตำแหน่ง / placeholder
+    // รายละเอียดที่แก้ได้ในที่นี้ = type / ล็อกตำแหน่ง / placeholder / กลุ่ม (Group)
     // (เก็บและบันทึกผ่าน payload.getFieldConfig / saveFieldConfig ของ app.js)
+    // ช่องกลุ่มแสดงเฉพาะ type List — เหมือนหน้า "ตั้งค่าแม่แบบ"
     // ส่วนค่าที่ลึกกว่า (โครงตาราง + รูปแบบหัวคอลัมน์) ทำที่หน้า "ตั้งค่าแม่แบบ"
     // จึงมีปุ่มพาไปหน้านั้นให้ (payload.editField) เฉพาะเมื่อ field เป็นตาราง
     // ──────────────────────────────────────────────────────────────
@@ -4747,6 +4748,11 @@ function scheduleFieldHighlight() {
         '        <div class="field">',
         '            <label for="layoutFieldPlaceholder">Placeholder (ข้อความตัวอย่างในหน้ารายงาน)</label>',
         '            <input type="text" id="layoutFieldPlaceholder" autocomplete="off" placeholder="เว้นว่าง = ใช้ค่าเริ่มต้น">',
+        '        </div>',
+        '        <div class="field" id="layoutFieldGroupBox" hidden>',
+        '            <label for="layoutFieldGroup">กลุ่ม (Group)</label>',
+        '            <input type="text" id="layoutFieldGroup" autocomplete="off" placeholder="เว้นว่าง = ไม่ใช้กลุ่ม">',
+        '            <p class="hint">list ที่ใช้ชื่อกลุ่มเดียวกันจะแสดงเป็นแถวเดียวกันในหน้ารายงาน (คอลัมน์ละ field) — เพิ่ม/ลบแถวที่ตัวไหนก็มีผลกับทุกตัวในกลุ่ม</p>',
         '        </div>',
         '        <p class="hint" id="layoutFieldTableHint" hidden>field นี้เป็นตาราง — จำนวนคอลัมน์ / ชื่อคอลัมน์ / สัดส่วน / รูปแบบหัวคอลัมน์ ตั้งได้ที่หน้า "ตั้งค่าแม่แบบ"</p>',
         '        <p class="layout-status" id="layoutFieldStatus"></p>',
@@ -5074,7 +5080,7 @@ function scheduleFieldHighlight() {
             typeSelect.appendChild(option);
         });
 
-        typeSelect.addEventListener('change', refreshFieldModalTable);
+        typeSelect.addEventListener('change', refreshFieldModal);
 
         fieldModal.querySelector('#layoutFieldSaveBtn')
             .addEventListener('click', saveFieldDialog);
@@ -5092,15 +5098,20 @@ function scheduleFieldHighlight() {
         node.className = 'layout-status' + (kind ? ' ' + kind : '');
     }
 
-    // เปิดแถบ "ตาราง" ในกล่อง เมื่อ type = Table
-    function refreshFieldModalTable() {
+    // แสดงเฉพาะส่วนที่ใช้กับ type ที่เลือก:
+    // ตาราง (คำอธิบาย + ปุ่มไปหน้าแก้ไข) / กลุ่ม (Group) ของ List
+    function refreshFieldModal() {
         if (!fieldModal) return;
 
-        const isTable =
-            fieldModal.querySelector('#layoutFieldType').value === 'table';
+        const type =
+            fieldModal.querySelector('#layoutFieldType').value;
+
+        const isTable = type === 'table';
+        const isList = type === 'list';
 
         fieldModal.querySelector('#layoutFieldTableHint').hidden = !isTable;
         fieldModal.querySelector('#layoutFieldEditBtn').hidden = !isTable;
+        fieldModal.querySelector('#layoutFieldGroupBox').hidden = !isList;
     }
 
     function closeFieldDialog() {
@@ -5138,9 +5149,11 @@ function scheduleFieldHighlight() {
         fieldModal.querySelector('#layoutFieldLock').checked = !!values.lock;
         fieldModal.querySelector('#layoutFieldPlaceholder').value =
             values.placeholder || '';
+        fieldModal.querySelector('#layoutFieldGroup').value =
+            values.listGroup || '';
 
         setFieldModalStatus('');
-        refreshFieldModalTable();
+        refreshFieldModal();
 
         fieldModal.classList.add('open');
 
@@ -5162,7 +5175,8 @@ function scheduleFieldHighlight() {
         const values = {
             type: fieldModal.querySelector('#layoutFieldType').value,
             lock: fieldModal.querySelector('#layoutFieldLock').checked,
-            placeholder: fieldModal.querySelector('#layoutFieldPlaceholder').value
+            placeholder: fieldModal.querySelector('#layoutFieldPlaceholder').value,
+            listGroup: fieldModal.querySelector('#layoutFieldGroup').value
         };
 
         const button = fieldModal.querySelector('#layoutFieldSaveBtn');

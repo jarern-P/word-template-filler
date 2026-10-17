@@ -60,6 +60,7 @@ const SCHEMA = `
         locks      TEXT NOT NULL DEFAULT '{}',
         placeholders TEXT NOT NULL DEFAULT '{}',
         tables     TEXT NOT NULL DEFAULT '{}',
+        list_groups TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
@@ -361,6 +362,39 @@ function migrateTemplateTables() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ list_groups ให้ตาราง templates
+// ============================================================
+
+// เก็บชื่อกลุ่ม (group) ของ field ที่เป็น type List
+// list ที่ใช้ชื่อกลุ่มเดียวกันจะแสดงเป็นแถวเดียวกันที่หน้ารายงาน
+function migrateTemplateListGroups() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(templates)
+        `).all();
+
+    // ยังไม่มีตาราง templates (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "list_groups")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE templates
+        ADD COLUMN list_groups TEXT NOT NULL DEFAULT '{}'
+    `);
+
+    console.log(
+        "Migrated templates table: added 'list_groups' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -374,6 +408,7 @@ function openDatabase() {
     migrateTemplateLocks();
     migrateTemplatePlaceholders();
     migrateTemplateTables();
+    migrateTemplateListGroups();
 
     db.exec(SCHEMA);
 
@@ -422,7 +457,8 @@ function handleSave(message) {
             types,
             locks,
             placeholders,
-            tables
+            tables,
+            listGroups
         } = payload;
 
 
@@ -451,6 +487,9 @@ function handleSave(message) {
         const tablesJson =
             JSON.stringify(tables || {});
 
+        const listGroupsJson =
+            JSON.stringify(listGroups || {});
+
 
         const docxBuffer =
             Buffer.from(docx);
@@ -477,6 +516,7 @@ function handleSave(message) {
                         locks = @locks,
                         placeholders = @placeholders,
                         tables = @tables,
+                        list_groups = @list_groups,
                         updated_at = @updated_at
                     WHERE id = @id
                 `)
@@ -490,6 +530,7 @@ function handleSave(message) {
                     locks: locksJson,
                     placeholders: placeholdersJson,
                     tables: tablesJson,
+                    list_groups: listGroupsJson,
                     updated_at: new Date().toISOString()
                 });
 
@@ -525,6 +566,7 @@ function handleSave(message) {
                         locks,
                         placeholders,
                         tables,
+                        list_groups,
                         created_at,
                         updated_at
                     )
@@ -537,6 +579,7 @@ function handleSave(message) {
                         @locks,
                         @placeholders,
                         @tables,
+                        @list_groups,
                         @created_at,
                         @updated_at
                     )
@@ -550,6 +593,7 @@ function handleSave(message) {
                     locks: locksJson,
                     placeholders: placeholdersJson,
                     tables: tablesJson,
+                    list_groups: listGroupsJson,
                     created_at: now,
                     updated_at: now
                 });
@@ -614,6 +658,7 @@ function handleList(message) {
                     locks,
                     placeholders,
                     tables,
+                    list_groups,
                     created_at,
                     updated_at
                 FROM templates
@@ -632,6 +677,7 @@ function handleList(message) {
                 locks: JSON.parse(row.locks || "{}"),
                 placeholders: JSON.parse(row.placeholders || "{}"),
                 tables: JSON.parse(row.tables || "{}"),
+                list_groups: JSON.parse(row.list_groups || "{}"),
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
@@ -687,6 +733,7 @@ function handleGet(message) {
                     locks,
                     placeholders,
                     tables,
+                    list_groups,
                     created_at,
                     updated_at
                 FROM templates
@@ -733,6 +780,9 @@ function handleGet(message) {
 
             tables:
                 JSON.parse(row.tables || "{}"),
+
+            list_groups:
+                JSON.parse(row.list_groups || "{}"),
 
             created_at:
                 row.created_at,

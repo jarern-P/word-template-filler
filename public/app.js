@@ -817,6 +817,42 @@
             return;
         }
 
+        // ── ช่องกรอกใน list ของหน้ารายงาน (type = List) ──
+        // เก็บค่าของ field นั้น (list ที่อยู่กลุ่มเดียวกันแชร์เฉพาะจำนวนแถว)
+        if (target.dataset.listInput !== undefined) {
+
+            const report =
+                getComponent(DEFAULT_PAGE);
+
+            if (report.syncListInput) {
+
+                report.syncListInput(
+                    target.dataset.listInput,
+                    Number(target.dataset.listRow),
+                    target.value
+                );
+            }
+
+            return;
+        }
+
+        // ── ชื่อกลุ่ม (Group) ของ type List (หน้า Template Configuration) ──
+        if (target.dataset.listGroup !== undefined) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setListGroup) {
+
+                config.setListGroup(
+                    target.dataset.listGroup,
+                    target.value
+                );
+            }
+
+            return;
+        }
+
         if (target.dataset.field) {
 
             // ช่อง currency แสดงรูปแบบตามโหมด (comma / ตัวหนังสือ)
@@ -2318,6 +2354,7 @@
     }
 
     // รายการของหน้ารายงาน (type = List) — หลายข้อในตัวแปรเดียว
+    // (list ที่ใช้ชื่อกลุ่มเดียวกันจะได้แถวชุดเดียวกันจากหน้า)
     function collectLists() {
 
         const component =
@@ -3358,6 +3395,12 @@
                     tables:
                         config.getTableSchemas
                             ? config.getTableSchemas(types)
+                            : {},
+
+                    // ชื่อกลุ่ม (Group) ของ field ที่เป็น type List
+                    listGroups:
+                        config.getListGroups
+                            ? config.getListGroups(types)
                             : {}
 
                 });
@@ -3531,6 +3574,13 @@
             if (config.setTableSchemas) {
                 config.setTableSchemas(
                     record.tables
+                );
+            }
+
+            // คืนชื่อกลุ่ม (Group) ของ type List ที่บันทึกไว้ใน template
+            if (config.setListGroups) {
+                config.setListGroups(
+                    record.list_groups
                 );
             }
 
@@ -3809,7 +3859,10 @@
                     record.placeholders || {},
 
                 tables:
-                    record.tables || {}
+                    record.tables || {},
+
+                listGroups:
+                    record.list_groups || {}
             });
 
             setDbStatus(
@@ -3903,11 +3956,23 @@
             );
         }
 
+        // ส่ง type ที่เก็บไว้ใน state ไปด้วย — ตอนนี้ #form อาจเป็นฟอร์มของหน้า
+        // รายงาน (ไม่ใช่ dropdown type ของหน้า config) ถ้าไม่ส่งจะอ่าน type ผิดหน้า
         if (config.getTableSchemas && config.setTableSchemas) {
 
             config.setTableSchemas(
                 keepFieldsInConfig(
-                    config.getTableSchemas(),
+                    config.getTableSchemas(kept),
+                    fields
+                )
+            );
+        }
+
+        if (config.getListGroups && config.setListGroups) {
+
+            config.setListGroups(
+                keepFieldsInConfig(
+                    config.getListGroups(kept),
                     fields
                 )
             );
@@ -3915,7 +3980,7 @@
     }
 
     // ──────────────────────────────────────────────────────────────
-    // ค่าตั้งของ field (type / ล็อกตำแหน่ง / placeholder) — เมนูคลิกขวา
+    // ค่าตั้งของ field (type / ล็อกตำแหน่ง / placeholder / กลุ่ม) — เมนูคลิกขวา
     // ในหน้าจัดตำแหน่ง
     //
     // แก้ค่าเดียวกันกับที่หน้า "ตั้งค่าแม่แบบ" แก้ (record.types / locks /
@@ -3925,17 +3990,26 @@
 
     function fieldConfigOf(record, field) {
 
+        const type =
+            (record.types && record.types[field]) ||
+            scope.FieldTypes.defaultValue;
+
         return {
 
             type:
-                (record.types && record.types[field]) ||
-                scope.FieldTypes.defaultValue,
+                type,
 
             lock:
                 !!(record.locks && record.locks[field]),
 
             placeholder:
-                (record.placeholders && record.placeholders[field]) || ''
+                (record.placeholders && record.placeholders[field]) || '',
+
+            // ชื่อกลุ่ม (Group) ใช้กับ type List เท่านั้น — ว่าง = ไม่ใช้กลุ่ม
+            listGroup:
+                type === 'list'
+                    ? ((record.list_groups && record.list_groups[field]) || '')
+                    : ''
         };
     }
 
@@ -3956,6 +4030,9 @@
 
         const tables =
             Object.assign({}, record.tables);
+
+        const listGroups =
+            Object.assign({}, record.list_groups);
 
         // ค่า type ที่ไม่รู้จักกลับไปเป็นค่าเริ่มต้น (เหมือน dropdown ของหน้าแก้ไข)
         const type =
@@ -3996,6 +4073,17 @@
             delete tables[field];
         }
 
+        // ชื่อกลุ่ม (Group) เก็บเฉพาะ field ที่ยังเป็น List
+        // (แก้ที่หน้า "ตั้งค่าแม่แบบ" หรือเมนูคลิกขวาในหน้าจัดตำแหน่งก็ได้)
+        const listGroup =
+            String((values && values.listGroup) || '').trim();
+
+        if (type === 'list' && listGroup !== '') {
+            listGroups[field] = listGroup;
+        } else {
+            delete listGroups[field];
+        }
+
         await ensureDb();
 
         await scope.Db.save({
@@ -4025,7 +4113,10 @@
                 placeholders,
 
             tables:
-                tables
+                tables,
+
+            listGroups:
+                listGroups
         });
 
         // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
@@ -4033,6 +4124,7 @@
         record.locks = locks;
         record.placeholders = placeholders;
         record.tables = tables;
+        record.list_groups = listGroups;
 
         // หน้า "ตั้งค่าแม่แบบ" ที่เปิดแม่แบบนี้อยู่ต้องตรงกันด้วย
         if (
@@ -4057,6 +4149,10 @@
 
             if (config.setTableSchemas) {
                 config.setTableSchemas(tables);
+            }
+
+            if (config.setListGroups) {
+                config.setListGroups(listGroups);
             }
 
             fillForm(CONFIG_PAGE);
@@ -4317,6 +4413,9 @@
         const tables =
             keepFieldsInConfig(record.tables, fields);
 
+        const listGroups =
+            keepFieldsInConfig(record.list_groups, fields);
+
         await ensureDb();
 
         await scope.Db.save({
@@ -4346,7 +4445,10 @@
                 placeholders,
 
             tables:
-                tables
+                tables,
+
+            listGroups:
+                listGroups
         });
 
         // record ในหน่วยความจำต้องตรงกับไฟล์ใหม่
@@ -4358,6 +4460,7 @@
         record.locks = locks;
         record.placeholders = placeholders;
         record.tables = tables;
+        record.list_groups = listGroups;
 
         // ถ้าแม่แบบนี้กำลังเปิดแก้ไขอยู่ในหน้า "ตั้งค่าแม่แบบ"
         // state ในหน่วยความจำต้องตรงกับไฟล์ใหม่ด้วย
@@ -4422,6 +4525,9 @@
         const tables =
             keepFieldsInConfig(record.tables, fields);
 
+        const listGroups =
+            keepFieldsInConfig(record.list_groups, fields);
+
         await ensureDb();
 
         await scope.Db.save({
@@ -4451,7 +4557,10 @@
                 placeholders,
 
             tables:
-                tables
+                tables,
+
+            listGroups:
+                listGroups
         });
 
         // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
@@ -4462,6 +4571,7 @@
         record.locks = locks;
         record.placeholders = placeholders;
         record.tables = tables;
+        record.list_groups = listGroups;
 
         // ถ้าแม่แบบนี้กำลังเปิดแก้ไขอยู่ในหน้า "ตั้งค่าแม่แบบ"
         // state ในหน่วยความจำต้องตรงกับไฟล์ใหม่ด้วย
@@ -6524,6 +6634,29 @@
                     config.getPlaceholders
                 )
                     ? config.getPlaceholders()
+                    : {};
+            },
+
+        // ชื่อกลุ่ม (Group) ของ type List
+        // list ที่ใช้ชื่อกลุ่มเดียวกันจะแสดงเป็นแถวเดียวกันที่หน้ารายงาน
+        getListGroups:
+            function () {
+
+                const config =
+                    getComponent(
+                        CONFIG_PAGE
+                    );
+
+                return (
+                    config &&
+                    config.getListGroups
+                )
+                    // ต้องส่ง type จาก state ของหน้า config ไปด้วย
+                    // (ตอนอยู่หน้ารายงาน #form เป็นฟอร์มของหน้ารายงาน
+                    //  อ่าน type จาก DOM จึงได้ค่าว่าง)
+                    ? config.getListGroups(
+                        getPageValues(CONFIG_PAGE)
+                    )
                     : {};
             },
 

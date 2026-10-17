@@ -2416,6 +2416,59 @@ body.table-ratio-dragging .table-ratio-handle {
     font-size: 14px;
 }
 
+/* list ที่อยู่กลุ่มเดียวกัน: 1 แถวมีหลายช่อง (คอลัมน์ละ field) */
+
+.list-group-field .list-row input.list-input {
+    min-width: 100px;
+}
+
+/* list ที่อยู่ group เดียวกัน — บอกให้เห็นว่าจะได้แถวชุดเดียวกัน */
+.list-field .list-group-badge {
+    margin: 0;
+    color: var(--pink-700);
+}
+
+/* ── type List: ช่องชื่อกลุ่ม (Group) (หน้า Template Configuration) ── */
+
+.list-group-config {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+/* ซ่อนเมื่อ type ไม่ใช่ List — ต้องมีกฎนี้เอง เพราะ `display: flex`
+   ข้างบนทำให้ attribute hidden ถูกทับ (ช่องกลุ่มจะโผล่ทุก type) */
+.list-group-config[hidden] {
+    display: none;
+}
+
+.list-group-config label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+}
+
+.list-group-config input.list-group-input {
+    padding: 9px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line-input);
+    border-radius: var(--radius-sm);
+}
+
+.list-group-config input.list-group-input:focus {
+    outline: none;
+    border-color: var(--pink-400);
+    box-shadow: var(--focus-ring);
+}
+
+.list-group-hint {
+    font-size: 12.5px;
+}
+
 /* ── แถบจัดรูปแบบช่องของตาราง (หน้ารายงาน) ── */
 
 .table-formatbar {

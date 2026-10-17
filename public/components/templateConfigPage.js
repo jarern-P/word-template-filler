@@ -132,6 +132,74 @@
         return box;
     }
 
+    // ── ชื่อกลุ่ม (Group) ของ type List ──
+    //
+    // list หลายตัวที่ใช้ชื่อกลุ่มเดียวกัน = แสดงเป็นแถวเดียวกันที่หน้ารายงาน
+    // (คอลัมน์ละ field, แชร์จำนวนแถว — เพิ่ม/ลบแถวที่ตัวไหนก็มีผลกับทุกตัว)
+    let listGroupState = {};
+
+    function listGroupInputOf(field) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-list-group]').forEach(function (input) {
+            if (input.dataset.listGroup === field) found = input;
+        });
+
+        return found;
+    }
+
+    // ช่องชื่อกลุ่ม — แสดงเมื่อเลือก type เป็น List
+    function createListGroupInput(field) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'list-group-config';
+        wrapper.dataset.listGroupConfig = field;
+        wrapper.hidden = true;
+
+        const label = document.createElement('label');
+        label.textContent = 'กลุ่ม (Group)';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'list-group-input';
+        input.dataset.listGroup = field;
+        input.placeholder = 'เว้นว่าง = ไม่ใช้กลุ่ม';
+        input.autocomplete = 'off';
+
+        const hint = document.createElement('span');
+        hint.className = 'hint list-group-hint';
+        hint.textContent =
+            'list ที่ใช้ชื่อกลุ่มเดียวกันจะแสดงเป็นแถวเดียวกันในหน้ารายงาน ' +
+            '(คอลัมน์ละ field) — เพิ่ม/ลบแถวที่ตัวไหนก็มีผลกับทุกตัวในกลุ่ม';
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(input);
+        wrapper.appendChild(hint);
+        return wrapper;
+    }
+
+    function renderListGroup(field) {
+        const input = listGroupInputOf(field);
+        if (!input) return;
+
+        const control = scope.FormPage.findControl(field);
+        const isList = !!control && control.value === 'list';
+
+        if (input.parentNode) input.parentNode.hidden = !isList;
+        input.value = listGroupState[field] || '';
+    }
+
+    function renderAllListGroups() {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        form.querySelectorAll('[data-list-group-config]').forEach(function (node) {
+            renderListGroup(node.dataset.listGroupConfig);
+        });
+    }
+
     // คำอธิบาย type list — วาง {{field}} ที่ไหนก็ได้เหมือน field ข้อความ
     function createListHint(field) {
         const hint = document.createElement('p');
@@ -196,6 +264,7 @@
         wrapper.appendChild(createPlaceholderInput(field));
         wrapper.appendChild(createTableConfig(field));
         wrapper.appendChild(createListHint(field));
+        wrapper.appendChild(createListGroupInput(field));
         return wrapper;
     }
 
@@ -831,6 +900,8 @@
             });
         }
 
+        renderListGroup(field);
+
         // ช่อง placeholder ไม่ใช้กับตาราง (ชื่อคอลัมน์บอกความหมายอยู่แล้ว)
         const form = document.getElementById('form');
 
@@ -903,6 +974,7 @@
         renderLockState();
         renderPlaceholderState();
         renderAllTableConfigs();
+        renderAllListGroups();
     };
 
     const baseApplyValues = page.applyValues;
@@ -912,6 +984,7 @@
     page.applyValues = function (values) {
         baseApplyValues.call(page, values);
         renderAllTableConfigs();
+        renderAllListGroups();
     };
 
     // ── โครงตาราง: ให้ app.js เรียกเมื่อผู้ใช้แก้ค่าที่หน้า Template Configuration ──
@@ -1063,6 +1136,45 @@
     };
 
     // คืนค่าที่บันทึกไว้กลับมา (ตอนโหลด template) — null/{} = ไม่มี placeholder
+    // ── ชื่อกลุ่ม (Group) ของ type List — บันทึกพร้อม template ──
+
+    // เก็บชื่อกลุ่มของ field (เว้นว่าง = ลบออก)
+    page.setListGroup = function (field, value) {
+        const group = String(value == null ? '' : value).trim();
+
+        if (group === '') delete listGroupState[field];
+        else listGroupState[field] = group;
+    };
+
+    // ชื่อกลุ่มของ type List (เฉพาะ field ที่ยังเป็น List อยู่)
+    page.getListGroups = function (types) {
+        const byType = types || page.getValues();
+        const groups = {};
+
+        Object.keys(listGroupState).forEach(function (field) {
+            if (byType[field] === 'list' && listGroupState[field]) {
+                groups[field] = listGroupState[field];
+            }
+        });
+
+        return groups;
+    };
+
+    // คืนชื่อกลุ่มที่บันทึกไว้กลับมา (ตอนโหลด template)
+    page.setListGroups = function (groups) {
+        listGroupState = {};
+
+        if (groups && typeof groups === 'object') {
+            Object.keys(groups).forEach(function (field) {
+                const value = String(groups[field] == null ? '' : groups[field]).trim();
+
+                if (value !== '') listGroupState[field] = value;
+            });
+        }
+
+        renderAllListGroups();
+    };
+
     page.setPlaceholders = function (placeholders) {
         placeholderState = {};
 
