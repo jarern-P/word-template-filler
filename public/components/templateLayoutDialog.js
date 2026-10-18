@@ -395,6 +395,7 @@ async function renderDocx(bytes) {
 
             // ฟอนต์ของเอกสารโหลดครบ = ผลวัดความสูงบรรทัดที่แคชไว้ใช้ไม่ได้แล้ว
             naturalLineCache.clear();
+            naturalRatioCache.clear();
 
             fixRenderedLayout();
         });
@@ -405,6 +406,9 @@ async function renderDocx(bytes) {
 
     // จับคู่ paragraph + เตรียม contentEditable
     prepareEditing();
+
+    // ระยะห่างระหว่างบรรทัดตาม w:spacing ของไฟล์ต้นฉบับ
+    applyLineSpacing();
 
     // ความสูงบรรทัดของย่อหน้าว่าง ให้เท่าหนึ่งบรรทัดของ Word
     // (ต้องทำก่อนจัดตำแหน่งวัตถุลอย — ตำแหน่งแนวตั้งของวัตถุอ้างจากบรรทัด)
@@ -420,6 +424,9 @@ async function renderDocx(bytes) {
     // ย่อหน้าแบบกระจายตัวอักษร (thaiDistribute) — ต้องทำหลังจัดความกว้างแท็บ
     // เพราะการยืดเปลี่ยนตำแหน่งของทุกอย่างในบรรทัด
     applyThaiDistribute();
+
+    // ชดเชยระยะบรรทัดหลังห่อ span ครบแล้ว (แท็บ/กระจายตัวอักษรเพิ่ม span ซ้อน)
+    refineLineSpacing();
 
     // เครื่องหมายจัดรูปแบบ (ถ้าเปิดสวิตช์ค้างไว้) — ต้องทำก่อนไฮไลต์ field
     // เพราะการห่อช่องว่างด้วย span เปลี่ยน TextNode ที่ Range ของไฮไลต์อ้างถึง
@@ -770,23 +777,32 @@ async function renderDocx(bytes) {
         return null;
     }
 
-    function paragraphMarkPoint(paragraph) {
+    // scale = zoom ของหน้า (rect เป็น px บนจอ ส่วนระยะเยื้อง/line-height เป็น CSS px)
+    function paragraphMarkPoint(paragraph, scale) {
         const rect = lastCharRect(paragraph);
 
         if (rect) {
             return { x: rect.right + 2, y: (rect.top + rect.bottom) / 2 };
         }
 
-        // ย่อหน้าว่าง — ใช้ตำแหน่งเริ่มบรรทัดตามกล่องของย่อหน้า
+        // ย่อหน้าว่าง — ไม่มีบรรทัดให้อ้าง ใช้กล่องของย่อหน้าเอง
+        // (สูงเท่าระยะบรรทัดที่ตั้งไว้) แล้ววางตามการจัดแนวของย่อหน้า
+        // เหมือนที่ Word วางเครื่องหมายย่อหน้าของบรรทัดว่าง
+        const zoom = scale > 0 ? scale : 1;
         const box = paragraph.getBoundingClientRect();
         const style = window.getComputedStyle(paragraph);
-        const indent = parseFloat(style.textIndent) || 0;
-        const lineHeight = parseFloat(style.lineHeight) || box.height || 16;
+        const indent = (parseFloat(style.textIndent) || 0) * zoom;
+        const align = style.textAlign;
 
-        return {
-            x: box.left + indent + 1,
-            y: box.top + lineHeight / 2
-        };
+        let x = box.left + indent + 1;
+
+        if (align === 'center') {
+            x = box.left + box.width / 2;
+        } else if (align === 'right' || align === 'end') {
+            x = box.right - indent - 1;
+        }
+
+        return { x: x, y: (box.top + box.bottom) / 2 };
     }
 
     function drawSpaceMarks(overlay, paragraph) {
@@ -964,28 +980,30 @@ async function renderDocx(bytes) {
         };
     }
 
-    function cellMarkPoint(cell) {
+    function cellMarkPoint(cell, scale) {
+        const zoom = scale > 0 ? scale : 1;
         const box = cell.getBoundingClientRect();
         const style = window.getComputedStyle(cell);
-        const paddingLeft = parseFloat(style.paddingLeft) || 0;
-        const paddingTop = parseFloat(style.paddingTop) || 0;
-        const lineHeight = parseFloat(style.lineHeight) || 16;
+        const paddingLeft = (parseFloat(style.paddingLeft) || 0) * zoom;
+        const paddingTop = (parseFloat(style.paddingTop) || 0) * zoom;
+        const lineHeight = parseFloat(style.lineHeight)
+            || (parseFloat(style.fontSize) || 16) * 1.2;
 
         return {
             x: box.left + paddingLeft + 1,
-            y: box.top + paddingTop + lineHeight / 2
+            y: box.top + paddingTop + lineHeight * zoom / 2
         };
     }
 
-    function drawTableMarks(overlays, tableMarks) {
+    function drawTableMarks(overlays, tableMarks, scale) {
         tableMarks.cellMarks.forEach(function (mark) {
             const overlay = overlayForNode(mark.paragraph || mark.cell, overlays);
 
             if (!overlay) return;
 
             const point = mark.paragraph
-                ? paragraphMarkPoint(mark.paragraph)
-                : cellMarkPoint(mark.cell);
+                ? paragraphMarkPoint(mark.paragraph, scale)
+                : cellMarkPoint(mark.cell, scale);
 
             drawMark(
                 overlay,
@@ -1039,7 +1057,7 @@ async function renderDocx(bytes) {
 
             if (tableMarks.skipParagraphs.has(paragraph)) return;
 
-            const point = paragraphMarkPoint(paragraph);
+            const point = paragraphMarkPoint(paragraph, scale);
 
             drawMark(
                 overlay,
@@ -1056,7 +1074,7 @@ async function renderDocx(bytes) {
             drawLineBreakMarks(overlay, section);
         });
 
-        drawTableMarks(overlays, tableMarks);
+        drawTableMarks(overlays, tableMarks, scale);
     }
 
     // ข้อความที่ซ่อน (w:vanish) — แสดงแบบ position:absolute ไม่กินพื้นที่ใน layout
@@ -1244,14 +1262,392 @@ async function renderDocx(bytes) {
         return height;
     }
 
+    // สัดส่วน "หนึ่งบรรทัดตามธรรมชาติ" ต่อขนาดฟอนต์ (เช่น TH SarabunIT๙ = 1.125)
+    // วัดที่ขนาดใหญ่แล้วหารกลับ เพื่อลดผลการปัดเศษ px ของเบราว์เซอร์
+    const naturalRatioCache = new Map();
+
+    function naturalLineRatio(font) {
+        const key = String(font || '');
+
+        if (naturalRatioCache.has(key)) return naturalRatioCache.get(key);
+
+        const probe = document.createElement('div');
+
+        probe.style.cssText = 'position:absolute;visibility:hidden;left:-99999px;top:0;' +
+            'white-space:pre;line-height:normal;margin:0;padding:0;border:0;' +
+            'font-size:200px;font-family:' +
+            (font ? JSON.stringify(font) + ',' : '') + 'sans-serif;';
+        probe.textContent = 'x';
+        document.body.appendChild(probe);
+
+        const height = probe.getBoundingClientRect().height;
+
+        document.body.removeChild(probe);
+
+        const ratio = height > 0 ? height / 200 : 0;
+
+        naturalRatioCache.set(key, ratio);
+
+        return ratio;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ระยะห่างระหว่างบรรทัด (w:spacing)
+    //
+    // Word คิดระยะบรรทัดจาก "หนึ่งบรรทัดธรรมชาติ" ของฟอนต์ ไม่ใช่ขนาดตัวอักษร:
+    //   auto     w:line = 1/240 ของหนึ่งบรรทัด (240 = เดี่ยว, 360 = 1.5)
+    //   atLeast  อย่างน้อย w:line/20 pt (แต่ไม่น้อยกว่าหนึ่งบรรทัดธรรมชาติ)
+    //   exact    เท่ากับ w:line/20 pt เสมอ
+    //
+    // docx-preview แปลง auto เป็น line-height: 1.08 (คูณขนาดตัวอักษร) ซึ่งเตี้ยกว่า
+    // ที่ Word แสดงจริง (ฟอนต์ไทยหนึ่งบรรทัดสูง ~1.1–1.4 เท่าของขนาด) และแปลง
+    // atLeast เป็น calc(100% + Xpt) ซึ่งสูงเกิน — ที่นี่จึงคำนวณเป็น px เอง
+    // โดยใช้สัดส่วนบรรทัดธรรมชาติที่วัดจากเบราว์เซอร์ (ตรงกับ Word สำหรับ
+    // ฟอนต์ที่ใช้ในแม่แบบราชการ) แล้วตั้ง line-height ของย่อหน้า
+    // ──────────────────────────────────────────────────────────────
+
+    const PT_TO_PX = 4 / 3;
+
+    // อ่าน w:spacing เฉพาะที่มี w:line (ค่า line เป็น 1/240 บรรทัด หรือ 1/20 pt)
+    function readLineSpacing(pPr) {
+        const spacing = pPr ? elementChild(pPr, 'spacing') : null;
+
+        if (!spacing) return null;
+
+        const line = Number(wAttr(spacing, 'line'));
+
+        if (!(line > 0)) return null;
+
+        // ไม่ระบุ lineRule = auto (ค่าเริ่มต้นของ OOXML) — ไม่ใช่ exact
+        return { line: line, rule: wAttr(spacing, 'lineRule') || 'auto' };
+    }
+
+    // ระยะบรรทัดที่มีผลกับย่อหน้า: ย่อหน้า → style (ตาม w:basedOn) → docDefaults
+    function paragraphLineSpacing(xmlParagraph, settings) {
+        const defaults = (settings && settings.defaults) || {};
+        const styles = settings && settings.styles;
+
+        if (!xmlParagraph) return defaults.lineSpacing || null;
+
+        const pPr = elementChild(xmlParagraph, 'pPr');
+        const direct = readLineSpacing(pPr);
+
+        if (direct) return direct;
+
+        // attribute ของ w:spacing สืบทอดทีละตัว — w:spacing ที่มีแต่ w:after
+        // ไม่ได้ล้าง w:line ที่มาจาก style
+        const pStyle = pPr ? elementChild(pPr, 'pStyle') : null;
+        const own = styleLineSpacing(pStyle ? wAttr(pStyle, 'val') : null, styles);
+
+        if (own) return own;
+
+        // ไม่มี pStyle = ใช้ style ย่อหน้าเริ่มต้นของเอกสาร (ปกติคือ Normal)
+        // ซึ่งมักกำหนด line="240" เอง — ต้องอ่านก่อน docDefaults
+        const inherited = styleLineSpacing(settings && settings.defaultParagraphStyle, styles);
+
+        if (inherited) return inherited;
+
+        return defaults.lineSpacing || { line: 240, rule: 'auto' };
+    }
+
+    // ระยะบรรทัดจาก style หนึ่ง (ตามสาย w:basedOn) — คืน null ถ้าไม่มี
+    function styleLineSpacing(id, styles) {
+        let depth = 0;
+
+        while (id && styles && typeof styles.get === 'function' && depth++ < 10) {
+            const style = styles.get(id);
+
+            if (!style) break;
+            if (style.lineSpacing) return style.lineSpacing;
+
+            id = style.basedOn;
+        }
+
+        return null;
+    }
+
+    // ความสูงบรรทัดจริง (px) จาก w:spacing + หนึ่งบรรทัดธรรมชาติของฟอนต์
+    function lineSpacingHeight(line, singlePx) {
+        const exact = line.line / 20 * PT_TO_PX;
+
+        switch (line.rule) {
+            case 'exact':
+                return exact;
+            case 'atLeast':
+                return Math.max(singlePx, exact);
+            default:
+                return singlePx * line.line / 240;
+        }
+    }
+
+    // ชื่อฟอนต์แรกจาก computed font-family
+    function firstFontFamily(value) {
+        return String(value || '')
+            .split(',')[0]
+            .trim()
+            .replace(/^["']|["']$/g, '');
+    }
+
+    // ฟอนต์/ขนาดที่กำหนดความสูงบรรทัดของย่อหน้า — Word คิดจาก run ที่ "สูงที่สุด"
+    // (ขนาด × หนึ่งบรรทัดธรรมชาติของฟอนต์นั้น) ไม่ใช่แค่ขนาดตัวอักษรที่ใหญ่สุด:
+    // ฟอนต์ 16pt ต่างกันมีระยะบรรทัดธรรมชาติไม่เท่ากัน
+    function dominantRunFormat(node) {
+        let best = null;
+
+        function consider(size, font) {
+            if (!(size > 0)) return;
+
+            const height = (naturalLineRatio(font) || 0) * size;
+
+            if (best && height <= best.height + 0.01) return;
+
+            best = { size: size, font: font, height: height };
+        }
+
+        Array.from(node.querySelectorAll('span')).forEach(function (span) {
+            if (span.closest('p') !== node) return;
+
+            const style = window.getComputedStyle(span);
+
+            consider(parseFloat(style.fontSize) || 0, firstFontFamily(style.fontFamily));
+        });
+
+        if (!best) {
+            const style = window.getComputedStyle(node);
+
+            consider(parseFloat(style.fontSize) || 0, firstFontFamily(style.fontFamily));
+        }
+
+        return best || { size: 0, font: '', height: 0 };
+    }
+
+    // ฟอนต์/ขนาดที่มีผลกับความสูงบรรทัด = ระหว่าง run ที่สูงที่สุด กับ
+    // "เครื่องหมายย่อหน้า" (w:pPr/w:rPr) — Word ใช้เครื่องหมายย่อหน้าคิดความสูง
+    // ของบรรทัดสุดท้าย/บรรทัดว่างด้วย ย่อหน้าว่างจึงต้องได้ระยะเท่าย่อหน้าข้อความ
+    // ไม่ใช่ฟอนต์ที่สืบทอดมาจาก UI
+    function paragraphRunFormat(node, xmlParagraph, settings) {
+        const run = dominantRunFormat(node);
+        const mark = paragraphMarkFormat(xmlParagraph, settings);
+
+        if (!mark || !mark.size) return run;
+
+        const markFormat = {
+            size: mark.size * 2 / 3,
+            font: mark.font || run.font,
+            height: (naturalLineRatio(mark.font || run.font) || 0) * mark.size * 2 / 3
+        };
+
+        // ย่อหน้าว่างไม่มี run เลย — ฟอนต์ที่คำนวณได้เป็นฟอนต์ของ UI (สืบทอดมา)
+        // ไม่ใช่ฟอนต์ของเอกสาร Word ใช้เครื่องหมายย่อหน้าเป็นตัวกำหนดบรรทัด
+        if (!node.querySelector('span')) return markFormat;
+
+        return markFormat.height > run.height + 0.01 ? markFormat : run;
+    }
+
+    // ระยะบรรทัดเป้าหมาย + ฟอนต์/ขนาดของ strut
+    function paragraphLineTarget(node, xmlParagraph, settings) {
+        const line = paragraphLineSpacing(xmlParagraph, settings);
+
+        if (!line) return null;
+
+        const run = paragraphRunFormat(node, xmlParagraph, settings);
+        const ratio = naturalLineRatio(run.font);
+
+        if (!(run.size > 0) || !(ratio > 0)) return null;
+
+        return {
+            run: run,
+            height: lineSpacingHeight(line, ratio * run.size)
+        };
+    }
+
+    // zoom ของหน้าจอ — getBoundingClientRect คืน px จริงบนจอ (คูณ zoom แล้ว)
+    // ส่วนค่าที่คำนวณจากไฟล์ (line-height, ระยะบรรทัด) เป็น CSS px ยังไม่คูณ zoom
+    // การวัดระยะจริงมาเทียบจึงต้องหารด้วยค่านี้ก่อน
+    function layoutZoomScale() {
+        const wrapper = host ? host.querySelector('.docx-wrapper') : null;
+        const value = wrapper ? parseFloat(wrapper.style.zoom) : 0;
+
+        return value > 0 ? value : 1;
+    }
+
+    // ระยะบรรทัดที่วัดได้จริง (px) — ค่ากลางของระยะระหว่างบรรทัดในย่อหน้า
+    // (ค่ากลางกันบรรทัดที่มีฟอนต์ใหญ่กว่าปกติเพียงบรรทัดเดียว)
+    function linePitchStats(node) {
+        const lines = lineBoxes(directTextRects(node));
+
+        if (lines.length < 2) return null;
+
+        const pitches = [];
+
+        for (let i = 1; i < lines.length; i++) {
+            const pitch = lines[i].top - lines[i - 1].top;
+
+            if (pitch > 0) pitches.push(pitch);
+        }
+
+        if (!pitches.length) return null;
+
+        pitches.sort(function (a, b) {
+            return a - b;
+        });
+
+        return {
+            pitch: pitches[Math.floor(pitches.length / 2)]
+        };
+    }
+
+    // ตั้งระยะบรรทัดของทุกย่อหน้าตามไฟล์ต้นฉบับ (แสดงผลอย่างเดียว)
+    // — ตั้ง line-height ตามค่าที่คำนวณ ส่วนการชดเชยระยะที่เบราว์เซอร์
+    //   บวกเพิ่มเองทำใน refineLineSpacing (หลังห่อ span ครบแล้ว)
+    function applyLineSpacing() {
+        if (!host || !current || !current.pairs) return;
+
+        const settings = current.tabSettings || {};
+        const paragraphs = paragraphNodes();
+
+        if (!paragraphs.length) return;
+
+        current.pairs.forEach(function (pair, node) {
+            const xmlParagraph = paragraphs[pair.index];
+
+            if (!xmlParagraph) return;
+
+            const target = paragraphLineTarget(node, xmlParagraph, settings);
+
+            if (!target || !(target.height > 0)) return;
+
+            // strut ของย่อหน้าต้องเป็นฟอนต์/ขนาดเดียวกับ run ที่สูงสุด
+            // — ถ้าฟอนต์ต่างกัน (เช่น strut เป็นฟอนต์ของ UI) ascent/descent
+            //   ไม่ตรงกับ span เบราว์เซอร์จะดัน line box ให้สูงกว่า line-height
+            //   เองอีก ~2px ต่อบรรทัด ตารางจึงไม่ตรงแถว (ดูเลข 5 กับข้อความข้าง ๆ)
+            const size = target.run.size.toFixed(2) + 'px';
+
+            if (node.style.fontSize !== size) node.style.fontSize = size;
+
+            const family = target.run.font ? JSON.stringify(target.run.font) : '';
+
+            if (family && node.style.fontFamily !== family) {
+                node.style.fontFamily = family;
+            }
+
+            const value = target.height.toFixed(2) + 'px';
+
+            if (node.style.lineHeight !== value) node.style.lineHeight = value;
+        });
+    }
+
+    // ชดเชยระยะที่เบราว์เซอร์บวกเพิ่ม — เรียกหลังตกแต่ง span เสร็จแล้ว
+    // (แท็บ/กระจายตัวอักษรห่อ span ซ้อน ซึ่งทำให้ line box สูงกว่า line-height)
+    function refineLineSpacing() {
+        if (!host || !current || !current.pairs) return;
+
+        const settings = current.tabSettings || {};
+        const paragraphs = paragraphNodes();
+
+        if (!paragraphs.length) return;
+
+        const items = [];
+
+        current.pairs.forEach(function (pair, node) {
+            const xmlParagraph = paragraphs[pair.index];
+
+            if (!xmlParagraph) return;
+
+            const target = paragraphLineTarget(node, xmlParagraph, settings);
+
+            if (!target || !(target.height > 0)) return;
+
+            const currentHeight = parseFloat(node.style.lineHeight) || 0;
+
+            if (!(currentHeight > 0)) return;
+
+            items.push({ node: node, target: target.height, current: currentHeight });
+        });
+
+        if (!items.length) return;
+
+        // ระยะที่วัดได้เป็น px บนจอ (คูณ zoom) — แปลงกลับเป็น CSS px ก่อนเทียบ
+        const scale = layoutZoomScale();
+
+        items.forEach(function (item) {
+            item.height = item.current;
+            item.previousHeight = null;
+            item.lastMeasured = null;
+            item.done = false;
+        });
+
+        // แต่ละรอบ: วัดทุกย่อหน้า → ขยับ line-height ตามส่วนที่เกิน → วัดใหม่
+        // ทำซ้ำไม่เกิน 4 รอบ เพราะระยะที่เบราว์เซอร์บวกเพิ่มไม่ได้คงที่เป๊ะ
+        // (ปรับทีเดียวอาจเกิน/ขาด และการวัดควรทำหลัง layout นิ่งแล้วเท่านั้น)
+        for (let pass = 0; pass < 4; pass++) {
+            const measured = [];
+
+            items.forEach(function (item) {
+                if (item.done) return;
+
+                const stats = linePitchStats(item.node);
+
+                if (!stats) {
+                    item.done = true;
+                    return;
+                }
+
+                measured.push({ item: item, pitch: stats.pitch });
+            });
+
+            let changed = false;
+
+            measured.forEach(function (entry) {
+                const item = entry.item;
+                const residual = entry.pitch / scale - item.target;
+
+                // ตรงแล้ว (หรือต่างไม่ถึงครึ่งพิกเซล) = ไม่แตะ
+                if (Math.abs(residual) < 0.5) {
+                    item.done = true;
+                    return;
+                }
+
+                // ขยับแล้วระยะไม่เปลี่ยน = ติดพื้นของเบราว์เซอร์ (เช่น exact ที่เตี้ยมาก)
+                // คืนค่า line-height เดิม (ค่าตามไฟล์) ดีกว่าปล่อยให้เหลือค่าเล็กผิด ๆ
+                if (item.lastMeasured != null && Math.abs(entry.pitch - item.lastMeasured) < 0.05) {
+                    if (item.previousHeight != null) {
+                        item.node.style.lineHeight = item.previousHeight.toFixed(2) + 'px';
+                    }
+
+                    item.done = true;
+                    return;
+                }
+
+                const height = item.height - residual;
+
+                // อย่าลดจนเส้นบรรทัดยุบ (ค่า exact ที่เป็นไปไม่ได้)
+                if (!(height > 2)) {
+                    item.done = true;
+                    return;
+                }
+
+                item.previousHeight = item.height;
+                item.height = height;
+                item.lastMeasured = entry.pitch;
+                item.node.style.lineHeight = height.toFixed(2) + 'px';
+                changed = true;
+            });
+
+            if (!changed) break;
+        }
+    }
+
     // ฟอนต์/ขนาดของเครื่องหมายย่อหน้า (w:pPr/w:rPr) — สืบทอด style แล้ว docDefaults
     function paragraphMarkFormat(xmlParagraph, settings) {
         const defaults = (settings && settings.defaults) || {};
         const styles = settings && settings.styles;
         const target = { size: null, font: null };
 
+        // attribute ที่ย่อหน้ากำหนดเองชนะ style เสมอ (ไม่ใช่เอาค่ามากสุด)
+        // — readRPrFormat เลือก sz/szCs ที่มากกว่าของ "ชั้นเดียวกัน" ให้แล้ว
         function merge(format) {
-            if (format.size != null && (target.size == null || format.size > target.size)) {
+            if (target.size == null && format.size != null) {
                 target.size = format.size;
             }
 
@@ -1267,7 +1663,10 @@ async function renderDocx(bytes) {
         merge(readRPrFormat(pPr ? elementChild(pPr, 'rPr') : null));
 
         // 2) ที่สืบทอดจาก style (ตามสาย w:basedOn)
-        let id = pStyle ? wAttr(pStyle, 'val') : null;
+        // ไม่มี pStyle = ใช้ style ย่อหน้าเริ่มต้นของเอกสาร (ปกติคือ Normal)
+        let id = pStyle
+            ? wAttr(pStyle, 'val')
+            : (settings && settings.defaultParagraphStyle) || null;
         let depth = 0;
 
         while (id && styles && typeof styles.get === 'function' && depth++ < 10) {
@@ -1304,8 +1703,15 @@ async function renderDocx(bytes) {
 
             if (!mark.size) return;
 
-            // half-point → px (2/3)
-            const height = naturalLineHeight(mark.font, mark.size * 2 / 3);
+            const sizePx = mark.size * 2 / 3;
+            const line = paragraphLineSpacing(xmlParagraph, settings);
+
+            // Word ใช้ระยะบรรทัดกับ "เครื่องหมายย่อหน้า" ด้วย — ย่อหน้าว่าง
+            // จึงสูงเท่าระยะบรรทัดจริง (ไม่ใช่หนึ่งบรรทัดเดี่ยวเสมอ)
+            // exact = สูงตามค่าที่กำหนด แม้จะเตี้ยกว่าฟอนต์ก็ตาม (Word ตัดข้อความ)
+            const height = line
+                ? lineSpacingHeight(line, naturalLineRatio(mark.font) * sizePx)
+                : naturalLineHeight(mark.font, sizePx);
 
             if (!(height > 0)) return;
 
@@ -1433,25 +1839,38 @@ async function renderDocx(bytes) {
 
             const format = readRPrFormat(elementChild(style, 'rPr'));
 
+            const kind = wAttr(style, 'type');
+            const isDefault = wAttr(style, 'default');
+
             map.set(id, {
                 basedOn: basedOn ? wAttr(basedOn, 'val') : null,
                 stops: target.stops,
                 clears: target.clears,
                 size: format.size,
-                font: format.font
+                font: format.font,
+                lineSpacing: readLineSpacing(pPr),
+                type: kind || 'paragraph',
+                isDefault: isDefault === '1' || isDefault === 'true'
             });
         });
 
         return map;
     }
 
-    // word/styles.xml → ค่าเริ่มต้นของเอกสาร (<w:docDefaults><w:rPrDefault>)
+    // word/styles.xml → ค่าเริ่มต้นของเอกสาร (<w:docDefaults>)
+    // (ฟอนต์/ขนาดจาก rPrDefault + ระยะบรรทัดจาก pPrDefault)
     function parseStyleDefaults(xml) {
         const doc = xml ? parseXml(xml) : null;
         const node = doc ? doc.getElementsByTagNameNS(W_NS, 'docDefaults')[0] : null;
         const rPrDefault = node ? elementChild(node, 'rPrDefault') : null;
+        const pPrDefault = node ? elementChild(node, 'pPrDefault') : null;
+        const format = readRPrFormat(rPrDefault ? elementChild(rPrDefault, 'rPr') : null);
 
-        return readRPrFormat(rPrDefault ? elementChild(rPrDefault, 'rPr') : null);
+        format.lineSpacing = readLineSpacing(
+            pPrDefault ? elementChild(pPrDefault, 'pPr') : null
+        );
+
+        return format;
     }
 
     // อ่านค่าแท็บจากไฟล์ .docx ครั้งเดียวต่อการเปิด (ไม่มี JSZip = ใช้ค่ามาตรฐาน)
@@ -1479,6 +1898,13 @@ async function renderDocx(bytes) {
 
                 settings.styles = parseStyleTabs(stylesXml);
                 settings.defaults = parseStyleDefaults(stylesXml);
+
+                // style ย่อหน้าเริ่มต้น (w:style w:type="paragraph" w:default="1")
+                settings.styles.forEach(function (style, id) {
+                    if (style.isDefault && style.type === 'paragraph') {
+                        settings.defaultParagraphStyle = id;
+                    }
+                });
             }
         } catch (error) {
             console.warn('อ่านค่า tab stop จากไฟล์ไม่ได้ (ใช้ค่ามาตรฐานแทน)', error);
@@ -4220,8 +4646,15 @@ async function renderDocx(bytes) {
         // เพราะการยืดเปลี่ยนจุดตัดบรรทัด = ตำแหน่งของรูป/กล่องเปลี่ยนตาม
         applyThaiDistribute();
 
+        // ระยะบรรทัด (วัดฟอนต์ใหม่หลังโหลดครบ — ดู applyLineSpacing)
+        applyLineSpacing();
+
         // ความสูงบรรทัดของย่อหน้าว่าง (วัดใหม่หลังฟอนต์โหลดครบ — ดู naturalLineHeight)
         applyParagraphMarkHeights();
+
+        // ชดเชยระยะที่เบราว์เซอร์บวกเพิ่ม — ต้องเสร็จก่อนจัดตำแหน่งวัตถุลอย
+        // (การเปลี่ยน line-height ทำให้ข้อความขยับ ตำแหน่งรูป/กล่องต้องคำนวณตามทีหลัง)
+        refineLineSpacing();
 
         const anchors = shapeAnchors(current.xml);
         const containers = shapeContainers();
