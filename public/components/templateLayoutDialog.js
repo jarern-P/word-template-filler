@@ -155,6 +155,9 @@
         '            <button type="button" id="layoutUnderlineBtn" class="layout-fmt" title="ขีดเส้นใต้ (Ctrl+U)"><u>U</u></button>',
         '        </div>',
         '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldToggle" checked> ไฮไลต์ตัวแปรเป็นสีเหลือง</label>',
+        // แสดงเครื่องหมายจัดรูปแบบเหมือน Word (¶ ย่อหน้า / · ช่องว่าง / → แท็บ / ↵ ขึ้นบรรทัดใหม่)
+        // เป็นการแสดงผลอย่างเดียว — เครื่องหมายที่เพิ่มไม่มีผลต่อข้อความที่บันทึกกลับ
+        '        <label class="layout-toggle" title="แสดง/ซ่อนเครื่องหมาย ¶ (ย่อหน้า) · (ช่องว่าง) → (แท็บ) และ ↵ (ขึ้นบรรทัดใหม่)"><input type="checkbox" id="layoutMarksToggle"> แสดงสัญลักษณ์จัดรูปแบบ</label>',
         '        <label class="layout-toggle">ย่อ/ขยาย',
         '            <select id="layoutZoom">',
         '                <option value="fit" selected>พอดีความกว้าง</option>',
@@ -285,6 +288,10 @@
         const fieldToggle = el('layoutFieldToggle');
         if (fieldToggle) fieldToggle.checked = true;
 
+        // เครื่องหมายจัดรูปแบบเริ่มที่ "ซ่อน" (เหมือนเปิดเอกสารใน Word)
+        const marksToggle = el('layoutMarksToggle');
+        if (marksToggle) marksToggle.checked = false;
+
         // แถบค้นหาเริ่มที่ "ปิด" — เปิดด้วยปุ่มค้นหา หรือ Ctrl+F / Ctrl+H
         closeFindBar();
 
@@ -413,6 +420,10 @@ async function renderDocx(bytes) {
     // ย่อหน้าแบบกระจายตัวอักษร (thaiDistribute) — ต้องทำหลังจัดความกว้างแท็บ
     // เพราะการยืดเปลี่ยนตำแหน่งของทุกอย่างในบรรทัด
     applyThaiDistribute();
+
+    // เครื่องหมายจัดรูปแบบ (ถ้าเปิดสวิตช์ค้างไว้) — ต้องทำก่อนไฮไลต์ field
+    // เพราะการห่อช่องว่างด้วย span เปลี่ยน TextNode ที่ Range ของไฮไลต์อ้างถึง
+    setFormatMarks(isFormatMarksOn());
 
     // สำคัญ:
     // ต้องเรียกหลัง docx-preview render เสร็จและหลัง prepareEditing()
@@ -569,6 +580,188 @@ async function renderDocx(bytes) {
                     ') — แก้จากที่นี่ไม่ได้'
                 : 'แท็บ (ระยะจัดแนวของเอกสาร) — แก้จากที่นี่ไม่ได้';
         });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // แสดง/ซ่อนเครื่องหมายจัดรูปแบบ (เหมือนปุ่ม ¶ ของ Word)
+    //
+    //   ¶  ท้ายย่อหน้า      — marker ว่างท้ายย่อหน้า + CSS ::before (กว้าง 0)
+    //   ·  ช่องว่าง         — ห่ออักขระ " " ด้วย span แล้ววาดจุดด้วย ::before
+    //   →  แท็บ             — วาดทับ span.layout-tab ด้วย ::before
+    //   ↵  ขึ้นบรรทัดใหม่   — marker ว่างหน้า <br>
+    //
+    // เครื่องหมายทั้งหมดเป็นการแสดงผลอย่างเดียว:
+    // - ช่องว่างยังเป็นอักขระ " " จริงใน span → renderedText() อ่านข้อความเดิม
+    //   และตอนบันทึกไม่เห็นเป็นการแก้ไข
+    // - marker ของ ↵ / ¶ มี data-layout-mark="1" → ถูกข้ามตอนอ่านข้อความ/รูปแบบ/ค้นหา
+    // - ตัวอักษรของเครื่องหมายทุกตัววาดด้วย CSS ไม่มีข้อความใน DOM
+    // จึงกดบันทึกขณะเปิดเครื่องหมายอยู่ได้โดยไม่ทำให้ไฟล์เปลี่ยน
+    // ──────────────────────────────────────────────────────────────
+
+    function isFormatMarksOn() {
+        const toggle = el('layoutMarksToggle');
+
+        return !!(toggle && toggle.checked);
+    }
+
+    // ลบเครื่องหมายที่เพิ่มไว้ใน DOM (ไม่แตะข้อความอื่น)
+    function removeFormatMarks() {
+        if (!host) return;
+
+        // ช่องว่าง — คืนกลับเป็น TextNode ธรรมดา (คงข้อความที่อาจถูกแก้ไว้)
+        host.querySelectorAll('span[data-layout-space="1"]').forEach(function (span) {
+            const parent = span.parentNode;
+
+            if (!parent) return;
+
+            parent.replaceChild(document.createTextNode(span.textContent || ''), span);
+
+            // รวม TextNode ที่แตกออกมาตอนห่อ กลับเป็นก้อนเดียว
+            if (parent.normalize) parent.normalize();
+        });
+
+        // ขึ้นบรรทัดใหม่ / ท้ายย่อหน้า — ลบ marker ทิ้ง
+        host.querySelectorAll('span[data-layout-break="1"], span[data-layout-para-mark="1"]')
+            .forEach(function (span) {
+                if (span.parentNode) span.parentNode.removeChild(span);
+            });
+    }
+
+    // ห่อช่องว่างทีละตัวด้วย span (จุดถูกวาดด้วย CSS — ไม่เพิ่มตัวอักษรลงในข้อความ)
+    function wrapSpaceCharacters(node) {
+        const text = node.nodeValue || '';
+        const fragment = document.createDocumentFragment();
+        let start = 0;
+        let changed = false;
+
+        for (let i = 0; i < text.length; i++) {
+            const char = text.charAt(i);
+
+            if (char !== ' ' && char !== '\u00A0') continue;
+
+            changed = true;
+
+            if (i > start) {
+                fragment.appendChild(document.createTextNode(text.slice(start, i)));
+            }
+
+            const span = document.createElement('span');
+
+            span.className = 'layout-fmt-space' +
+                (char === '\u00A0' ? ' layout-fmt-space-nb' : '');
+            span.dataset.layoutSpace = '1';
+
+            // docx-preview ตั้งฟอนต์เริ่มต้นให้ span ทุกตัว (`.docx span { ... }`)
+            // ถ้าไม่บอกให้สืบทอด ความกว้างของช่องว่างจะเปลี่ยนแล้วข้อความขยับทั้งบรรทัด
+            span.style.font = 'inherit';
+            span.textContent = char;
+
+            fragment.appendChild(span);
+            start = i + 1;
+        }
+
+        if (!changed || !node.parentNode) return;
+
+        if (start < text.length) {
+            fragment.appendChild(document.createTextNode(text.slice(start)));
+        }
+
+        node.parentNode.replaceChild(fragment, node);
+    }
+
+    // ¶ ท้ายย่อหน้า — marker กว้าง 0 ต่อท้ายเนื้อหา (ลูกศร/สัญลักษณ์วาดลอย)
+    // ถ้าใช้ ::after ของ <p> โดยตรง ตัวอักษร ¶ จะกินความกว้างและดันข้อความ
+    // ตัดบรรทัดใหม่ = เอกสารเลื่อนทั้งหน้า
+    function markParagraphEnds() {
+        if (!host) return;
+
+        bodyParagraphs().forEach(function (paragraph) {
+            const marker = document.createElement('span');
+
+            marker.className = 'layout-fmt-para';
+            marker.dataset.layoutParaMark = '1';
+            marker.dataset.layoutMark = '1';
+            marker.contentEditable = 'false';
+            marker.setAttribute('aria-hidden', 'true');
+
+            paragraph.appendChild(marker);
+        });
+    }
+
+    function markSpaces() {
+        if (!host) return;
+
+        bodyParagraphs().forEach(function (paragraph) {
+            const walker = document.createTreeWalker(
+                paragraph,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            const nodes = [];
+            let node;
+
+            // เก็บก่อนแล้วค่อยแก้ DOM — ระหว่างเดินห้ามแทนที่ node
+            while ((node = walker.nextNode()) !== null) {
+                if (!isDirectParagraphTextNode(node, paragraph)) continue;
+                if (!/[ \u00A0]/.test(node.nodeValue || '')) continue;
+
+                nodes.push(node);
+            }
+
+            nodes.forEach(wrapSpaceCharacters);
+        });
+    }
+
+    // ↵ หน้า <br> ทุกอัน (ท้ายบรรทัดก่อนขึ้นบรรทัดใหม่) — marker มี
+    // data-layout-mark จึงไม่ถูกนับเป็นข้อความ และมีความกว้าง 0
+    // (ลูกศรวาดด้วย CSS) เพื่อไม่ให้จุดตัดบรรทัดของเอกสารเปลี่ยน
+    function markLineBreaks() {
+        if (!host) return;
+
+        host.querySelectorAll('article br').forEach(function (br) {
+            const previous = br.previousSibling;
+
+            if (previous && previous.nodeType === 1 && previous.dataset
+                && previous.dataset.layoutBreak === '1') {
+                return;
+            }
+
+            const marker = document.createElement('span');
+
+            marker.className = 'layout-fmt-break';
+            marker.dataset.layoutBreak = '1';
+            marker.dataset.layoutMark = '1';
+            marker.contentEditable = 'false';
+            marker.setAttribute('aria-hidden', 'true');
+
+            if (br.parentNode) br.parentNode.insertBefore(marker, br);
+        });
+    }
+
+    function setFormatMarks(on) {
+        if (!host) return;
+
+        host.classList.toggle('show-format-marks', !!on);
+
+        // เคลียร์ของเดิมก่อนทุกครั้ง — เรียกซ้ำได้หลัง re-render
+        removeFormatMarks();
+
+        if (!on) return;
+
+        markSpaces();
+        markLineBreaks();
+        markParagraphEnds();
+    }
+
+    // เปลี่ยนสวิตช์ — ต้องคำนวณไฮไลต์/ผลค้นหาใหม่
+    // เพราะ Range เดิมอ้าง TextNode ที่เพิ่งถูกแทนที่
+    function applyFormatMarks() {
+        setFormatMarks(isFormatMarksOn());
+
+        applyFieldHighlight();
+
+        if (findBarOpen) runFind(false);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -5717,6 +5910,9 @@ function scheduleFieldHighlight() {
 
         const fieldToggle = el('layoutFieldToggle');
         if (fieldToggle) fieldToggle.addEventListener('change', applyFieldHighlight);
+
+        const marksToggle = el('layoutMarksToggle');
+        if (marksToggle) marksToggle.addEventListener('change', applyFormatMarks);
 
         // ปุ่มจัดรูปแบบข้อความ — mousedown preventDefault สำคัญมาก
         // ถ้าไม่กันไว้ การคลิกปุ่มจะย้ายโฟกัสออกจากข้อความที่เลือก

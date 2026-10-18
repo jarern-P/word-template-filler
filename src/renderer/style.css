@@ -3567,6 +3567,98 @@ body.table-ratio-dragging .table-ratio-handle {
     line-height: 1;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   แสดงเครื่องหมายจัดรูปแบบ (สวิตช์ "แสดงสัญลักษณ์จัดรูปแบบ")
+
+   หน้าจัดตำแหน่งเพิ่ม/ลบเครื่องหมายใน DOM ตอนเปิด/ปิดสวิตช์
+   (ดู setFormatMarks ใน templateLayoutDialog.js) — เครื่องหมายทุกตัว
+   เป็นการแสดงผลอย่างเดียว ไม่ถูกเขียนกลับลงไฟล์ .docx
+
+   สีน้ำตาล/จาง เพื่อไม่กลบข้อความจริงของเอกสาร
+   ────────────────────────────────────────────────────────────── */
+
+/* ช่องว่าง — จุดอยู่กลางช่องว่างโดยไม่เพิ่มความกว้าง
+   (span ยังมีอักขระ " " จริง ข้อความที่บันทึกจึงเท่าเดิม) */
+.layout-preview.show-format-marks .layout-fmt-space {
+    position: relative;
+}
+
+.layout-preview.show-format-marks .layout-fmt-space::before {
+    content: "·";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font: 11px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+    color: #b26a00;
+    opacity: 0.85;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* ช่องว่างแบบไม่ตัดบรรทัด (NBSP) — คนละเครื่องหมายกับช่องว่างปกติ */
+.layout-preview.show-format-marks .layout-fmt-space-nb::before {
+    content: "◦";
+}
+
+/* ขึ้นบรรทัดใหม่ (w:br / w:cr) — marker อยู่ท้ายบรรทัดก่อน <br>
+   เป็น inline ว่าง + pseudo absolute (ไม่ใช้ inline-block เพราะ inline-block
+   แม้กว้าง 0 ก็เป็น "วัตถุ" ที่ Chrome ตัดบรรทัดก่อนมันได้ = ข้อความขึ้นบรรทัดใหม่) */
+.layout-preview.show-format-marks .layout-fmt-break {
+    display: inline;
+    position: relative;
+}
+
+.layout-preview.show-format-marks .layout-fmt-break::before {
+    content: "↵";
+    position: absolute;
+    left: 0;
+    bottom: 0.1em;
+    font: 11px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+    color: #b26a00;
+    opacity: 0.85;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* แท็บ — ลูกศรวาดทับโดยไม่กระทบความกว้างที่คำนวณจาก tab stop */
+.layout-preview.show-format-marks .layout-tab {
+    position: relative;
+}
+
+.layout-preview.show-format-marks .layout-tab::before {
+    content: "→";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font: 11px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+    color: #b26a00;
+    opacity: 0.85;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* ท้ายย่อหน้า — ¶ (รวมย่อหน้าว่าง)
+   marker เป็น inline ว่าง + pseudo absolute เพื่อไม่ให้กินความกว้าง
+   และไม่ทำให้ Chrome ตัดบรรทัดใหม่ก่อนเครื่องหมาย (ดู layout-fmt-break) */
+.layout-preview.show-format-marks .layout-fmt-para {
+    display: inline;
+    position: relative;
+}
+
+.layout-preview.show-format-marks .layout-fmt-para::before {
+    content: "¶";
+    position: absolute;
+    left: 1px;
+    bottom: 0.1em;
+    font: 11px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+    color: #b26a00;
+    opacity: 0.85;
+    pointer-events: none;
+    user-select: none;
+}
+
 /* เบราว์เซอร์ไม่รองรับ Custom Highlight API — เตือนด้วยพื้นหลังทั้งย่อหน้า */
 .layout-preview.show-fields-plain .layout-field-para {
     background: linear-gradient(180deg, rgba(255, 240, 138, 0.55), rgba(255, 240, 138, 0));
