@@ -155,9 +155,9 @@
         '            <button type="button" id="layoutUnderlineBtn" class="layout-fmt" title="ขีดเส้นใต้ (Ctrl+U)"><u>U</u></button>',
         '        </div>',
         '        <label class="layout-toggle"><input type="checkbox" id="layoutFieldToggle" checked> ไฮไลต์ตัวแปรเป็นสีเหลือง</label>',
-        // แสดงเครื่องหมายจัดรูปแบบเหมือน Word (¶ ย่อหน้า / · ช่องว่าง / → แท็บ / ↵ ขึ้นบรรทัดใหม่)
+        // แสดงเครื่องหมายจัดรูปแบบเหมือน Word (¶ · ° → ↵ ¬ ¤ รวมข้อความซ่อน/จุดแบ่งหน้า)
         // เป็นการแสดงผลอย่างเดียว — เครื่องหมายที่เพิ่มไม่มีผลต่อข้อความที่บันทึกกลับ
-        '        <label class="layout-toggle" title="แสดง/ซ่อนเครื่องหมาย ¶ (ย่อหน้า) · (ช่องว่าง) → (แท็บ) และ ↵ (ขึ้นบรรทัดใหม่)"><input type="checkbox" id="layoutMarksToggle"> แสดงสัญลักษณ์จัดรูปแบบ</label>',
+        '        <label class="layout-toggle" title="แสดง/ซ่อนเครื่องหมายจัดรูปแบบของ Word: ¶ ย่อหน้า · ช่องว่าง ° NBSP → แท็บ ↵ ขึ้นบรรทัดใหม่ ¬ ยัติภังค์ทางเลือก ¤ ท้ายเซลล์/แถว รวมข้อความซ่อนและจุดแบ่งหน้า"><input type="checkbox" id="layoutMarksToggle"> แสดงสัญลักษณ์จัดรูปแบบ</label>',
         '        <label class="layout-toggle">ย่อ/ขยาย',
         '            <select id="layoutZoom">',
         '                <option value="fit" selected>พอดีความกว้าง</option>',
@@ -585,18 +585,24 @@ async function renderDocx(bytes) {
     // ──────────────────────────────────────────────────────────────
     // แสดง/ซ่อนเครื่องหมายจัดรูปแบบ (เหมือนปุ่ม ¶ ของ Word)
     //
-    //   ¶  ท้ายย่อหน้า      — marker ว่างท้ายย่อหน้า + CSS ::before (กว้าง 0)
-    //   ·  ช่องว่าง         — ห่ออักขระ " " ด้วย span แล้ววาดจุดด้วย ::before
-    //   →  แท็บ             — วาดทับ span.layout-tab ด้วย ::before
-    //   ↵  ขึ้นบรรทัดใหม่   — marker ว่างหน้า <br>
+    // วาดด้วย canvas ลอยเหนือหน้ากระดาษ — ไม่เพิ่ม/ห่อ/ย้าย node ของข้อความ
+    // เปิด/ปิดสวิตช์แล้ว layout จึงไม่เปลี่ยนเลย
     //
-    // เครื่องหมายทั้งหมดเป็นการแสดงผลอย่างเดียว:
-    // - ช่องว่างยังเป็นอักขระ " " จริงใน span → renderedText() อ่านข้อความเดิม
-    //   และตอนบันทึกไม่เห็นเป็นการแก้ไข
-    // - marker ของ ↵ / ¶ มี data-layout-mark="1" → ถูกข้ามตอนอ่านข้อความ/รูปแบบ/ค้นหา
-    // - ตัวอักษรของเครื่องหมายทุกตัววาดด้วย CSS ไม่มีข้อความใน DOM
-    // จึงกดบันทึกขณะเปิดเครื่องหมายอยู่ได้โดยไม่ทำให้ไฟล์เปลี่ยน
+    //   ·  ช่องว่าง (U+0020)
+    //   °  ช่องว่างไม่ตัดคำ (U+00A0)
+    //   →  แท็บ (w:tab / w:ptab)
+    //   ¶  ท้ายย่อหน้า
+    //   ↵  ขึ้นบรรทัดใหม่ (w:br / w:cr)
+    //   ¬  ยัติภังค์ทางเลือก (w:softHyphen / U+00AD)
+    //   ¤  ท้ายเซลล์ / ท้ายแถว
+    //   ข้อความที่ซ่อน (w:vanish) — position:absolute + ขีดเส้นใต้จุด
+    //   Page Break / Section Break — ใช้ป้าย ::before ที่มีอยู่แล้ว
+    //
+    // ข้อความใน DOM ไม่ถูกแก้ จึงบันทึก/ค้นหา/จับคู่ย่อหน้าได้เหมือนเดิม
     // ──────────────────────────────────────────────────────────────
+
+    const FORMAT_MARK_COLOR = '#b26a00';
+    const FORMAT_MARK_FONT = '11px "Segoe UI Symbol", "Segoe UI", sans-serif';
 
     function isFormatMarksOn() {
         const toggle = el('layoutMarksToggle');
@@ -604,138 +610,482 @@ async function renderDocx(bytes) {
         return !!(toggle && toggle.checked);
     }
 
-    // ลบเครื่องหมายที่เพิ่มไว้ใน DOM (ไม่แตะข้อความอื่น)
+    function removeMarkOverlays() {
+        if (!host) return;
+
+        host.querySelectorAll('canvas.layout-marks-overlay').forEach(function (canvas) {
+            if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+        });
+    }
+
     function removeFormatMarks() {
-        if (!host) return;
+        removeMarkOverlays();
 
-        // ช่องว่าง — คืนกลับเป็น TextNode ธรรมดา (คงข้อความที่อาจถูกแก้ไว้)
-        host.querySelectorAll('span[data-layout-space="1"]').forEach(function (span) {
-            const parent = span.parentNode;
-
-            if (!parent) return;
-
-            parent.replaceChild(document.createTextNode(span.textContent || ''), span);
-
-            // รวม TextNode ที่แตกออกมาตอนห่อ กลับเป็นก้อนเดียว
-            if (parent.normalize) parent.normalize();
+        // ข้อความที่ซ่อน — คืนสถานะซ่อนตาม inline style เดิม
+        host.querySelectorAll('.layout-fmt-hidden').forEach(function (span) {
+            span.style.marginLeft = '';
+            span.classList.remove('layout-fmt-hidden');
         });
-
-        // ขึ้นบรรทัดใหม่ / ท้ายย่อหน้า — ลบ marker ทิ้ง
-        host.querySelectorAll('span[data-layout-break="1"], span[data-layout-para-mark="1"]')
-            .forEach(function (span) {
-                if (span.parentNode) span.parentNode.removeChild(span);
-            });
     }
 
-    // ห่อช่องว่างทีละตัวด้วย span (จุดถูกวาดด้วย CSS — ไม่เพิ่มตัวอักษรลงในข้อความ)
-    function wrapSpaceCharacters(node) {
-        const text = node.nodeValue || '';
-        const fragment = document.createDocumentFragment();
-        let start = 0;
-        let changed = false;
+    // สร้าง canvas ของหน้ากระดาษหนึ่ง + ตัวแปลงพิกัดจาก viewport → local (ไม่คิด zoom)
+    function sectionOverlay(section, scale) {
+        const width = section.clientWidth;
+        const height = section.clientHeight;
 
-        for (let i = 0; i < text.length; i++) {
-            const char = text.charAt(i);
+        if (!(width > 0) || !(height > 0)) return null;
 
-            if (char !== ' ' && char !== '\u00A0') continue;
+        const canvas = document.createElement('canvas');
+        const dpr = window.devicePixelRatio || 1;
 
-            changed = true;
+        canvas.className = 'layout-marks-overlay';
+        canvas.setAttribute('aria-hidden', 'true');
+        canvas.width = Math.ceil(width * dpr);
+        canvas.height = Math.ceil(height * dpr);
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
 
-            if (i > start) {
-                fragment.appendChild(document.createTextNode(text.slice(start, i)));
+        section.appendChild(canvas);
+
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+            canvas.remove();
+            return null;
+        }
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.font = FORMAT_MARK_FONT;
+        ctx.fillStyle = FORMAT_MARK_COLOR;
+        ctx.globalAlpha = 0.9;
+
+        const rect = section.getBoundingClientRect();
+        const originX = rect.left + section.clientLeft;
+        const originY = rect.top + section.clientTop;
+
+        return {
+            canvas: canvas,
+            ctx: ctx,
+            width: width,
+            height: height,
+            localLeft: function (x) {
+                return (x - originX) / scale;
+            },
+            localTop: function (y) {
+                return (y - originY) / scale;
+            },
+            localRect: function (r) {
+                return {
+                    left: (r.left - originX) / scale,
+                    right: (r.right - originX) / scale,
+                    top: (r.top - originY) / scale,
+                    bottom: (r.bottom - originY) / scale,
+                    width: r.width / scale,
+                    height: r.height / scale
+                };
+            }
+        };
+    }
+
+    function drawMark(overlay, text, x, y, align) {
+        if (!overlay || !overlay.ctx) return;
+
+        if (!(x > -20 && x < overlay.width + 20 && y > -20 && y < overlay.height + 20)) {
+            return;
+        }
+
+        const ctx = overlay.ctx;
+
+        ctx.textAlign = align || 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x, y);
+    }
+
+    function overlayForNode(node, overlays) {
+        if (!node || !node.closest) return null;
+
+        const section = node.closest('section.docx');
+
+        return section ? overlays.get(section) || null : null;
+    }
+
+    // ข้อความที่ถูกซ่อนอยู่ (ทั้งก่อนและหลังติดคลาส layout-fmt-hidden)
+    function isInsideHiddenText(node) {
+        let element = node && node.nodeType === 1 ? node : node && node.parentElement;
+
+        while (element && element !== host) {
+            if (element.classList && element.classList.contains('layout-fmt-hidden')) {
+                return true;
             }
 
-            const span = document.createElement('span');
+            if (element.style && element.style.display === 'none') {
+                return true;
+            }
 
-            span.className = 'layout-fmt-space' +
-                (char === '\u00A0' ? ' layout-fmt-space-nb' : '');
-            span.dataset.layoutSpace = '1';
-
-            // docx-preview ตั้งฟอนต์เริ่มต้นให้ span ทุกตัว (`.docx span { ... }`)
-            // ถ้าไม่บอกให้สืบทอด ความกว้างของช่องว่างจะเปลี่ยนแล้วข้อความขยับทั้งบรรทัด
-            span.style.font = 'inherit';
-            span.textContent = char;
-
-            fragment.appendChild(span);
-            start = i + 1;
+            element = element.parentElement;
         }
 
-        if (!changed || !node.parentNode) return;
+        return false;
+    }
 
-        if (start < text.length) {
-            fragment.appendChild(document.createTextNode(text.slice(start)));
+    function rangeRect(node, start, end) {
+        const range = document.createRange();
+
+        range.setStart(node, start);
+        range.setEnd(node, end);
+
+        let rect = range.getBoundingClientRect();
+
+        if (!(rect.height > 0)) {
+            const rects = range.getClientRects();
+
+            rect = rects.length ? rects[0] : rect;
         }
 
-        node.parentNode.replaceChild(fragment, node);
+        return rect;
     }
 
-    // ¶ ท้ายย่อหน้า — marker กว้าง 0 ต่อท้ายเนื้อหา (ลูกศร/สัญลักษณ์วาดลอย)
-    // ถ้าใช้ ::after ของ <p> โดยตรง ตัวอักษร ¶ จะกินความกว้างและดันข้อความ
-    // ตัดบรรทัดใหม่ = เอกสารเลื่อนทั้งหน้า
-    function markParagraphEnds() {
-        if (!host) return;
+    // ตำแหน่งของอักขระที่มองเห็นได้ตัวสุดท้ายในย่อหน้า
+    function lastCharRect(paragraph) {
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT, null, false);
+        const nodes = [];
+        let node;
 
-        bodyParagraphs().forEach(function (paragraph) {
-            const marker = document.createElement('span');
+        while ((node = walker.nextNode()) !== null) {
+            if (isDirectParagraphTextNode(node, paragraph)) nodes.push(node);
+        }
 
-            marker.className = 'layout-fmt-para';
-            marker.dataset.layoutParaMark = '1';
-            marker.dataset.layoutMark = '1';
-            marker.contentEditable = 'false';
-            marker.setAttribute('aria-hidden', 'true');
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            if (isInsideHiddenText(nodes[i])) continue;
 
-            paragraph.appendChild(marker);
-        });
+            const text = nodes[i].nodeValue || '';
+
+            for (let j = text.length - 1; j >= 0; j--) {
+                const rect = rangeRect(nodes[i], j, j + 1);
+
+                if (rect.height > 0 && rect.width > 0) return rect;
+            }
+        }
+
+        return null;
     }
 
-    function markSpaces() {
-        if (!host) return;
+    function paragraphMarkPoint(paragraph) {
+        const rect = lastCharRect(paragraph);
 
-        bodyParagraphs().forEach(function (paragraph) {
-            const walker = document.createTreeWalker(
-                paragraph,
-                NodeFilter.SHOW_TEXT,
-                null,
-                false
+        if (rect) {
+            return { x: rect.right + 2, y: (rect.top + rect.bottom) / 2 };
+        }
+
+        // ย่อหน้าว่าง — ใช้ตำแหน่งเริ่มบรรทัดตามกล่องของย่อหน้า
+        const box = paragraph.getBoundingClientRect();
+        const style = window.getComputedStyle(paragraph);
+        const indent = parseFloat(style.textIndent) || 0;
+        const lineHeight = parseFloat(style.lineHeight) || box.height || 16;
+
+        return {
+            x: box.left + indent + 1,
+            y: box.top + lineHeight / 2
+        };
+    }
+
+    function drawSpaceMarks(overlay, paragraph) {
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+
+        while ((node = walker.nextNode()) !== null) {
+            if (!isDirectParagraphTextNode(node, paragraph)) continue;
+            if (isInsideHiddenText(node)) continue;
+
+            const text = node.nodeValue || '';
+
+            for (let i = 0; i < text.length; i++) {
+                const char = text.charAt(i);
+
+                if (char !== ' ' && char !== '\u00A0' && char !== '\u00AD') continue;
+
+                const rect = rangeRect(node, i, i + 1);
+
+                if (!(rect.height > 0)) continue;
+
+                const point = overlay.localRect(rect);
+                const x = point.left + point.width / 2;
+                const y = point.top + point.height / 2;
+
+                if (char === '\u00AD') {
+                    drawMark(overlay, '¬', point.left, y, 'left');
+                } else if (char === '\u00A0') {
+                    drawMark(overlay, '°', x, y);
+                } else {
+                    drawMark(overlay, '·', x, y);
+                }
+            }
+        }
+    }
+
+    function drawTabMarks(overlay, section) {
+        section.querySelectorAll('span.layout-tab').forEach(function (span) {
+            if (wrapsTab(span) || isInsideHiddenText(span)) return;
+
+            const rect = span.getBoundingClientRect();
+
+            if (!(rect.height > 0) || !(rect.width > 0)) return;
+
+            const point = overlay.localRect(rect);
+
+            drawMark(
+                overlay,
+                '→',
+                point.left + point.width / 2,
+                point.top + point.height / 2
             );
-            const nodes = [];
-            let node;
-
-            // เก็บก่อนแล้วค่อยแก้ DOM — ระหว่างเดินห้ามแทนที่ node
-            while ((node = walker.nextNode()) !== null) {
-                if (!isDirectParagraphTextNode(node, paragraph)) continue;
-                if (!/[ \u00A0]/.test(node.nodeValue || '')) continue;
-
-                nodes.push(node);
-            }
-
-            nodes.forEach(wrapSpaceCharacters);
         });
     }
 
-    // ↵ หน้า <br> ทุกอัน (ท้ายบรรทัดก่อนขึ้นบรรทัดใหม่) — marker มี
-    // data-layout-mark จึงไม่ถูกนับเป็นข้อความ และมีความกว้าง 0
-    // (ลูกศรวาดด้วย CSS) เพื่อไม่ให้จุดตัดบรรทัดของเอกสารเปลี่ยน
-    function markLineBreaks() {
-        if (!host) return;
+    // ¬ ของ w:softHyphen — applyXmlMarks สร้าง span ที่มี data-layout-mark
+    // จึงถูกข้ามโดย drawSpaceMarks ต้องวาดจาก span โดยตรง
+    function drawSoftHyphenMarks(overlay, section) {
+        section.querySelectorAll('span.layout-mark-softHyphen').forEach(function (span) {
+            if (isInsideHiddenText(span)) return;
 
-        host.querySelectorAll('article br').forEach(function (br) {
-            const previous = br.previousSibling;
+            const rect = span.getBoundingClientRect();
 
-            if (previous && previous.nodeType === 1 && previous.dataset
-                && previous.dataset.layoutBreak === '1') {
-                return;
+            if (!(rect.height > 0)) return;
+
+            const point = overlay.localRect(rect);
+
+            drawMark(overlay, '¬', point.left, point.top + point.height / 2, 'left');
+        });
+    }
+
+    // rect ของข้อความช่วงสุดท้ายก่อน node (ใช้หาจุดขึ้นบรรทัดใหม่)
+    function lastRectBefore(node) {
+        const paragraph = node.closest ? node.closest('p') : null;
+
+        if (!paragraph) return null;
+
+        const range = document.createRange();
+
+        range.selectNodeContents(paragraph);
+
+        try {
+            range.setEndBefore(node);
+        } catch (error) {
+            return null;
+        }
+
+        const rects = range.getClientRects();
+
+        for (let i = rects.length - 1; i >= 0; i--) {
+            if (rects[i].height > 0) return rects[i];
+        }
+
+        return null;
+    }
+
+    function drawLineBreakMarks(overlay, section) {
+        section.querySelectorAll('article br').forEach(function (br) {
+            if (isInsideHiddenText(br)) return;
+
+            // ใช้ปลายข้อความบนบรรทัดก่อน <br> ก่อน (ตรงกับที่ Word วาง ↵)
+            let rect = lastRectBefore(br);
+            let x = null;
+            let align = 'right';
+
+            if (rect && rect.height > 0) {
+                x = overlay.localLeft(rect.right - 1);
+            } else {
+                rect = br.getBoundingClientRect();
+
+                if (!(rect.height > 0)) return;
+
+                x = overlay.localLeft(rect.left);
+                align = 'left';
             }
 
-            const marker = document.createElement('span');
+            drawMark(overlay, '↵', x, overlay.localTop((rect.top + rect.bottom) / 2), align);
+        });
+    }
 
-            marker.className = 'layout-fmt-break';
-            marker.dataset.layoutBreak = '1';
-            marker.dataset.layoutMark = '1';
-            marker.contentEditable = 'false';
-            marker.setAttribute('aria-hidden', 'true');
+    function visibleCell(cell) {
+        if (!cell || (cell.localName !== 'td' && cell.localName !== 'th')) {
+            return false;
+        }
 
-            if (br.parentNode) br.parentNode.insertBefore(marker, br);
+        if (cell.style.display === 'none') return false;
+
+        const table = cell.closest('table');
+
+        return !(table && table.style.display === 'none');
+    }
+
+    // ย่อหน้าสุดท้ายที่เป็นของเซลล์นี้เอง (ไม่ใช่ของตารางซ้อน)
+    function lastOwnParagraph(cell) {
+        const paragraphs = Array.from(cell.querySelectorAll('p')).filter(function (p) {
+            return p.closest('td,th') === cell;
+        });
+
+        return paragraphs.length ? paragraphs[paragraphs.length - 1] : null;
+    }
+
+    // เก็บ ¤ ของทุกเซลล์/แถว + ย่อหน้าที่ไม่ต้องวาด ¶ (ท้ายเซลล์ใช้ ¤ แทน)
+    function collectTableMarks() {
+        const cellMarks = [];
+        const rowMarks = [];
+        const skipParagraphs = new Set();
+
+        host.querySelectorAll('article table').forEach(function (table) {
+            if (table.style.display === 'none') return;
+
+            table.querySelectorAll('tr').forEach(function (row) {
+                // ข้ามแถวของตารางซ้อน — จะถูกทำตอนวน table ของมันเอง
+                if (row.closest('table') !== table) return;
+
+                const cells = Array.from(row.children).filter(visibleCell);
+
+                if (!cells.length) return;
+
+                cells.forEach(function (cell) {
+                    const paragraph = lastOwnParagraph(cell);
+
+                    cellMarks.push({ cell: cell, paragraph: paragraph });
+
+                    if (paragraph) skipParagraphs.add(paragraph);
+                });
+
+                rowMarks.push(cells[cells.length - 1]);
+            });
+        });
+
+        return {
+            cellMarks: cellMarks,
+            rowMarks: rowMarks,
+            skipParagraphs: skipParagraphs
+        };
+    }
+
+    function cellMarkPoint(cell) {
+        const box = cell.getBoundingClientRect();
+        const style = window.getComputedStyle(cell);
+        const paddingLeft = parseFloat(style.paddingLeft) || 0;
+        const paddingTop = parseFloat(style.paddingTop) || 0;
+        const lineHeight = parseFloat(style.lineHeight) || 16;
+
+        return {
+            x: box.left + paddingLeft + 1,
+            y: box.top + paddingTop + lineHeight / 2
+        };
+    }
+
+    function drawTableMarks(overlays, tableMarks) {
+        tableMarks.cellMarks.forEach(function (mark) {
+            const overlay = overlayForNode(mark.paragraph || mark.cell, overlays);
+
+            if (!overlay) return;
+
+            const point = mark.paragraph
+                ? paragraphMarkPoint(mark.paragraph)
+                : cellMarkPoint(mark.cell);
+
+            drawMark(
+                overlay,
+                '¤',
+                overlay.localLeft(point.x),
+                overlay.localTop(point.y),
+                'left'
+            );
+        });
+
+        tableMarks.rowMarks.forEach(function (cell) {
+            const overlay = overlayForNode(cell, overlays);
+
+            if (!overlay) return;
+
+            const point = overlay.localRect(cell.getBoundingClientRect());
+
+            drawMark(overlay, '¤', point.right - 4, point.bottom - 4, 'right');
+        });
+    }
+
+    // วาดเครื่องหมายทั้งหมดลง canvas ของแต่ละหน้า (ไม่แตะ DOM ข้อความ)
+    function drawFormatMarksOverlay() {
+        if (!host || !current) return;
+
+        removeMarkOverlays();
+
+        const wrapper = host.querySelector('.docx-wrapper');
+
+        if (!wrapper) return;
+
+        const scale = Number(wrapper.style.zoom) || 1;
+        const overlays = new Map();
+
+        host.querySelectorAll('.docx-wrapper > section.docx').forEach(function (section) {
+            const overlay = sectionOverlay(section, scale);
+
+            if (overlay) overlays.set(section, overlay);
+        });
+
+        if (!overlays.size) return;
+
+        const tableMarks = collectTableMarks();
+
+        bodyParagraphs().forEach(function (paragraph) {
+            const overlay = overlayForNode(paragraph, overlays);
+
+            if (!overlay) return;
+
+            drawSpaceMarks(overlay, paragraph);
+
+            if (tableMarks.skipParagraphs.has(paragraph)) return;
+
+            const point = paragraphMarkPoint(paragraph);
+
+            drawMark(
+                overlay,
+                '¶',
+                overlay.localLeft(point.x),
+                overlay.localTop(point.y),
+                'left'
+            );
+        });
+
+        overlays.forEach(function (overlay, section) {
+            drawTabMarks(overlay, section);
+            drawSoftHyphenMarks(overlay, section);
+            drawLineBreakMarks(overlay, section);
+        });
+
+        drawTableMarks(overlays, tableMarks);
+    }
+
+    // ข้อความที่ซ่อน (w:vanish) — แสดงแบบ position:absolute ไม่กินพื้นที่ใน layout
+    function markHiddenText() {
+        if (!host) return;
+
+        const spans = [];
+
+        host.querySelectorAll('span').forEach(function (span) {
+            if (span.style.display !== 'none') return;
+
+            span.classList.add('layout-fmt-hidden');
+            spans.push(span);
+        });
+
+        // span ที่ซ่อนติดกันจะอยู่ตำแหน่ง static เดียวกัน (เพราะตัวก่อนหน้า
+        // หลุดออกจาก flow) — เลื่อนตัวถัดไปด้วย margin-left เพื่อไม่ให้ทับกัน
+        let previous = null;
+
+        spans.forEach(function (span) {
+            let rect = span.getBoundingClientRect();
+
+            if (previous && Math.abs(rect.top - previous.top) < 2
+                && rect.left < previous.right - 0.5) {
+                span.style.marginLeft = (previous.right - rect.left) + 'px';
+                rect = span.getBoundingClientRect();
+            }
+
+            previous = rect;
         });
     }
 
@@ -744,18 +1094,17 @@ async function renderDocx(bytes) {
 
         host.classList.toggle('show-format-marks', !!on);
 
-        // เคลียร์ของเดิมก่อนทุกครั้ง — เรียกซ้ำได้หลัง re-render
+        // เคลียร์ของเดิมก่อนทุกครั้ง — เรียกซ้ำได้หลัง re-render/layout เปลี่ยน
         removeFormatMarks();
 
         if (!on) return;
 
-        markSpaces();
-        markLineBreaks();
-        markParagraphEnds();
+        // วัดตอนข้อความซ่อนยัง display:none อยู่ แล้วค่อยแสดงเป็น overlay
+        drawFormatMarksOverlay();
+        markHiddenText();
     }
 
-    // เปลี่ยนสวิตช์ — ต้องคำนวณไฮไลต์/ผลค้นหาใหม่
-    // เพราะ Range เดิมอ้าง TextNode ที่เพิ่งถูกแทนที่
+    // เปลี่ยนสวิตช์ — layout ไม่เปลี่ยน แต่คำนวณไฮไลต์/ผลค้นหาใหม่กัน Range ค้าง
     function applyFormatMarks() {
         setFormatMarks(isFormatMarksOn());
 
@@ -3899,6 +4248,12 @@ async function renderDocx(bytes) {
         // รูปทรง (กล่อง/เส้น) — ใส่สีพื้น/เส้นขอบจากสาขา DrawingML
         // ทำหลังจัดตำแหน่ง เพราะใช้ขนาดกล่องที่ตัวเรนเดอร์ตั้งไว้
         renderShapes();
+
+        // เปิดเครื่องหมายจัดรูปแบบอยู่ = วัดตำแหน่งใหม่หลัง layout ขยับ
+        // (canvas ลอยอยู่ ไม่กระทบ layout และไม่เรียก fixRenderedLayout ซ้ำ)
+        if (isFormatMarksOn() && current.pairs && current.pairs.size > 0) {
+            drawFormatMarksOverlay();
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
