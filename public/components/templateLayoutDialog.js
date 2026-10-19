@@ -88,7 +88,10 @@
     // (สัญลักษณ์ w:sym → อักขระ Private Use Area, แท็บ w:tab → em space)
     // ตอนเขียนข้อความกลับต้องตัดออก ไม่งั้นจะกลายเป็น "ตัวอักษรจริง" ใน Word
     // แล้วสัญลักษณ์/แท็บเดิมที่ยังอยู่ในเอกสารจะซ้อนขึ้นมาอีกชิ้น
-    const RENDERED_ONLY = /[\uE000-\uF8FF\u2003]/g;
+    //
+    // \u200B = ZWSP ที่ใส่เป็น "จุดตัดบรรทัด" ระหว่างตัวเลขกับอักษรไทย
+    // (ดู applyThaiBreakHints) — เป็นของที่วาดเพิ่มเท่านั้น ต้องไม่ถูกบันทึกกลับ
+    const RENDERED_ONLY = /[\uE000-\uF8FF\u2003\u200B]/g;
 
     // ปุ่มบนแถบเครื่องมือ → คำสั่งจัดรูปแบบของ contentEditable
     const FORMAT_BUTTONS = {
@@ -384,6 +387,10 @@ async function renderDocx(bytes) {
 
     if (token !== renderToken) return;
 
+    // ตั้งความกว้างคอลัมน์/ระยะเยื้องของตารางก่อน (ยังไม่ zoom)
+    // เพื่อวัดเส้นขอบของเซลล์เป็น px จริง แล้วค่อยตั้ง zoom
+    positionTables();
+
     // ตั้ง zoom และจัดตำแหน่ง Shape / TextBox / Table
     applyZoom();
 
@@ -586,6 +593,71 @@ async function renderDocx(bytes) {
                     ' รหัส ' + symbol.char.toString(16).toUpperCase() +
                     ') — แก้จากที่นี่ไม่ได้'
                 : 'แท็บ (ระยะจัดแนวของเอกสาร) — แก้จากที่นี่ไม่ได้';
+        });
+    }
+
+    // Word ตัดบรรทัดระหว่างตัวเลขกับอักษรไทยได้ (เช่น "90ซม." → "90" / "ซม.")
+    // แต่เบราว์เซอร์มักมองว่าเป็นคำเดียวกันเมื่อไม่มีช่องว่าง
+    // ข้อความในตารางจึงขึ้นบรรทัดคนละตำแหน่งกับ Word
+    //
+    // ใส่ ZWSP หลังตัวเลขที่ตามด้วยอักษรไทยเป็น "จุดตัดบรรทัด" ที่มองไม่เห็น
+    // ห่อด้วย span data-layout-mark เพื่อไม่ให้กระทบข้อความของเอกสาร:
+    //  - renderedText / domFormatRuns ข้าม span นี้ (ข้อความที่บันทึก/เทียบรูปแบบเท่าเดิม)
+    //  - paragraphTextMap ข้าม (ค้นหา/ไฮไลต์ field ใช้ offset เดิม)
+    //  - font-size/line-height = 0 (ไม่ดันความสูงบรรทัด)
+    function applyThaiBreakHints() {
+        if (!host) return;
+
+        host.querySelectorAll('article').forEach(function (article) {
+            const walker = document.createTreeWalker(
+                article,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            const textNodes = [];
+            let node;
+
+            while ((node = walker.nextNode()) !== null) {
+                if (node.parentElement && node.parentElement.closest('[data-layout-mark="1"]')) {
+                    continue;
+                }
+
+                if (/[0-9](?=[\u0E00-\u0E7F])/.test(node.nodeValue || '')) {
+                    textNodes.push(node);
+                }
+            }
+
+            textNodes.forEach(function (textNode) {
+                const text = textNode.nodeValue;
+                const pattern = /([0-9])(?=[\u0E00-\u0E7F])/g;
+                const fragment = document.createDocumentFragment();
+                let last = 0;
+                let match;
+
+                while ((match = pattern.exec(text)) !== null) {
+                    const end = match.index + match[0].length;
+
+                    fragment.appendChild(document.createTextNode(text.slice(last, end)));
+
+                    const hint = document.createElement('span');
+
+                    hint.dataset.layoutMark = '1';
+                    hint.style.fontSize = '0';
+                    hint.style.lineHeight = '0';
+                    hint.contentEditable = 'false';
+                    hint.setAttribute('spellcheck', 'false');
+                    hint.textContent = '\u200B';
+
+                    fragment.appendChild(hint);
+                    last = end;
+                }
+
+                if (last === 0) return;
+
+                fragment.appendChild(document.createTextNode(text.slice(last)));
+                textNode.parentElement.replaceChild(fragment, textNode);
+            });
         });
     }
 
@@ -2907,6 +2979,11 @@ async function renderDocx(bytes) {
         });
 
         decorateSpecials();
+
+        // จุดตัดบรรทัดระหว่างตัวเลขกับอักษรไทย ต้องทำหลัง decorateSpecials
+        // (หรือหลัง prepareEditing) และก่อนวัดระยะบรรทัด/ไฮไลต์ field
+        applyThaiBreakHints();
+
         refreshFormatButtons();
 
         if (lockedCount > 0) {
@@ -3281,7 +3358,8 @@ async function renderDocx(bytes) {
     // จึงย้ายฐานเมื่อเอกสารระบุ mso-position-*-relative เป็น page/margin
     //
     // ตารางที่ตั้ง w:tblInd ติดลบ (ดึงตารางกว้างให้พ้นขอบ) ก็ถูกไลบรารีมองข้าม
-    // จึงใส่ระยะเยื้องกลับให้ (ดู tableIndents)
+    // จึงใส่ระยะเยื้องกลับให้ และกำหนดความกว้างคอลัมน์ตาม w:tcW / w:tblGrid
+    // (ดู tableLayouts)
     // ──────────────────────────────────────────────────────────────
 
     // นามสเปซที่ mc:Choice รองรับ — บิลด์ docx-preview ที่ใช้อยู่ยังไม่มีเลย
@@ -3548,13 +3626,24 @@ async function renderDocx(bytes) {
         });
     }
 
-    // อ่านระยะเยื้องของตารางทุกอันที่ถูกวาดจริง (px, null = ไม่ได้ระบุ)
+    // อ่านระยะเยื้องและความกว้างคอลัมน์ของตารางทุกอันที่ถูกวาดจริง
+    // (px / twips; null = เอกสารไม่ได้ระบุ)
     //
     // docx-preview อ่าน w:tblInd ผิดแบบ — parseIndentation ของมันไปอ่าน
     // attribute ชื่อ left/start แต่ w:tblInd ใช้ w:w + w:type จึงไม่มีผลเลย
     // ตารางของแบบฟอร์มที่ตั้ง tblInd ติดลบ (ดึงตารางกว้างให้พ้นขอบ) จึงไปเริ่ม
     // ที่ขอบข้อความปกติ แล้วล้นออกนอกหน้ากระดาษทางขวา
-    function tableIndents(xml) {
+    //
+    // ความกว้างคอลัมน์: docx-preview ใส่ทั้ง <col> จาก w:tblGrid และ width ของ
+    // <td> จาก w:tcW ลงหน้า — เบราว์เซอร์จึงเอา tcW ไปบิดความกว้างคอลัมน์
+    // ข้อความจึงตัดบรรทัดไม่ตรงกับ Word (ดูตารางของแบบฟอร์มจัดซื้อจัดจ้าง)
+    //
+    // Word (โหมดปรับตารางอัตโนมัติ) วางคอลัมน์ตาม w:tcW ของแถวแรก เมื่อผลรวม
+    // tcW ตรงกับความกว้างตาราง ส่วน w:tblGrid อาจเป็นค่าที่ค้างจากก่อนผู้ใช้ลาก
+    // เส้นคอลัมน์ (ในเอกสารราชการหลายไฟล์สองค่าไม่ตรงกัน) ตรงนี้จึงแปลง tcW
+    // ของแถวแรกเป็นความกว้างต่อคอลัมน์ก่อน แล้วค่อยใช้ tblGrid เป็นตัวสำรอง
+    // เมื่อ tcW ไม่ครบ/ผลรวมไม่ตรงกับความกว้างตาราง
+    function tableLayouts(xml) {
         const doc = parseXml(xml);
 
         if (!doc) return null;
@@ -3562,19 +3651,172 @@ async function renderDocx(bytes) {
         return Array.from(doc.getElementsByTagNameNS(W_NS, 'tbl'))
             .filter(isRenderedNode)
             .map(function (tbl) {
-                const pr = tbl.getElementsByTagNameNS(W_NS, 'tblPr')[0];
-                const ind = pr ? pr.getElementsByTagNameNS(W_NS, 'tblInd')[0] : null;
+                const pr = directChild(tbl, 'tblPr');
+                const ind = directChild(pr, 'tblInd');
+                const width = directChild(pr, 'tblW');
+                const layout = directChild(pr, 'tblLayout');
+                const grid = directChild(tbl, 'tblGrid');
 
-                if (!ind) return null;
+                const base = readTableColumns(grid);
+                const fixedLayout = !!layout &&
+                    String(layout.getAttribute('w:type')).toLowerCase() === 'fixed';
 
-                // tblInd ใช้ได้ทั้ง dxa (twips) และ pct — รองรับเฉพาะ dxa ที่พบบ่อย
-                const type = String(ind.getAttribute('w:type') || 'dxa').toLowerCase();
-                const width = Number(ind.getAttribute('w:w'));
+                // ตารางที่สั่ง fixed ไว้ Word ใช้ tblGrid ตรง ๆ — tcW ใช้เฉพาะ
+                // ตารางโหมดปรับอัตโนมัติ (tblLayout ไม่ระบุ)
+                const columns = fixedLayout
+                    ? base
+                    : readCellColumns(tbl, base, readTableWidth(width));
 
-                if (type !== 'dxa' || !isFinite(width)) return null;
-
-                return width / TWIPS_PER_PX;
+                return {
+                    indent: readTableIndent(ind),
+                    columns: columns,
+                    fixed: readTableFixed(width, layout, columns)
+                };
             });
+    }
+
+    // ระยะเยื้องของตาราง (px) — รองรับเฉพาะ tblInd แบบ dxa ที่พบบ่อย
+    function readTableIndent(ind) {
+        if (!ind) return null;
+
+        // tblInd ใช้ได้ทั้ง dxa (twips) และ pct — รองรับเฉพาะ dxa
+        const type = String(ind.getAttribute('w:type') || 'dxa').toLowerCase();
+        const width = Number(ind.getAttribute('w:w'));
+
+        if (type !== 'dxa' || !isFinite(width)) return null;
+
+        return width / TWIPS_PER_PX;
+    }
+
+    // ความกว้างคอลัมน์จาก tblGrid (twips) — [] = เอกสารไม่ได้ระบุ
+    function readTableColumns(grid) {
+        if (!grid) return [];
+
+        return Array.from(grid.getElementsByTagNameNS(W_NS, 'gridCol'))
+            .map(function (col) { return Number(col.getAttribute('w:w')); })
+            .filter(function (width) { return isFinite(width); });
+    }
+
+    // ความกว้างตาราง (twips) — null = ไม่ได้ระบุเป็น dxa
+    function readTableWidth(width) {
+        if (!width) return null;
+
+        const type = String(width.getAttribute('w:type') || 'dxa').toLowerCase();
+        const value = Number(width.getAttribute('w:w'));
+
+        if (type !== 'dxa' || !isFinite(value)) return null;
+
+        return value;
+    }
+
+    // เปลี่ยน "ความกว้างที่ต้องการ" ของแต่ละช่อง (w:tcW) ในแถวแรกเป็นความกว้าง
+    // ต่อคอลัมน์ — Word ปรับตารางอัตโนมัติโดยยึด tcW เหล่านี้ ถ้าผลรวมยังตรงกับ
+    // ความกว้างตาราง แปลว่าค่าชุดนี้คือคอลัมน์จริงที่ Word ใช้ (tblGrid อาจค้าง)
+    //
+    // ช่องที่รวมหลายคอลัมน์ (gridSpan) กระจาย tcW ตามสัดส่วนของ tblGrid เดิม
+    // เพื่อให้ความกว้างรวมของช่องที่ถูก merge ยังเท่าเดิม
+    // ถ้าผลรวมไม่ตรงกับ tblW หรืออ่าน tcW ไม่ได้เลย จะคืน tblGrid ตามเดิม
+    function readCellColumns(tbl, base, tableWidth) {
+        if (base.length === 0) return base;
+
+        const firstRow = directChild(tbl, 'tr');
+
+        if (!firstRow) return base;
+
+        const trPr = directChild(firstRow, 'trPr');
+        const target = base.slice();
+        const gridBefore = readGridCount(trPr, 'gridBefore') || 0;
+        let col = gridBefore;
+        let changed = false;
+
+        Array.from(firstRow.children).forEach(function (tc) {
+            if (tc.localName !== 'tc') return;
+
+            const tcPr = directChild(tc, 'tcPr');
+            const span = Math.max(1, readGridCount(tcPr, 'gridSpan') || 1);
+            const preferred = readCellWidth(tcPr);
+
+            if (preferred !== null && col < target.length) {
+                const end = Math.min(col + span, target.length);
+                const count = end - col;
+                const baseSum = base
+                    .slice(col, end)
+                    .reduce(function (sum, value) { return sum + value; }, 0);
+
+                for (let offset = 0; offset < count; offset++) {
+                    target[col + offset] = baseSum > 0
+                        ? preferred * base[col + offset] / baseSum
+                        : preferred / count;
+                }
+
+                changed = true;
+            }
+
+            col += span;
+        });
+
+        if (!changed) return base;
+
+        const total = target.reduce(function (sum, value) { return sum + value; }, 0);
+
+        // เผื่อคลาดเคลื่อนจาก Word ที่ปัดเศษคอลัมน์เป็น twips
+        if (tableWidth !== null && Math.abs(total - tableWidth) <= 20) {
+            return target;
+        }
+
+        return base;
+    }
+
+    function directChild(node, name) {
+        if (!node) return null;
+
+        return Array.from(node.children).find(function (child) {
+            return child.localName === name;
+        }) || null;
+    }
+
+    // ค่า w:gridBefore / w:gridSpan / w:gridAfter — null = ไม่ได้ระบุ
+    function readGridCount(node, name) {
+        const child = directChild(node, name);
+
+        if (!child) return null;
+
+        const value = Number(child.getAttribute('w:val'));
+
+        return isFinite(value) ? value : null;
+    }
+
+    // ความกว้างที่ต้องการของช่อง (w:tcW แบบ dxa) — null = ใช้ไม่ได้
+    function readCellWidth(tcPr) {
+        const width = directChild(tcPr, 'tcW');
+
+        if (!width) return null;
+
+        const type = String(width.getAttribute('w:type') || 'dxa').toLowerCase();
+        const value = Number(width.getAttribute('w:w'));
+
+        if (type !== 'dxa' || !isFinite(value) || value <= 0) return null;
+
+        return value;
+    }
+
+    // ตารางนี้ใช้ความกว้างคอลัมน์ตายตัวได้หรือไม่
+    // - tblLayout = fixed → ใช้เสมอ
+    // - tblW = dxa และผลรวมคอลัมน์ (tcW หรือ tblGrid) ตรงกับความกว้างตาราง
+    //   → Word วางคอลัมน์ตามค่านั้นอยู่แล้ว (tblW = auto = Word ปรับตามเนื้อหา)
+    function readTableFixed(width, layout, columns) {
+        if (layout && String(layout.getAttribute('w:type')).toLowerCase() === 'fixed') {
+            return true;
+        }
+
+        const tableWidth = readTableWidth(width);
+
+        if (tableWidth === null || columns.length === 0) return false;
+
+        const total = columns.reduce(function (sum, value) { return sum + value; }, 0);
+
+        // เผื่อคลาดเคลื่อนจาก Word ที่ปัดเศษคอลัมน์เป็น twips
+        return Math.abs(total - tableWidth) <= 20;
     }
 
     function readAnchor(anchor) {
@@ -4608,29 +4850,96 @@ async function renderDocx(bytes) {
         svg.style[axis] = (origin + value).toFixed(2) + 'px';
     }
 
-    // ตาราง — ใส่ระยะเยื้องตาม w:tblInd ของเอกสาร (ดู tableIndents)
+    // ตาราง — ระยะเยื้องตาม w:tblInd และความกว้างคอลัมน์ตาม w:tblGrid
     // ค่าเป็น px ในพื้นที่ของ wrapper จึงไม่ต้องคูณ/หาร zoom
     function positionTables() {
-        const indents = tableIndents(current.xml);
+        const layouts = tableLayouts(current.xml);
 
-        if (!indents || indents.length === 0) return;
+        if (!layouts || layouts.length === 0) return;
 
         const tables = Array.from(host.querySelectorAll('article table'));
 
         // จำนวนไม่ตรง = จับคู่ตารางมั่นใจไม่ได้ จึงไม่แตะเลย (ปลอดภัยกว่าแก้ผิดตาราง)
-        if (indents.length !== tables.length) {
+        if (layouts.length !== tables.length) {
             console.warn(
-                'จัดตำแหน่งตาราง: จำนวนตารางในไฟล์ (' + indents.length +
-                ') ไม่ตรงกับที่แสดง (' + tables.length + ') จึงไม่ปรับระยะเยื้อง'
+                'จัดตำแหน่งตาราง: จำนวนตารางในไฟล์ (' + layouts.length +
+                ') ไม่ตรงกับที่แสดง (' + tables.length +
+                ') จึงไม่ปรับระยะเยื้อง/ความกว้างคอลัมน์'
             );
 
             return;
         }
 
-        indents.forEach(function (indent, index) {
-            if (indent === null) return;
+        layouts.forEach(function (info, index) {
+            const table = tables[index];
 
-            tables[index].style.marginLeft = indent.toFixed(2) + 'px';
+            if (info.indent !== null) {
+                table.style.marginLeft = info.indent.toFixed(2) + 'px';
+            }
+
+            if (!info.fixed) return;
+
+            // ความกว้างของ <col> ต้องครบตาม tblGrid ไม่งั้นจับคู่ไม่ได้
+            const group = Array.from(table.children).find(function (node) {
+                return node.localName === 'colgroup';
+            });
+            const cols = group
+                ? Array.from(group.children).filter(function (node) {
+                    return node.localName === 'col';
+                })
+                : [];
+
+            if (cols.length !== info.columns.length) return;
+
+            // ใช้ความกว้างคอลัมน์ที่เลือกไว้ (tcW ของแถวแรก หรือ tblGrid)
+            // แล้วตัด width ของ <td> (tcW) ออก ไม่งั้นเบราว์เซอร์จะเอา tcW
+            // ของแต่ละแถวไปบิดคอลัมน์อีก
+            table.style.tableLayout = 'fixed';
+
+            info.columns.forEach(function (twips, colIndex) {
+                cols[colIndex].style.width = (twips / TWIPS_PER_PX).toFixed(2) + 'px';
+            });
+
+            Array.from(table.rows).forEach(function (row) {
+                Array.from(row.cells).forEach(function (cell) {
+                    cell.style.width = '';
+                });
+            });
+
+            compensateCellPadding(table);
+        });
+    }
+
+    // ชดเชยเนื้อที่ข้อความที่เบราว์เซอร์หักไปกับเส้นขอบเซลล์
+    //
+    // Word คิดเนื้อที่ข้อความในช่อง = ความกว้างคอลัมน์ − ระยะขอบเซลล์
+    // (เส้นขอบอยู่บนเส้นแบ่งคอลัมน์ ไม่กินเนื้อที่ข้อความ)
+    // แต่ CSS หักความกว้างเส้นขอบออกจาก content อีกด้านละ ~0.5px
+    // คอลัมน์แคบ (เช่นคอลัมน์ "ที่" กว้าง 35pt) จึงแคบกว่า Word เล็กน้อย
+    // พอให้ {{t0}} ที่ควรอยู่บรรทัดเดียวตัดขึ้นบรรทัดใหม่ แล้วลากความสูงแถวเพิ่ม
+    //
+    // ลด padding ลงครึ่งของเส้นขอบที่ถูกหักจริง (offsetWidth − clientWidth)
+    // แล้วเผื่อเศษจากการปัดของฟอนต์/เบราว์เซอร์อีก 0.25px ต่อด้าน
+    // เรียกครั้งเดียวหลังตั้งความกว้างคอลัมน์ (ก่อน zoom) — ค่าที่ตั้งเป็น px
+    // ในเอกสาร จึงถูก zoom คูณตามทั้งตารางภายหลัง
+    function compensateCellPadding(table) {
+        Array.from(table.rows).forEach(function (row) {
+            Array.from(row.cells).forEach(function (cell) {
+                if (cell.dataset.layoutPadding === 'fixed') return;
+
+                cell.dataset.layoutPadding = 'fixed';
+
+                const style = window.getComputedStyle(cell);
+                const border = (cell.offsetWidth - cell.clientWidth) / 2;
+
+                if (!(border > 0)) return;
+
+                const left = parseFloat(style.paddingLeft) - border - 0.25;
+                const right = parseFloat(style.paddingRight) - border - 0.25;
+
+                if (left > 0) cell.style.paddingLeft = left.toFixed(3) + 'px';
+                if (right > 0) cell.style.paddingRight = right.toFixed(3) + 'px';
+            });
         });
     }
 
@@ -5020,6 +5329,12 @@ function paragraphTextMap(paragraph) {
     // ไม่เอา <p> ที่ซ้อนอยู่ เช่น VML TextBox
     while ((node = walker.nextNode()) !== null) {
         if (!isDirectParagraphTextNode(node, paragraph)) {
+            continue;
+        }
+
+        // อักขระที่เราวาดเพิ่ม (จุดตัดบรรทัด/เครื่องหมายจัดรูปแบบ) ไม่ใช่ข้อความ
+        // ของเอกสาร — ห้ามนับใน offset ของ Range ค้นหา/ไฮไลต์ field
+        if (node.parentElement && node.parentElement.closest('[data-layout-mark="1"]')) {
             continue;
         }
 
