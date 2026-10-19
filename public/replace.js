@@ -1463,6 +1463,141 @@
 
     const TWIPS_PER_CM = 1440 / 2.54;
 
+    // ตัวตัดคำ/ตัวนับตัวอักษรสำหรับ type List
+    // - word = ตัดบรรทัดที่ขอบคำ (ภาษาไทยใช้ Intl.Segmenter)
+    // - grapheme = นับตัวอักษรตามที่ผู้ใช้เห็น (วรรณยุกต์/สระซ้อนไม่ถูกนับแยก)
+    function makeSegmenter(granularity) {
+        try {
+            return typeof Intl !== 'undefined' && Intl.Segmenter
+                ? new Intl.Segmenter('th', { granularity: granularity })
+                : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    const WORD_SEGMENTER = makeSegmenter('word');
+    const GRAPHEME_SEGMENTER = makeSegmenter('grapheme');
+
+    function graphemeChars(text) {
+        const value = String(text == null ? '' : text);
+
+        if (GRAPHEME_SEGMENTER) {
+            return Array.from(
+                GRAPHEME_SEGMENTER.segment(value),
+                function (part) { return part.segment; }
+            );
+        }
+
+        return Array.from(value);
+    }
+
+    function charLength(text) {
+        return graphemeChars(text).length;
+    }
+
+    // แบ่งข้อความเป็นหน่วยที่ตัดบรรทัดได้ โดยไม่แยกวรรคตอนออกจากคำ
+    // ("ซม." ต้องอยู่ด้วยกัน ไม่ให้จุดไปขึ้นบรรทัดใหม่คนละบรรทัด)
+    function wordChunks(text) {
+        if (WORD_SEGMENTER) {
+            const chunks = [];
+
+            for (const part of WORD_SEGMENTER.segment(String(text))) {
+                if (part.isWordLike || chunks.length === 0) {
+                    chunks.push(part.segment);
+                } else {
+                    chunks[chunks.length - 1] += part.segment;
+                }
+            }
+
+            return chunks;
+        }
+
+        return String(text).match(/\s+|\S+/g) || [];
+    }
+
+    // ตัดข้อความหนึ่งรายการเป็นหลายบรรทัดตามจำนวนตัวอักษรสูงสุด
+    // ตัดที่ขอบคำก่อนเสมอ ถ้าคำเดียวยาวเกินกำหนดจึงตัดกลางคำเท่าที่จำเป็น
+    function wrapListText(text, maxChars) {
+        const normalized = String(text == null ? '' : text)
+            .replace(/[\r\n\t]+/g, ' ')
+            .replace(/ {2,}/g, ' ')
+            .trim();
+
+        if (normalized === '') return [];
+
+        const max = Math.floor(Number(maxChars));
+
+        if (!(max > 0)) return [normalized];
+
+        const lines = [];
+        let line = '';
+
+        function pushLine() {
+            const value = line.trimEnd();
+
+            if (value !== '') lines.push(value);
+
+            line = '';
+        }
+
+        wordChunks(normalized).forEach(function (chunk) {
+            let piece = chunk;
+
+            if (line === '') piece = piece.replace(/^\s+/, '');
+            if (piece === '') return;
+
+            if (charLength(line + piece) <= max) {
+                line += piece;
+                return;
+            }
+
+            pushLine();
+
+            piece = piece.replace(/^\s+/, '');
+            if (piece === '') return;
+
+            if (charLength(piece) <= max) {
+                line = piece;
+                return;
+            }
+
+            // คำเดียวยาวเกิน max = ตัดเป็นท่อน ๆ
+            const chars = graphemeChars(piece);
+
+            for (let offset = 0; offset < chars.length; offset += max) {
+                const part = chars.slice(offset, offset + max).join('');
+
+                if (offset + max < chars.length) {
+                    const value = part.trimEnd();
+
+                    if (value !== '') lines.push(value);
+                } else {
+                    line = part;
+                }
+            }
+        });
+
+        pushLine();
+
+        return lines.length > 0 ? lines : [normalized];
+    }
+
+    // รวมทุกรายการเป็นบรรทัด ๆ ละหนึ่งย่อหน้า (ใช้ทั้งตอนสร้าง docx และตัวอย่าง)
+    function wrapListItems(items, maxChars) {
+        const lines = [];
+
+        (items || []).forEach(function (item) {
+            const text = String(item == null ? '' : item).trim();
+
+            if (text === '') return;
+
+            lines.push.apply(lines, wrapListText(text, maxChars));
+        });
+
+        return lines;
+    }
+
     // ลำดับลูกของ w:pPr ตาม schema (ใช้แทรก w:ind ให้ถูกตำแหน่ง)
     const PPR_ORDER = [
         'pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr',
@@ -1544,19 +1679,19 @@
         return Math.round(width);
     }
 
-    // ตั้ง indent ให้บรรทัดถัดไปของย่อหน้าเริ่มที่ targetX
-    // โดยบรรทัดแรกยังเริ่มที่ firstLineX เดิม (ใช้ left + hanging)
-    function setListIndent(paragraph, firstLineX, targetX) {
+    // ตั้ง indent ของย่อหน้าใหม่ให้เริ่มที่ targetX
+    // แต่ละบรรทัดของ list เป็นย่อหน้าของตัวเอง จึงไม่ต้องใช้ hanging indent
+    function setParagraphLeftIndent(paragraph, targetX) {
         const doc = paragraph.ownerDocument;
 
-        let pPr = paragraph.getElementsByTagNameNS(W_NS, 'pPr')[0];
+        let pPr = directChild(paragraph, 'pPr');
 
         if (!pPr) {
             pPr = el(doc, 'pPr');
             paragraph.insertBefore(pPr, paragraph.firstChild);
         }
 
-        let ind = pPr.getElementsByTagNameNS(W_NS, 'ind')[0];
+        let ind = directChild(pPr, 'ind');
 
         if (!ind) {
             ind = el(doc, 'ind');
@@ -1570,11 +1705,27 @@
             ind.removeAttribute(name);
         });
 
-        ind.setAttribute('w:left', String(Math.round(targetX)));
+        if (targetX > 0) {
+            ind.setAttribute('w:left', String(Math.round(targetX)));
+        } else {
+            ind.removeAttribute('w:left');
+        }
+    }
 
-        const hanging = Math.round(targetX - firstLineX);
+    // คัดลอก pPr ของย่อหน้าต้นแบบให้ย่อหน้าใหม่ (ยกเว้น sectPr)
+    function copyParagraphProperties(source, target, targetX) {
+        const sourceProps = directChild(source, 'pPr');
 
-        if (hanging > 0) ind.setAttribute('w:hanging', String(hanging));
+        if (sourceProps) {
+            const props = sourceProps.cloneNode(true);
+            const section = directChild(props, 'sectPr');
+
+            if (section) props.removeChild(section);
+
+            target.appendChild(props);
+        }
+
+        setParagraphLeftIndent(target, targetX);
     }
 
     // ข้อความของ list ที่ใช้ได้ (ตัดแถวว่าง/ช่องว่างหัวท้าย)
@@ -1588,9 +1739,22 @@
         });
     }
 
+    // จำนวนตัวอักษรสูงสุดต่อบรรทัดของ list (0 = ไม่จำกัด)
+    function listMaxChars(spec) {
+        const value = Math.floor(Number(spec && spec.maxChars));
+
+        return isFinite(value) && value > 0 ? value : 0;
+    }
+
     // แทน {{field}} ด้วยรายการ — ใช้รูปแบบ (rPr) ของ run ที่ตัวแปรอยู่
-    // คืน true = แทนแบบแยกบรรทัดได้ (ใช้ปรับ indent ได้)
-    function replaceListPlaceholder(paragraph, match, items) {
+    // แต่ละรายการ (และแต่ละบรรทัดที่ตัดจากความยาว) เป็นย่อหน้าใหม่ (¶)
+    // ไม่ใช้ w:br (↲) เลย
+    // คืน true = แทนแบบแยกย่อหน้าได้
+    function replaceListPlaceholder(paragraph, match, items, maxChars, targetX) {
+        const lines = wrapListItems(items, maxChars);
+
+        if (lines.length === 0) return false;
+
         const isolated = isolateRange(paragraph, match.start, match.end);
 
         const doc = paragraph.ownerDocument;
@@ -1601,7 +1765,12 @@
 
         if (!isolated) {
             // ตัด run ไม่ได้ (มี element อื่นปนใน run) — อย่างน้อยต้องไม่เหลือ {{field}}
-            applyEdit(nodes, match.start, match.end - match.start, items.join(' '));
+            applyEdit(
+                nodes,
+                match.start,
+                match.end - match.start,
+                lines.join(' ')
+            );
             return false;
         }
 
@@ -1640,21 +1809,44 @@
             return run;
         };
 
-        const makeBreakRun = function () {
-            const run = el(doc, 'r');
-
-            if (props) run.appendChild(props.cloneNode(true));
-            run.appendChild(el(doc, 'br'));
-
-            return run;
-        };
-
         const parent = lastRun.parentNode;
         const anchor = lastRun.nextSibling;
 
-        items.forEach(function (item, index) {
-            if (index > 0) parent.insertBefore(makeBreakRun(), anchor);
-            parent.insertBefore(makeTextRun(item), anchor);
+        // เก็บข้อความที่อยู่หลัง {{field}} ไว้ย้ายไปต่อท้ายย่อหน้าสุดท้าย
+        // (เหมือนพิมพ์หลายย่อหน้าลงตรงตำแหน่งตัวแปร)
+        const trailing = [];
+        let node = anchor;
+
+        while (node) {
+            const next = node.nextSibling;
+
+            trailing.push(node);
+            node = next;
+        }
+
+        parent.insertBefore(makeTextRun(lines[0]), anchor);
+
+        if (lines.length === 1) return true;
+
+        let lastParagraph = paragraph;
+
+        for (let i = 1; i < lines.length; i++) {
+            const nextParagraph = el(doc, 'p');
+
+            copyParagraphProperties(paragraph, nextParagraph, targetX);
+            nextParagraph.appendChild(makeTextRun(lines[i]));
+
+            lastParagraph.parentNode.insertBefore(
+                nextParagraph,
+                lastParagraph.nextSibling
+            );
+
+            lastParagraph = nextParagraph;
+        }
+
+        // ย้ายข้อความหลังตัวแปรไปต่อท้ายรายการสุดท้าย
+        trailing.forEach(function (trailingNode) {
+            lastParagraph.appendChild(trailingNode);
         });
 
         return true;
@@ -1688,8 +1880,7 @@
             // ตำแหน่งอ้างอิง = ตัวแปรซ้ายสุดในย่อหน้า
             const width = widthBeforeTwips(textNodes, parts, matches[0].start);
             const indent = paragraphIndentTwips(paragraph);
-
-            let needsIndent = false;
+            const targetX = indent.firstLineX + (width !== null && width > 0 ? width : 0);
 
             // แทนจากขวาไปซ้าย เพื่อให้ offset ของตัวแปรทางซ้ายยังถูกต้อง
             for (let i = matches.length - 1; i >= 0; i--) {
@@ -1698,17 +1889,12 @@
 
                 if (items.length === 0) continue;
 
-                const aligned = replaceListPlaceholder(paragraph, match, items);
-
-                if (aligned && items.length > 1) needsIndent = true;
-            }
-
-            // เยื้องเฉพาะเมื่อตัวแปรอยู่หลังข้อความบนบรรทัดนี้จริง
-            if (needsIndent && width !== null && width > 0) {
-                setListIndent(
+                replaceListPlaceholder(
                     paragraph,
-                    indent.firstLineX,
-                    indent.firstLineX + width
+                    match,
+                    items,
+                    listMaxChars(lists[match.field]),
+                    targetX
                 );
             }
         }
@@ -2168,6 +2354,10 @@
 
     scope.Replace = {
         replaceFields: replaceFields,
+
+        // ตัดรายการ type List เป็นบรรทัด ๆ ตามความยาวสูงสุด
+        // (หน้ารายงานใช้ตัวเดียวกันนี้กับตัวอย่างเอกสาร)
+        wrapListItems: wrapListItems,
 
         // ── หน้าจัดตำแหน่ง: อ่าน/เขียนข้อความย่อหน้าทั้งก้อน ──
 

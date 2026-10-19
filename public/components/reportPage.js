@@ -79,6 +79,12 @@
         return (scope.App && scope.App.getListGroups) ? scope.App.getListGroups() : {};
     }
 
+    // ความยาวสูงสุดต่อบรรทัดของ type List — ตั้งไว้ที่หน้า Template Configuration
+    // 0/ไม่มีค่า = ไม่จำกัด
+    function getConfiguredListLimits() {
+        return (scope.App && scope.App.getListLimits) ? scope.App.getListLimits() : {};
+    }
+
     // โหมด "ตัวเลข/ตัวหนังสือ" ปัจจุบันของช่อง currency ทุกช่อง (เก็บไว้ที่ FieldTypes)
     function getCurrencyModes() {
         const modes = {};
@@ -679,6 +685,18 @@
 
         wrapper.appendChild(rows);
         wrapper.appendChild(actions);
+
+        const limit = getConfiguredListLimits()[field] || 0;
+
+        if (limit > 0) {
+            const hint = document.createElement('p');
+            hint.className = 'hint';
+            hint.textContent =
+                'ตัดบรรทัดทุก ' + limit + ' ตัวอักษร (ขึ้นย่อหน้าใหม่ ¶) — ' +
+                'แถวใหม่ก็ขึ้นย่อหน้าใหม่เช่นกัน';
+            wrapper.appendChild(hint);
+        }
+
         return wrapper;
     }
 
@@ -755,6 +773,20 @@
 
         wrapper.appendChild(rows);
         wrapper.appendChild(actions);
+
+        const limits = getConfiguredListLimits();
+        const limited = members.filter(function (field) {
+            return (limits[field] || 0) > 0;
+        });
+
+        if (limited.length > 0) {
+            const hint = document.createElement('p');
+            hint.className = 'hint';
+            hint.textContent = limited.map(function (field) {
+                return field + ': ' + limits[field] + ' ตัวอักษร';
+            }).join(' · ') + ' — เกินแล้วขึ้นย่อหน้าใหม่ (¶)';
+            wrapper.appendChild(hint);
+        }
 
         return wrapper;
     }
@@ -845,11 +877,16 @@
             alignGroupRows(group);
         });
 
+        const limits = getConfiguredListLimits();
+
         Object.keys(types).forEach(function (field) {
             if (types[field] !== 'list') return;
 
             readListInputs(field);
-            lists[field] = { items: normalizeListItems(field).slice() };
+            lists[field] = {
+                items: normalizeListItems(field).slice(),
+                maxChars: limits[field] || 0
+            };
         });
 
         return lists;

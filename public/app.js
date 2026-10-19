@@ -139,6 +139,15 @@
             config.setTableSchemas(null);
         }
 
+        // ล้างชื่อกลุ่มและความยาวสูงสุดของ type List
+        if (config && config.setListGroups) {
+            config.setListGroups(null);
+        }
+
+        if (config && config.setListLimits) {
+            config.setListLimits(null);
+        }
+
         // ล้างแถวของตารางที่กรอกไว้ในหน้ารายงาน
         if (
             scope.ReportPage &&
@@ -829,6 +838,23 @@
                 report.syncListInput(
                     target.dataset.listInput,
                     Number(target.dataset.listRow),
+                    target.value
+                );
+            }
+
+            return;
+        }
+
+        // ── ความยาวสูงสุดของ type List (หน้า Template Configuration) ──
+        if (target.dataset.listLimit !== undefined) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setListLimit) {
+
+                config.setListLimit(
+                    target.dataset.listLimit,
                     target.value
                 );
             }
@@ -2431,14 +2457,10 @@
             const items =
                 (lists[field] && lists[field].items) || [];
 
-            previewValues[field] = items
-                .map(function (item) {
-                    return String(item == null ? '' : item).trim();
-                })
-                .filter(function (item) {
-                    return item !== '';
-                })
-                .join('\n');
+            // ตัวอย่างต้องตัดบรรทัดด้วยกฎเดียวกับตอนสร้าง docx
+            previewValues[field] = scope.Replace.wrapListItems
+                ? scope.Replace.wrapListItems(items, lists[field].maxChars).join('\n')
+                : items.join('\n');
         });
 
         // รันจริงหนึ่งรอบ เพื่อให้ getWarnings/getApplied เป็นของค่าที่กรอกอยู่ตอนนี้
@@ -3401,6 +3423,12 @@
                     listGroups:
                         config.getListGroups
                             ? config.getListGroups(types)
+                            : {},
+
+                    // จำนวนตัวอักษรสูงสุดต่อบรรทัดของ field ที่เป็น type List
+                    listLimits:
+                        config.getListLimits
+                            ? config.getListLimits(types)
                             : {}
 
                 });
@@ -3581,6 +3609,13 @@
             if (config.setListGroups) {
                 config.setListGroups(
                     record.list_groups
+                );
+            }
+
+            // คืนค่าความยาวสูงสุดของ type List ที่บันทึกไว้ใน template
+            if (config.setListLimits) {
+                config.setListLimits(
+                    record.list_limits
                 );
             }
 
@@ -3862,7 +3897,10 @@
                     record.tables || {},
 
                 listGroups:
-                    record.list_groups || {}
+                    record.list_groups || {},
+
+                listLimits:
+                    record.list_limits || {}
             });
 
             setDbStatus(
@@ -3977,6 +4015,16 @@
                 )
             );
         }
+
+        if (config.getListLimits && config.setListLimits) {
+
+            config.setListLimits(
+                keepFieldsInConfig(
+                    config.getListLimits(kept),
+                    fields
+                )
+            );
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -4009,7 +4057,13 @@
             listGroup:
                 type === 'list'
                     ? ((record.list_groups && record.list_groups[field]) || '')
-                    : ''
+                    : '',
+
+            // จำนวนตัวอักษรสูงสุดต่อบรรทัดของ type List (0 = ไม่จำกัด)
+            maxChars:
+                type === 'list'
+                    ? (Number(record.list_limits && record.list_limits[field]) || 0)
+                    : 0
         };
     }
 
@@ -4033,6 +4087,9 @@
 
         const listGroups =
             Object.assign({}, record.list_groups);
+
+        const listLimits =
+            Object.assign({}, record.list_limits);
 
         // ค่า type ที่ไม่รู้จักกลับไปเป็นค่าเริ่มต้น (เหมือน dropdown ของหน้าแก้ไข)
         const type =
@@ -4084,6 +4141,16 @@
             delete listGroups[field];
         }
 
+        // ความยาวสูงสุดต่อบรรทัด เก็บเฉพาะ field ที่ยังเป็น List และมากกว่า 0
+        const maxChars =
+            Math.floor(Number(values && values.maxChars));
+
+        if (type === 'list' && isFinite(maxChars) && maxChars > 0) {
+            listLimits[field] = maxChars;
+        } else {
+            delete listLimits[field];
+        }
+
         await ensureDb();
 
         await scope.Db.save({
@@ -4116,7 +4183,10 @@
                 tables,
 
             listGroups:
-                listGroups
+                listGroups,
+
+            listLimits:
+                listLimits
         });
 
         // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
@@ -4125,6 +4195,7 @@
         record.placeholders = placeholders;
         record.tables = tables;
         record.list_groups = listGroups;
+        record.list_limits = listLimits;
 
         // หน้า "ตั้งค่าแม่แบบ" ที่เปิดแม่แบบนี้อยู่ต้องตรงกันด้วย
         if (
@@ -4153,6 +4224,10 @@
 
             if (config.setListGroups) {
                 config.setListGroups(listGroups);
+            }
+
+            if (config.setListLimits) {
+                config.setListLimits(listLimits);
             }
 
             fillForm(CONFIG_PAGE);
@@ -4416,6 +4491,9 @@
         const listGroups =
             keepFieldsInConfig(record.list_groups, fields);
 
+        const listLimits =
+            keepFieldsInConfig(record.list_limits, fields);
+
         await ensureDb();
 
         await scope.Db.save({
@@ -4448,7 +4526,10 @@
                 tables,
 
             listGroups:
-                listGroups
+                listGroups,
+
+            listLimits:
+                listLimits
         });
 
         // record ในหน่วยความจำต้องตรงกับไฟล์ใหม่
@@ -4461,6 +4542,7 @@
         record.placeholders = placeholders;
         record.tables = tables;
         record.list_groups = listGroups;
+        record.list_limits = listLimits;
 
         // ถ้าแม่แบบนี้กำลังเปิดแก้ไขอยู่ในหน้า "ตั้งค่าแม่แบบ"
         // state ในหน่วยความจำต้องตรงกับไฟล์ใหม่ด้วย
@@ -4528,6 +4610,9 @@
         const listGroups =
             keepFieldsInConfig(record.list_groups, fields);
 
+        const listLimits =
+            keepFieldsInConfig(record.list_limits, fields);
+
         await ensureDb();
 
         await scope.Db.save({
@@ -4560,7 +4645,10 @@
                 tables,
 
             listGroups:
-                listGroups
+                listGroups,
+
+            listLimits:
+                listLimits
         });
 
         // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
@@ -4572,6 +4660,7 @@
         record.placeholders = placeholders;
         record.tables = tables;
         record.list_groups = listGroups;
+        record.list_limits = listLimits;
 
         // ถ้าแม่แบบนี้กำลังเปิดแก้ไขอยู่ในหน้า "ตั้งค่าแม่แบบ"
         // state ในหน่วยความจำต้องตรงกับไฟล์ใหม่ด้วย
@@ -6634,6 +6723,26 @@
                     config.getPlaceholders
                 )
                     ? config.getPlaceholders()
+                    : {};
+            },
+
+        // จำนวนตัวอักษรสูงสุดต่อบรรทัดของ type List
+        // หน้ารายงานใช้ตัดข้อความตอนสร้างเอกสาร
+        getListLimits:
+            function () {
+
+                const config =
+                    getComponent(
+                        CONFIG_PAGE
+                    );
+
+                return (
+                    config &&
+                    config.getListLimits
+                )
+                    ? config.getListLimits(
+                        getPageValues(CONFIG_PAGE)
+                    )
                     : {};
             },
 

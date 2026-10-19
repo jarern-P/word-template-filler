@@ -61,6 +61,7 @@ const SCHEMA = `
         placeholders TEXT NOT NULL DEFAULT '{}',
         tables     TEXT NOT NULL DEFAULT '{}',
         list_groups TEXT NOT NULL DEFAULT '{}',
+        list_limits TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
@@ -395,6 +396,38 @@ function migrateTemplateListGroups() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ list_limits ให้ตาราง templates
+// ============================================================
+
+// เก็บจำนวนตัวอักษรสูงสุดต่อบรรทัดของ field ที่เป็น type List
+function migrateTemplateListLimits() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(templates)
+        `).all();
+
+    // ยังไม่มีตาราง templates (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "list_limits")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE templates
+        ADD COLUMN list_limits TEXT NOT NULL DEFAULT '{}'
+    `);
+
+    console.log(
+        "Migrated templates table: added 'list_limits' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -409,6 +442,7 @@ function openDatabase() {
     migrateTemplatePlaceholders();
     migrateTemplateTables();
     migrateTemplateListGroups();
+    migrateTemplateListLimits();
 
     db.exec(SCHEMA);
 
@@ -458,7 +492,8 @@ function handleSave(message) {
             locks,
             placeholders,
             tables,
-            listGroups
+            listGroups,
+            listLimits
         } = payload;
 
 
@@ -490,6 +525,9 @@ function handleSave(message) {
         const listGroupsJson =
             JSON.stringify(listGroups || {});
 
+        const listLimitsJson =
+            JSON.stringify(listLimits || {});
+
 
         const docxBuffer =
             Buffer.from(docx);
@@ -517,6 +555,7 @@ function handleSave(message) {
                         placeholders = @placeholders,
                         tables = @tables,
                         list_groups = @list_groups,
+                        list_limits = @list_limits,
                         updated_at = @updated_at
                     WHERE id = @id
                 `)
@@ -531,6 +570,7 @@ function handleSave(message) {
                     placeholders: placeholdersJson,
                     tables: tablesJson,
                     list_groups: listGroupsJson,
+                    list_limits: listLimitsJson,
                     updated_at: new Date().toISOString()
                 });
 
@@ -567,6 +607,7 @@ function handleSave(message) {
                         placeholders,
                         tables,
                         list_groups,
+                        list_limits,
                         created_at,
                         updated_at
                     )
@@ -580,6 +621,7 @@ function handleSave(message) {
                         @placeholders,
                         @tables,
                         @list_groups,
+                        @list_limits,
                         @created_at,
                         @updated_at
                     )
@@ -594,6 +636,7 @@ function handleSave(message) {
                     placeholders: placeholdersJson,
                     tables: tablesJson,
                     list_groups: listGroupsJson,
+                    list_limits: listLimitsJson,
                     created_at: now,
                     updated_at: now
                 });
@@ -659,6 +702,7 @@ function handleList(message) {
                     placeholders,
                     tables,
                     list_groups,
+                    list_limits,
                     created_at,
                     updated_at
                 FROM templates
@@ -678,6 +722,7 @@ function handleList(message) {
                 placeholders: JSON.parse(row.placeholders || "{}"),
                 tables: JSON.parse(row.tables || "{}"),
                 list_groups: JSON.parse(row.list_groups || "{}"),
+                list_limits: JSON.parse(row.list_limits || "{}"),
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }));
@@ -734,6 +779,7 @@ function handleGet(message) {
                     placeholders,
                     tables,
                     list_groups,
+                    list_limits,
                     created_at,
                     updated_at
                 FROM templates
@@ -783,6 +829,9 @@ function handleGet(message) {
 
             list_groups:
                 JSON.parse(row.list_groups || "{}"),
+
+            list_limits:
+                JSON.parse(row.list_limits || "{}"),
 
             created_at:
                 row.created_at,

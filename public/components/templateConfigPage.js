@@ -200,6 +200,83 @@
         });
     }
 
+    // ── ความยาวสูงสุดต่อบรรทัดของ type List ──
+    // 0/ว่าง = ไม่จำกัด — ถ้าเกิน ระบบจะขึ้นย่อหน้าใหม่ (¶) ที่ขอบคำ
+    let listLimitState = {};
+
+    function normalizeListLimit(value) {
+        const number = Math.floor(Number(value));
+
+        return isFinite(number) && number > 0 ? number : 0;
+    }
+
+    function listLimitInputOf(field) {
+        const form = document.getElementById('form');
+        if (!form) return null;
+
+        let found = null;
+
+        form.querySelectorAll('[data-list-limit]').forEach(function (input) {
+            if (input.dataset.listLimit === field) found = input;
+        });
+
+        return found;
+    }
+
+    function createListLimitInput(field) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'list-group-config';
+        wrapper.dataset.listLimitConfig = field;
+        wrapper.hidden = true;
+
+        const label = document.createElement('label');
+        label.textContent = 'ความยาวสูงสุดต่อบรรทัด (ตัวอักษร)';
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.step = '1';
+        input.className = 'list-group-input';
+        input.dataset.listLimit = field;
+        input.placeholder = '0 = ไม่จำกัด';
+        input.autocomplete = 'off';
+
+        const hint = document.createElement('span');
+        hint.className = 'hint list-group-hint';
+        hint.textContent =
+            'ถ้าข้อความเกินจำนวนนี้ ตอนสร้างเอกสารจะขึ้นย่อหน้าใหม่ (¶) ' +
+            'ที่ขอบคำทันที และแต่ละแถวของรายการก็เป็นย่อหน้าใหม่ (¶) เช่นกัน ' +
+            '— ไม่ใช้การขึ้นบรรทัดใหม่แบบ ↲';
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(input);
+        wrapper.appendChild(hint);
+        return wrapper;
+    }
+
+    function renderListLimit(field) {
+        const input = listLimitInputOf(field);
+        if (!input) return;
+
+        const control = scope.FormPage.findControl(field);
+        const isList = !!control && control.value === 'list';
+
+        if (input.parentNode) input.parentNode.hidden = !isList;
+
+        const value = listLimitState[field] || 0;
+
+        input.value = value > 0 ? String(value) : '';
+    }
+
+    function renderAllListLimits() {
+        const form = document.getElementById('form');
+        if (!form) return;
+
+        form.querySelectorAll('[data-list-limit-config]').forEach(function (node) {
+            renderListLimit(node.dataset.listLimitConfig);
+        });
+    }
+
     // คำอธิบาย type list — วาง {{field}} ที่ไหนก็ได้เหมือน field ข้อความ
     function createListHint(field) {
         const hint = document.createElement('p');
@@ -208,7 +285,7 @@
         hint.hidden = true;
         hint.textContent =
             'วาง {{' + field + '}} ที่ไหนก็ได้ (เหมือน field ข้อความ) — ' +
-            'หน้ารายงานจะเพิ่มแถวได้ทีละข้อ และตอนสร้างเอกสารแต่ละข้อจะขึ้นบรรทัดใหม่ ' +
+            'หน้ารายงานจะเพิ่มแถวได้ทีละข้อ และตอนสร้างเอกสารแต่ละข้อจะขึ้นย่อหน้าใหม่ (¶) ' +
             'โดยเริ่มตรงตำแหน่งของ {{' + field + '}}';
         return hint;
     }
@@ -265,6 +342,7 @@
         wrapper.appendChild(createTableConfig(field));
         wrapper.appendChild(createListHint(field));
         wrapper.appendChild(createListGroupInput(field));
+        wrapper.appendChild(createListLimitInput(field));
         return wrapper;
     }
 
@@ -901,6 +979,7 @@
         }
 
         renderListGroup(field);
+        renderListLimit(field);
 
         // ช่อง placeholder ไม่ใช้กับตาราง (ชื่อคอลัมน์บอกความหมายอยู่แล้ว)
         const form = document.getElementById('form');
@@ -975,6 +1054,7 @@
         renderPlaceholderState();
         renderAllTableConfigs();
         renderAllListGroups();
+        renderAllListLimits();
     };
 
     const baseApplyValues = page.applyValues;
@@ -985,6 +1065,7 @@
         baseApplyValues.call(page, values);
         renderAllTableConfigs();
         renderAllListGroups();
+        renderAllListLimits();
     };
 
     // ── โครงตาราง: ให้ app.js เรียกเมื่อผู้ใช้แก้ค่าที่หน้า Template Configuration ──
@@ -1173,6 +1254,50 @@
         }
 
         renderAllListGroups();
+    };
+
+    // เก็บความยาวสูงสุดต่อบรรทัดของ field (0/ว่าง = ลบออก)
+    page.setListLimit = function (field, value) {
+        const limit = normalizeListLimit(value);
+
+        if (limit > 0) listLimitState[field] = limit;
+        else delete listLimitState[field];
+    };
+
+    // ความยาวสูงสุดของ field ที่ยังเป็น List อยู่
+    // อ่านค่าจากช่องที่แสดงอยู่ก่อน แล้วค่อยใช้ state สำรอง — กันกรณี event
+    // ของช่อง number ไม่ถูกส่งมาก่อนกด Save (ค่าที่เห็นบนจอต้องถูกบันทึก)
+    page.getListLimits = function (types) {
+        const byType = types || page.getValues();
+        const limits = {};
+
+        Object.keys(byType).forEach(function (field) {
+            if (byType[field] !== 'list') return;
+
+            const input = listLimitInputOf(field);
+            const value = normalizeListLimit(
+                input ? input.value : listLimitState[field]
+            );
+
+            if (value > 0) limits[field] = value;
+        });
+
+        return limits;
+    };
+
+    // คืนค่าที่บันทึกไว้กลับมา (ตอนโหลด template)
+    page.setListLimits = function (limits) {
+        listLimitState = {};
+
+        if (limits && typeof limits === 'object') {
+            Object.keys(limits).forEach(function (field) {
+                const value = normalizeListLimit(limits[field]);
+
+                if (value > 0) listLimitState[field] = value;
+            });
+        }
+
+        renderAllListLimits();
     };
 
     page.setPlaceholders = function (placeholders) {

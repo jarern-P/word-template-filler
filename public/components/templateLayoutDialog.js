@@ -6050,6 +6050,11 @@ function scheduleFieldHighlight() {
         '            <input type="text" id="layoutFieldGroup" autocomplete="off" placeholder="เว้นว่าง = ไม่ใช้กลุ่ม">',
         '            <p class="hint">list ที่ใช้ชื่อกลุ่มเดียวกันจะแสดงเป็นแถวเดียวกันในหน้ารายงาน (คอลัมน์ละ field) — เพิ่ม/ลบแถวที่ตัวไหนก็มีผลกับทุกตัวในกลุ่ม</p>',
         '        </div>',
+        '        <div class="field" id="layoutFieldLimitBox" hidden>',
+        '            <label for="layoutFieldMaxChars">ความยาวสูงสุดต่อบรรทัด (ตัวอักษร)</label>',
+        '            <input type="number" id="layoutFieldMaxChars" min="0" step="1" autocomplete="off" placeholder="0 = ไม่จำกัด">',
+        '            <p class="hint">ถ้าเกินจำนวนนี้ ตอนสร้างเอกสารจะขึ้นย่อหน้าใหม่ (¶) ที่ขอบคำ และแต่ละแถวก็เป็นย่อหน้าใหม่ (¶) — ไม่ใช้ ↲</p>',
+        '        </div>',
         '        <p class="hint" id="layoutFieldTableHint" hidden>field นี้เป็นตาราง — จำนวนคอลัมน์ / ชื่อคอลัมน์ / สัดส่วน / รูปแบบหัวคอลัมน์ ตั้งได้ที่หน้า "ตั้งค่าแม่แบบ"</p>',
         '        <p class="layout-status" id="layoutFieldStatus"></p>',
         '    </div>',
@@ -6395,7 +6400,7 @@ function scheduleFieldHighlight() {
     }
 
     // แสดงเฉพาะส่วนที่ใช้กับ type ที่เลือก:
-    // ตาราง (คำอธิบาย + ปุ่มไปหน้าแก้ไข) / กลุ่ม (Group) ของ List
+    // ตาราง (คำอธิบาย + ปุ่มไปหน้าแก้ไข) / กลุ่ม (Group) + ความยาวสูงสุดของ List
     function refreshFieldModal() {
         if (!fieldModal) return;
 
@@ -6408,6 +6413,7 @@ function scheduleFieldHighlight() {
         fieldModal.querySelector('#layoutFieldTableHint').hidden = !isTable;
         fieldModal.querySelector('#layoutFieldEditBtn').hidden = !isTable;
         fieldModal.querySelector('#layoutFieldGroupBox').hidden = !isList;
+        fieldModal.querySelector('#layoutFieldLimitBox').hidden = !isList;
     }
 
     function closeFieldDialog() {
@@ -6447,6 +6453,8 @@ function scheduleFieldHighlight() {
             values.placeholder || '';
         fieldModal.querySelector('#layoutFieldGroup').value =
             values.listGroup || '';
+        fieldModal.querySelector('#layoutFieldMaxChars').value =
+            Number(values.maxChars) > 0 ? String(values.maxChars) : '';
 
         setFieldModalStatus('');
         refreshFieldModal();
@@ -6472,7 +6480,8 @@ function scheduleFieldHighlight() {
             type: fieldModal.querySelector('#layoutFieldType').value,
             lock: fieldModal.querySelector('#layoutFieldLock').checked,
             placeholder: fieldModal.querySelector('#layoutFieldPlaceholder').value,
-            listGroup: fieldModal.querySelector('#layoutFieldGroup').value
+            listGroup: fieldModal.querySelector('#layoutFieldGroup').value,
+            maxChars: fieldModal.querySelector('#layoutFieldMaxChars').value
         };
 
         const button = fieldModal.querySelector('#layoutFieldSaveBtn');
