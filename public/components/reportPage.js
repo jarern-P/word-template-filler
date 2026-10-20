@@ -22,6 +22,9 @@
         'ดาวน์โหลด Excel</button>' +
         '<button id="reportImportBtn" type="button" class="plain" style="display:none">' +
         'อัปโหลด Excel</button>' +
+        // วางข้อความ/อัปโหลด .docx/.pdf แล้วจับค่าด้วย regex ของแม่แบบ เติมลงฟอร์มอัตโนมัติ
+        '<button id="reportDataSourceBtn" type="button" class="plain" style="display:none">' +
+        'แหล่งข้อมูล</button>' +
         '<input type="file" id="reportImportInput" accept=".xlsx" hidden>',
         '</div>',
         '</section>'
@@ -269,7 +272,7 @@
     };
 
     page.showExcelButtons = function (show) {
-        ['reportExportBtn', 'reportImportBtn'].forEach(function (id) {
+        ['reportExportBtn', 'reportImportBtn', 'reportDataSourceBtn'].forEach(function (id) {
             const btn = document.getElementById(id);
             if (btn) btn.style.display = show ? 'block' : 'none';
         });

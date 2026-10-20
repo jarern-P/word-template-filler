@@ -1670,6 +1670,13 @@
                     return;
                 }
 
+                // แหล่งข้อมูล — กล่องวางข้อความ/อัปโหลด .docx/.pdf แล้วเติมลงฟอร์ม
+                if (id === 'reportDataSourceBtn') {
+
+                    onOpenReportData(true);
+                    return;
+                }
+
                 // นำเข้า / ส่งออก Excel ของหน้ารายงาน
                 if (id === 'reportExportBtn') {
 
@@ -2447,7 +2454,7 @@
     // ด้วย regex ที่บันทึกไว้กับแม่แบบ (ตั้งค่าได้ที่หน้า "ตั้งค่าแม่แบบ"
     // → ปุ่ม "ข้อมูล" ของรายการแม่แบบ)
     // ──────────────────────────────────────────────────────────────
-    async function onOpenReportData() {
+    async function onOpenReportData(sourceOnly) {
 
         if (
             !state.loaded ||
@@ -2463,9 +2470,11 @@
 
         scope.DataExtractDialog.open({
 
-            mode: 'report',
+            // 'source' = กล่อง "แหล่งข้อมูล" (เฉพาะช่องวางข้อความ/อัปโหลดไฟล์
+            // แล้วกดตกลงเพื่อเติมลงฟอร์มทันที)
+            mode: sourceOnly ? 'source' : 'report',
 
-            title: 'ใส่ข้อมูลลงฟอร์ม',
+            title: sourceOnly ? 'แหล่งข้อมูล' : 'ใส่ข้อมูลลงฟอร์ม',
 
             templateName:
                 getPageMeta(CONFIG_PAGE).templateName ||

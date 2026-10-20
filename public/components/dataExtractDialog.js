@@ -471,9 +471,12 @@
         build();
 
         settings = options || {};
-        mode = settings.mode === 'config' ? 'config' : 'report';
+        mode = settings.mode === 'config'
+            ? 'config'
+            : (settings.mode === 'source' ? 'source' : 'report');
 
         const isConfig = mode === 'config';
+        const isSource = mode === 'source';
 
         el('dataDialogTitle').textContent = settings.title || 'ใส่ข้อมูล';
 
@@ -494,6 +497,14 @@
         el('dataTestBtn').hidden = !isConfig;
         el('dataSavePatternsBtn').hidden = !isConfig;
         el('dataFillBtn').hidden = isConfig;
+
+        // โหมด "แหล่งข้อมูล" = เหลือแค่ช่องวางข้อความ/อัปโหลดไฟล์ + ปุ่มตกลง
+        const results = overlay.querySelector('.data-results');
+        if (results) results.hidden = isSource;
+
+        el('dataFillBtn').textContent = isSource
+            ? 'ตกลง'
+            : 'เติมข้อมูลลงฟอร์ม';
 
         renderPatternList();
 
