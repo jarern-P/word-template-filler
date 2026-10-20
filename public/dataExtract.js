@@ -14,6 +14,12 @@
 //   - หรือพิมพ์แบบมี /.../flags เช่น   /เลขที่\s*([^\n]+)/i
 //   ถ้ามีวงเล็บจับกลุ่ม จะใช้กลุ่มแรก (group 1) ที่จับได้ เป็นค่า
 //   ถ้าไม่มีวงเล็บเลย จะใช้ข้อความที่ match ทั้งก้อน
+//
+// type list (รายการ): regex หนึ่งตัว = หนึ่งแถว
+//   - เติม flag g และ m ให้อัตโนมัติ → เก็บทุก match เป็นแถว
+//     เขียนแบบ ^-\s*(.+)$ ได้เลย
+//   - list ที่อยู่กลุ่ม (Group) เดียวกัน ถูกวาดเป็นแถวเดียวหลายคอลัมน์
+//     วงเล็บที่ n ของ regex = คอลัมน์ที่ n ของกลุ่ม (เรียงตามลำดับ field)
 (function (scope) {
     'use strict';
 
@@ -241,6 +247,60 @@
             .trim();
     }
 
+    // ค่าของ "คอลัมน์ที่ n" จากผล match (ใช้กับ type list ที่อยู่กลุ่มเดียวกัน)
+    // - n = 0/ไม่ระบุ → ใช้วงเล็บแรกที่มีค่า (หรือทั้งก้อนเมื่อไม่มีวงเล็บ)
+    // - n เกินจำนวนวงเล็บ → ถอยไปใช้วงเล็บแรก เพื่อไม่ให้แถวนั้นหายไป
+    function captureColumn(match, column) {
+        if (!match) return '';
+
+        const index = Number(column) || 0;
+
+        if (index > 0 && index < match.length && match[index] !== undefined) {
+            return cleanValue(match[index]);
+        }
+
+        return cleanValue(captureValue(match));
+    }
+
+    // ลำดับคอลัมน์ของ list ที่ใช้กลุ่ม (Group) เดียวกัน
+    //
+    // หน้ารายงานวาด list ที่กลุ่มเดียวกันเป็น "แถวเดียว หลายคอลัมน์"
+    // จึงต้องรู้ว่า field ไหนคือคอลัมน์ที่เท่าไรของกลุ่ม:
+    //   วงเล็บที่ 1 ของ regex = คอลัมน์ที่ 1, วงเล็บที่ 2 = คอลัมน์ที่ 2, ...
+    // เรียงตามลำดับ field ในแม่แบบ (ลำดับเดียวกับที่แสดงในกล่อง "ข้อมูล")
+    //
+    // field ที่อยู่คนเดียวในกลุ่ม (หรือไม่มีกลุ่ม) ไม่ต้องใช้เลขคอลัมน์
+    // → คืนเฉพาะ field ที่กลุ่มมีสมาชิกมากกว่า 1
+    function listColumns(fields, types, listGroups) {
+        const typeMap = types || {};
+        const groupMap = listGroups || {};
+        const byGroup = {};
+        const columns = {};
+
+        (fields || []).forEach(function (field) {
+            if (typeMap[field] !== LIST_TYPE) return;
+
+            const group = String(groupMap[field] == null ? '' : groupMap[field]).trim();
+
+            if (group === '') return;
+
+            if (!byGroup[group]) byGroup[group] = [];
+            byGroup[group].push(field);
+        });
+
+        Object.keys(byGroup).forEach(function (group) {
+            const members = byGroup[group];
+
+            if (members.length < 2) return;
+
+            members.forEach(function (field, index) {
+                columns[field] = index + 1;
+            });
+        });
+
+        return columns;
+    }
+
     // แปลงค่าที่จับได้ให้ตรงกับชนิดของช่องในหน้ารายงาน
     function valueForType(type, value) {
         const text = cleanValue(value);
@@ -269,32 +329,42 @@
 
     // ใช้ regex ของ field หนึ่งกับข้อความ
     // คืน { value, error } — value = '' เมื่อไม่พบ
-    function matchField(text, pattern, type) {
+    //
+    // options.column = เลขคอลัมน์ของ type list ที่อยู่ในกลุ่ม (1 = วงเล็บแรก)
+    function matchField(text, pattern, type, options) {
         const parsed = parsePattern(pattern);
 
         if (!parsed) {
             return { value: '', error: null };
         }
 
+        // list: เก็บทุก match เป็นแถว จึงใส่ g ให้อัตโนมัติ
+        // และใส่ m ด้วย (^ $ ของแต่ละบรรทัด) — pattern เขียนแบบ ^-\s*(.+)$ ได้เลย
         const flags = type === LIST_TYPE
-            ? parsed.flags + 'g'
+            ? parsed.flags +
+                'g' +
+                (parsed.flags.indexOf('m') === -1 ? 'm' : '')
             : parsed.flags;
 
         const regex = new RegExp(parsed.source, flags);
         const source = String(text == null ? '' : text);
 
         if (type === LIST_TYPE) {
+            const column = Number(options && options.column) || 0;
             const items = [];
             let match;
 
+            // 1 match = 1 แถวของ list (ใช้ flag g ให้อัตโนมัติ)
             while ((match = regex.exec(source)) !== null) {
-                const value = cleanValue(captureValue(match));
-
-                if (value !== '') items.push(value);
+                // เก็บแถวที่มีค่าว่างไว้ด้วย เพื่อให้จำนวนแถวของทุกคอลัมน์ในกลุ่มตรงกัน
+                items.push(captureColumn(match, column));
 
                 // กันลูปค้างเมื่อ pattern ว่างหรือจับได้ศูนย์ตัวอักษร
                 if (match[0] === '') regex.lastIndex++;
             }
+
+            // แถวว่างที่ค้างอยู่ท้ายรายการไม่ใช่ข้อมูล
+            while (items.length > 0 && items[items.length - 1] === '') items.pop();
 
             return {
                 value: items.length > 0 ? { items: items } : '',
@@ -317,8 +387,9 @@
      * @param {string[]} fields ชื่อ field ทั้งหมดของแม่แบบ
      * @param {Object} types field → type ('text'/'currency'/...)
      * @param {Object} patterns field → regex
+     * @param {Object} options { listGroups: field → ชื่อกลุ่ม }
      */
-    function apply(text, fields, types, patterns) {
+    function apply(text, fields, types, patterns, options) {
         const result = {
             values: {},
             matched: [],
@@ -330,6 +401,13 @@
 
         const typeMap = types || {};
         const patternMap = patterns || {};
+
+        // list ที่อยู่กลุ่มเดียวกัน: วงเล็บที่ n = คอลัมน์ที่ n ของกลุ่ม
+        const columns = listColumns(
+            fields,
+            typeMap,
+            options && options.listGroups
+        );
 
         (fields || []).forEach(function (field) {
             const type = typeMap[field] || 'text';
@@ -349,7 +427,9 @@
             }
 
             try {
-                const matched = matchField(text, pattern, type);
+                const matched = matchField(text, pattern, type, {
+                    column: columns[field] || 0
+                });
 
                 if (matched.value === '' ||
                     (matched.value && Array.isArray(matched.value.items) && matched.value.items.length === 0)) {
@@ -381,6 +461,7 @@
         textFromPdf: textFromPdf,
         extractFile: extractFile,
         parsePattern: parsePattern,
+        listColumns: listColumns,
         matchField: matchField,
         apply: apply
     };

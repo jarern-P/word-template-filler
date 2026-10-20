@@ -23,10 +23,12 @@
         '    <p id="dataDialogMeta" class="preview-meta"></p>',
         '    <div class="data-body">',
         '        <section id="dataPatternSection" class="data-patterns">',
-        '            <h3>Regex ของแต่ละ field</h3>',
-        '            <p class="hint">พิมพ์ regex ที่ใช้ดึงค่าของช่องนั้นจากข้อความ ' +
+        '            <h3>Regex ของแต่ละ field</h3>',            '            <p class="hint">พิมพ์ regex ที่ใช้ดึงค่าของช่องนั้นจากข้อความ ' +
             'เช่น <code>เลขที่\\s*([^\\n]+)</code> — ถ้ามีวงเล็บจะใช้กลุ่มแรก ' +
-            'ถ้าไม่มีจะใช้ข้อความที่ตรงทั้งก้อน (พิมพ์แบบ <code>/.../i</code> เพื่อใส่ flag ได้)</p>',
+            'ถ้าไม่มีจะใช้ข้อความที่ตรงทั้งก้อน (พิมพ์แบบ <code>/.../i</code> เพื่อใส่ flag ได้)' +
+            '<br>ช่องที่เป็น "รายการ" ใช้ regex ของ <b>1 แถว</b> และเก็บทุก match เป็นแถว ' +
+            '(เช่น <code>^-\\s*(.+)$</code> — ไม่ต้องใส่ flag g/m เอง) ' +
+            'ถ้าอยู่กลุ่มเดียวกัน วงเล็บที่ 2, 3, ... คือคอลัมน์ที่ 2, 3, ... ของกลุ่ม</p>',
         '            <div id="dataPatternList" class="data-pattern-list"></div>',
         '        </section>',
         '        <section class="data-source">',
@@ -125,11 +127,25 @@
     // รายการ regex ของแต่ละ field (โหมด config)
     // ──────────────────────────────────────────────────────────────
 
+    // field ทุกตัวที่ใช้กลุ่ม (Group) เดียวกัน — เรียงตามลำดับในแม่แบบ
+    function fieldsInListGroup(group, fields, types) {
+        const groups = settings.listGroups || {};
+
+        return (fields || []).filter(function (field) {
+            return (
+                types[field] === 'list' &&
+                String(groups[field] || '') === group
+            );
+        });
+    }
+
     function renderPatternList() {
         const list = el('dataPatternList');
         const patterns = settings.patterns || {};
         const fields = settings.fields || [];
         const types = settings.types || {};
+        const groups = settings.listGroups || {};
+        const columns = scope.DataExtract.listColumns(fields, types, groups);
 
         list.innerHTML = '';
 
@@ -152,7 +168,20 @@
 
             const type = document.createElement('span');
             type.className = 'data-pattern-type';
-            type.textContent = typeLabel(types[field]);
+
+            if (types[field] === 'list') {
+                // list ที่อยู่กลุ่มเดียวกับ field อื่น = แถวเดียวหลายคอลัมน์
+                const group = String(groups[field] || '');
+                const members = group === ''
+                    ? []
+                    : fieldsInListGroup(group, fields, types);
+
+                type.textContent = columns[field]
+                    ? 'รายการ · คอลัมน์ ' + columns[field] + '/' + members.length
+                    : 'รายการ · หลายแถว';
+            } else {
+                type.textContent = typeLabel(types[field]);
+            }
 
             const input = document.createElement('input');
             input.type = 'text';
@@ -161,9 +190,18 @@
             input.autocomplete = 'off';
             input.spellcheck = false;
             input.value = patterns[field] || '';
-            input.placeholder = types[field] === 'table'
-                ? 'ตารางใช้ regex ไม่ได้'
-                : 'regex เช่น ' + field + '\\s*[:：]?\\s*([^\\n]+)';
+
+            if (types[field] === 'table') {
+                input.placeholder = 'ตารางใช้ regex ไม่ได้';
+            } else if (types[field] === 'list') {
+                input.placeholder = columns[field]
+                    ? 'regex ของ 1 แถว — วงเล็บที่ ' + columns[field] +
+                        ' ของ regex = คอลัมน์นี้'
+                    : 'regex ของ 1 แถว เช่น ^\\d+\\.\\s*(.+)$';
+            } else {
+                input.placeholder = 'regex เช่น ' + field + '\\s*[:：]?\\s*([^\\n]+)';
+            }
+
             input.disabled = types[field] === 'table';
 
             row.appendChild(name);
@@ -267,7 +305,7 @@
 
     function displayValue(value) {
         if (value && typeof value === 'object' && Array.isArray(value.items)) {
-            return value.items.join(' · ');
+            return value.items.length + ' รายการ: ' + value.items.join(' · ');
         }
 
         return String(value == null ? '' : value);
@@ -354,7 +392,8 @@
                 text,
                 settings.fields || [],
                 settings.types || {},
-                currentPatterns()
+                currentPatterns(),
+                { listGroups: settings.listGroups || {} }
             )
         );
     }
@@ -394,7 +433,8 @@
                 sourceText(),
                 settings.fields || [],
                 settings.types || {},
-                patterns
+                patterns,
+                { listGroups: settings.listGroups || {} }
             )
         );
 

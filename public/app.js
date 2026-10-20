@@ -2488,6 +2488,10 @@
 
             patterns: scope.App.getFieldPatterns(),
 
+            // list ที่อยู่กลุ่มเดียวกัน = แถวเดียวหลายคอลัมน์
+            // regex ของแต่ละ field ใช้วงเล็บตามลำดับคอลัมน์
+            listGroups: scope.App.getListGroups(),
+
             onFill: function (values, result) {
 
                 const report =
@@ -4170,6 +4174,8 @@
                 types: record.types || {},
 
                 patterns: record.patterns || {},
+
+                listGroups: record.list_groups || {},
 
                 onSavePatterns: function (patterns) {
                     return saveTemplatePatterns(record, patterns);
