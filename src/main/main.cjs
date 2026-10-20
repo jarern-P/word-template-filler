@@ -767,6 +767,87 @@ ipcMain.handle(
     }
 );
 // ============================================================
+// DB Query (หน้า Query — รัน SQL ตรงกับ SQLite)
+// ============================================================
+
+ipcMain.handle(
+    "db:query",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "query",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+        }
+
+    }
+);
+
+
+// ============================================================
+// DB Schema (โครงสร้างตาราง/วิว ของหน้า Query)
+// ============================================================
+
+ipcMain.handle(
+    "db:schema",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "schema",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+        }
+
+    }
+);
+
+
+// ============================================================
 // DB Master Save
 // ============================================================
 

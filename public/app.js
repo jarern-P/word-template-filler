@@ -33,6 +33,7 @@
         'word-suggest': 'WordSuggestPage',
         'history': 'HistoryPage',
         'regex': 'RegexPage',
+        'query': 'QueryPage',
         'database': 'DatabasePage'
     };
 

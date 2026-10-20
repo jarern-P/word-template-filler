@@ -26,6 +26,14 @@ contextBridge.exposeInMainWorld(
         dbRemove: (id) =>
             ipcRenderer.invoke("db:remove", id),
 
+        // หน้า Query — รัน SQL ตรงกับฐานข้อมูล (CRUD)
+        dbQuery: (payload) =>
+            ipcRenderer.invoke("db:query", payload),
+
+        // โครงสร้างตาราง/วิว (แถบด้านซ้ายของหน้า Query)
+        dbSchema: () =>
+            ipcRenderer.invoke("db:schema"),
+
         dbMasterSave: (payload) =>
             ipcRenderer.invoke("db:master-save", payload),
 

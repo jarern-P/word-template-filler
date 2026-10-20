@@ -2905,6 +2905,272 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* ============================================================
+   หน้า Query (รัน SQL กับ SQLite)
+   ============================================================ */
+
+.query-layout {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+    margin-top: 18px;
+}
+
+@media (max-width: 1000px) {
+    .query-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* แถบซ้าย: ตาราง/วิว + ประวัติ */
+.query-schema {
+    padding: 16px 18px;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+}
+
+.query-schema-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.query-schema h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+.query-schema .hint {
+    margin: 8px 0 0;
+    font-size: 12px;
+}
+
+.query-schema-hint {
+    margin-top: 14px !important;
+}
+
+.query-history-head {
+    margin-top: 20px !important;
+}
+
+/* รายชื่อตาราง — เลื่อนได้ไม่ให้ดันส่วนอื่นหลุดจอ */
+.query-tables {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    max-height: 340px;
+    overflow-y: auto;
+}
+
+.query-table-item + .query-table-item {
+    margin-top: 6px;
+}
+
+.query-table-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    font-size: 13px;
+    text-align: left;
+    color: var(--ink);
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.query-table-btn:hover {
+    color: var(--pink-700);
+    border-color: var(--pink-300);
+}
+
+.query-table-btn strong {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.query-table-meta {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+}
+
+.query-columns {
+    margin: 4px 0 0 10px;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--ink-soft);
+    word-break: break-word;
+}
+
+.query-tables .empty,
+.query-history .empty {
+    padding: 4px 2px;
+    font-size: 13px;
+    color: var(--ink-faint);
+}
+
+/* ประวัติคำสั่ง */
+.query-history {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    max-height: 190px;
+    overflow-y: auto;
+}
+
+.query-history li + li {
+    margin-top: 4px;
+}
+
+.query-history button {
+    display: block;
+    width: 100%;
+    padding: 6px 9px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: left;
+    color: var(--ink-soft);
+    background: #fff;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.query-history button:hover {
+    color: var(--pink-700);
+    border-color: var(--pink-300);
+}
+
+/* กล่องคำสั่ง + ผลลัพธ์ */
+.query-main {
+    min-width: 0;
+}
+
+.query-editor-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.query-editor-head h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--pink-700);
+}
+
+.query-editor-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.query-sql {
+    width: 100%;
+    padding: 12px 14px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--ink);
+    background: #fff;
+    border: 1px solid var(--line-input);
+    border-radius: var(--radius);
+    resize: vertical;
+}
+
+.query-sql:focus {
+    outline: none;
+    border-color: var(--pink-400);
+    box-shadow: var(--focus-ring);
+}
+
+.query-result {
+    margin-top: 10px;
+}
+
+/* ตารางผลลัพธ์ — หัวตารางค้างไว้ตอนเลื่อนดูข้อมูลยาว ๆ */
+.query-table-wrap {
+    max-height: 58vh;
+    overflow: auto;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.query-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.query-grid th,
+.query-grid td {
+    max-width: 420px;
+    padding: 7px 10px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.query-grid th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    font-weight: 700;
+    color: var(--pink-700);
+    background: var(--pink-50);
+}
+
+.query-grid tbody tr:hover {
+    background: var(--surface-soft);
+}
+
+.query-grid td.null {
+    font-style: italic;
+    color: var(--ink-faint);
+}
+
+.query-grid td.query-empty {
+    padding: 18px;
+    font-style: normal;
+    color: var(--ink-faint);
+    white-space: normal;
+}
+
+/* ข้อความ error ของ SQL (ยาวได้ — ให้ขึ้นบรรทัดใหม่) */
+.query-error {
+    margin: 0;
+    padding: 12px 14px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--danger);
+    background: var(--danger-soft);
+    border: 1px solid #fbd6e2;
+    border-radius: var(--radius);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ============================================================
    หน้าฐานข้อมูล (สำรอง / ย้ายเครื่อง)
    ============================================================ */
 

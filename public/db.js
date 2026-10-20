@@ -166,6 +166,23 @@
             );
         },
 
+        // หน้า Query — รัน SQL ตรงกับฐานข้อมูล
+        // คืน { kind:'rows', columns, rows, rowCount } หรือ
+        // { kind:'change', changes, lastInsertRowid }
+        query: function (sql) {
+            return dbRequest(
+                'dbQuery',
+                { sql: sql }
+            );
+        },
+
+        // โครงสร้างตาราง/วิว (แถบด้านซ้ายของหน้า Query)
+        schema: function () {
+            return dbRequest(
+                'dbSchema'
+            );
+        },
+
         masterSave: function (payload) {
 
             return dbRequest(

@@ -3328,6 +3328,214 @@ function handleDiscardImport(message) {
 
 
 // ============================================================
+// Query / Schema (หน้า Query — รัน SQL กับฐานข้อมูลโดยตรง)
+// ============================================================
+
+// ชื่อตาราง/คอลัมน์เอามาวางใน SQL ตรง ๆ ไม่ได้ — ต้องครอบด้วย "..."
+// และ escape " ที่อยู่ในชื่อซ้ำอีกชั้น
+function sqlIdentifier(name) {
+
+    return '"' +
+        String(name == null ? "" : name).replace(/"/g, '""') +
+        '"';
+}
+
+
+// รัน SQL 1 คำสั่ง
+//
+// - คำสั่งที่คืนแถว (SELECT / PRAGMA / ... RETURNING) → คืนคอลัมน์ + แถว
+//   ใช้ raw(true) เพื่อได้แถวเป็น array: ชื่อคอลัมน์ซ้ำกัน (เช่น SELECT a.id, b.id)
+//   จะไม่ถูกยุบเหลือค่าเดียว
+// - คำสั่งที่แก้ข้อมูล (INSERT / UPDATE / DELETE / CREATE / ...) → คืนจำนวนแถวที่เปลี่ยน
+function handleQuery(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        const sql =
+            String(
+                (message.payload && message.payload.sql) || ""
+            ).trim();
+
+
+        if (sql === "") {
+            throw new Error("ยังไม่มีคำสั่ง SQL");
+        }
+
+
+        const startedAt =
+            Date.now();
+
+        const statement =
+            db.prepare(sql);
+
+
+        if (statement.reader) {
+
+            const columns =
+                statement.columns().map(function (column) {
+                    return column.name;
+                });
+
+
+            statement.raw(true);
+
+
+            const rows =
+                statement.all();
+
+
+            send({
+                id: message.id,
+                ok: true,
+                result: {
+                    kind: "rows",
+                    columns: columns,
+                    rows: rows,
+                    rowCount: rows.length,
+                    durationMs:
+                        Date.now() - startedAt
+                }
+            });
+
+            return;
+        }
+
+
+        const info =
+            statement.run();
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                kind: "change",
+                changes: info.changes,
+                lastInsertRowid:
+                    Number(info.lastInsertRowid),
+                durationMs:
+                    Date.now() - startedAt
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// โครงสร้างฐานข้อมูล — รายชื่อตาราง/วิว พร้อมคอลัมน์และจำนวนแถว
+// ใช้แสดงในแถบด้านซ้ายของหน้า Query
+function handleSchema(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+
+        const objects =
+            db.prepare(`
+                SELECT type, name, sql
+                FROM sqlite_master
+                WHERE type IN ('table', 'view')
+                  AND name NOT LIKE 'sqlite_%'
+                ORDER BY name COLLATE NOCASE
+            `).all();
+
+
+        const result =
+            objects.map(function (object) {
+
+                const columns =
+                    db.prepare(
+                        "PRAGMA table_info(" +
+                        sqlIdentifier(object.name) +
+                        ")"
+                    ).all();
+
+
+                let rowCount = 0;
+
+                try {
+
+                    rowCount =
+                        db.prepare(
+                            "SELECT COUNT(*) AS total FROM " +
+                            sqlIdentifier(object.name)
+                        ).get().total;
+
+                } catch (error) {
+
+                    // วิวที่พังหรือตารางเสมือนที่อ่านไม่ได้ — ไม่ให้ทั้งหน้าล้ม
+                    rowCount = 0;
+                }
+
+
+                return {
+                    type: object.type,
+                    name: object.name,
+                    sql: object.sql || "",
+                    rowCount: rowCount,
+                    columns:
+                        columns.map(function (column) {
+                            return {
+                                name: column.name,
+                                type: column.type || "",
+                                notNull: !!column.notnull,
+                                primaryKey: column.pk > 0
+                            };
+                        })
+                };
+            });
+
+
+        // ตารางขึ้นก่อนวิว แล้วเรียงตามชื่อ
+        result.sort(function (a, b) {
+
+            if (a.type !== b.type) {
+                return a.type === "table" ? -1 : 1;
+            }
+
+            return a.name.localeCompare(b.name);
+        });
+
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                objects: result
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // Message Loop
 // ============================================================
 
@@ -3631,6 +3839,25 @@ parentPort.on("message", (message) => {
             case "discard-import":
 
                 handleDiscardImport(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // Query / Schema (หน้า Query)
+            // ------------------------------------------------
+
+            case "query":
+
+                handleQuery(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "schema":
+
+                handleSchema(message);
 
                 break;
 
