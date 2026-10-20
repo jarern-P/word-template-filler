@@ -27,6 +27,25 @@
         '<button id="saveBtn" type="button" disabled>Save Template</button>'
     ].join('\n');
 
+    // ปุ่มไอคอนมุมบนขวาของหน้าแก้ไข — ยกค่าตั้งไป/มาจากแม่แบบอื่นผ่าน JSON
+    //
+    // ใช้เฉพาะ field ที่ "ชื่อตรงกัน" เท่านั้น (ดู TemplateSettings.matchFields)
+    // นำเข้าแล้วยังไม่บันทึก — ผู้ใช้กด Save Template เพื่อเขียนลงแม่แบบนี้
+    const HEAD_ACTIONS_HTML = [
+        '<button type="button" class="dialog-icon-btn" id="templateSettingsExportBtn"' +
+            ' title="ส่งออกค่าตั้งของแม่แบบนี้เป็นไฟล์ JSON"' +
+            ' aria-label="ส่งออกค่าตั้งของแม่แบบนี้เป็นไฟล์ JSON">' +
+            scope.TemplateSettings.ICONS.export +
+            '</button>',
+        '<button type="button" class="dialog-icon-btn" id="templateSettingsImportBtn"' +
+            ' title="นำเข้าค่าตั้งจากไฟล์ JSON — ใช้เฉพาะ field ที่ชื่อตรงกัน"' +
+            ' aria-label="นำเข้าค่าตั้งจากไฟล์ JSON">' +
+            scope.TemplateSettings.ICONS.import +
+            '</button>',
+        '<input type="file" id="templateSettingsImportInput"' +
+            ' accept=".json,application/json" hidden>'
+    ].join('\n');
+
     // ส่วนรายการ แสดงก่อน editor (list-first)
     const LIST_HTML = [
         '<section class="saved-templates">',
@@ -453,6 +472,7 @@
         renderControl: createTypeSelect,
         metaHTML: META_HTML,
         actionsHTML: ACTIONS_HTML,
+        headActionsHTML: HEAD_ACTIONS_HTML,
         // list-first: รายการอยู่บนสุด แล้ว editor อยู่ในโมดัล
         listHTML: LIST_HTML,
         modalId: 'templateModal',
@@ -1364,8 +1384,14 @@
         const btn = document.getElementById('saveBtn');
         if (btn) btn.disabled = !enabled;
 
-        // ปุ่มที่ต้องมีไฟล์ template อยู่ในมือก่อน (ดาวน์โหลดต้นฉบับ / อัปโหลดทับ)
-        ['downloadTemplateBtn', 'replaceTemplateBtn'].forEach(function (id) {
+        // ปุ่มที่ต้องมีไฟล์ template อยู่ในมือก่อน
+        // (ดาวน์โหลดต้นฉบับ / อัปโหลดทับ / ส่งออก–นำเข้าค่าตั้ง JSON)
+        [
+            'downloadTemplateBtn',
+            'replaceTemplateBtn',
+            'templateSettingsExportBtn',
+            'templateSettingsImportBtn'
+        ].forEach(function (id) {
             const actionBtn = document.getElementById(id);
             if (actionBtn) actionBtn.disabled = !enabled;
         });

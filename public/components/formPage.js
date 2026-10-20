@@ -86,6 +86,8 @@
         const listHTML = config.listHTML || '';
         const modalId = config.modalId || '';
         const editorTitle = config.editorTitle || formTitle;
+        // ปุ่มไอคอนมุมบนขวาของโมดัล (เช่น ส่งออก/นำเข้าค่าตั้ง JSON)
+        const headActionsHTML = config.headActionsHTML || '';
 
         return {
             title: title,
@@ -137,8 +139,11 @@
                         '    <div class="page-modal-dialog">',
                         '        <div class="page-modal-head">',
                         '            <h2>' + editorTitle + '</h2>',
-                        '            <button type="button" class="page-modal-close" data-modal-close="' + modalId + '"' +
+                        '            <div class="dialog-head-tools">',
+                        headActionsHTML ? '                ' + headActionsHTML : '',
+                        '                <button type="button" class="page-modal-close" data-modal-close="' + modalId + '"' +
                             ' aria-label="ปิด">&times;</button>',
+                        '            </div>',
                         '        </div>',
                         '        <div class="page-modal-body">',
                         editor.join('\n'),

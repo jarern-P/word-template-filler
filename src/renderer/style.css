@@ -2651,6 +2651,50 @@ body.table-ratio-dragging .table-ratio-handle {
     color: var(--ink);
 }
 
+/* แถวปุ่มไอคอนมุมบนขวาของโมดัล/กล่องข้อมูล
+   (ส่งออก–นำเข้าค่าตั้งของแม่แบบเป็น JSON) */
+.dialog-head-tools {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dialog-icon-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.dialog-icon-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.dialog-icon-btn:hover {
+    background: var(--surface-soft);
+    color: var(--ink);
+}
+
+.dialog-icon-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* display: inline-flex ข้างบนจะทับ [hidden] ของเบราว์เซอร์ — ต้องปิดเอง */
+.dialog-icon-btn[hidden] {
+    display: none;
+}
+
 .page-modal-body {
     padding: 18px 22px;
     overflow-y: auto;

@@ -1215,6 +1215,16 @@
                     return;
                 }
 
+                // นำเข้าค่าตั้งของแม่แบบจากไฟล์ JSON (หน้า Template Configuration)
+                if (
+                    target &&
+                    target.id === 'templateSettingsImportInput'
+                ) {
+
+                    onTemplateSettingsFileChosen(event);
+                    return;
+                }
+
                 // นำเข้า Excel ของหน้า Master Data
                 if (
                     target &&
@@ -1744,6 +1754,28 @@
                 if (id === 'saveBtn') {
 
                     onSaveTemplate();
+                    return;
+                }
+
+                // ส่งออกค่าตั้งของแม่แบบเป็น JSON (ไอคอนมุมบนขวาของหน้าแก้ไข)
+                if (id === 'templateSettingsExportBtn') {
+
+                    onExportTemplateSettings();
+                    return;
+                }
+
+                // เปิดกล่องเลือกไฟล์ JSON เพื่อนำเข้าค่าตั้ง
+                if (id === 'templateSettingsImportBtn') {
+
+                    const settingsInput =
+                        document.getElementById(
+                            'templateSettingsImportInput'
+                        );
+
+                    if (settingsInput) {
+                        settingsInput.click();
+                    }
+
                     return;
                 }
 
@@ -3602,6 +3634,434 @@
                 state.loaded
             );
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ค่าตั้งของแม่แบบ → ไฟล์ JSON (หน้าแก้ไข → ไอคอนมุมบนขวา)
+    //
+    // ใช้ยกค่าตั้ง (type / ล็อกตำแหน่ง / placeholder / regex / ตาราง /
+    // กลุ่มของ list / ความยาวต่อบรรทัด) จากแม่แบบหนึ่งไปอีกแม่แบบหนึ่ง
+    // โดยนำเข้าเฉพาะ field ที่ "ชื่อตรงกัน" เท่านั้น
+    // ──────────────────────────────────────────────────────────────
+
+    // ค่าตั้งทั้งหมดของแม่แบบที่เปิดอยู่ในหน้าแก้ไข (ตอนนี้)
+    function templateSettingsSnapshot(config) {
+
+        const types =
+            config.getValues();
+
+        return {
+
+            types:
+                types,
+
+            locks:
+                config.getLocks
+                    ? config.getLocks()
+                    : {},
+
+            placeholders:
+                config.getPlaceholders
+                    ? config.getPlaceholders()
+                    : {},
+
+            patterns:
+                config.getPatterns
+                    ? config.getPatterns()
+                    : {},
+
+            tables:
+                config.getTableSchemas
+                    ? config.getTableSchemas(types)
+                    : {},
+
+            listGroups:
+                config.getListGroups
+                    ? config.getListGroups(types)
+                    : {},
+
+            listLimits:
+                config.getListLimits
+                    ? config.getListLimits(types)
+                    : {}
+        };
+    }
+
+    // ชื่อแม่แบบที่ใช้ตั้งชื่อไฟล์ที่ส่งออก
+    function currentTemplateName() {
+
+        return (
+            String(
+                getPageMeta(CONFIG_PAGE).templateName || ''
+            ).trim() ||
+            defaultTemplateName(state.fileName)
+        );
+    }
+
+    // field เหล่านี้มีค่าตั้งที่ต่างจากค่าเริ่มต้นอยู่แล้วหรือไม่
+    // (ถ้ามี = ถามยืนยันก่อนทับ เพราะนำเข้าจะเขียนทับค่าที่ตั้งไว้)
+    function hasExistingSettings(config, fields) {
+
+        const types =
+            config.getValues();
+
+        const locks =
+            config.getLocks ? config.getLocks() : {};
+
+        const placeholders =
+            config.getPlaceholders ? config.getPlaceholders() : {};
+
+        const patterns =
+            config.getPatterns ? config.getPatterns() : {};
+
+        const tables =
+            config.getTableSchemas ? config.getTableSchemas(types) : {};
+
+        const listGroups =
+            config.getListGroups ? config.getListGroups(types) : {};
+
+        const listLimits =
+            config.getListLimits ? config.getListLimits(types) : {};
+
+        return fields.some(function (field) {
+
+            return !!(
+                (types[field] && types[field] !== scope.FieldTypes.defaultValue) ||
+                locks[field] ||
+                placeholders[field] ||
+                patterns[field] ||
+                tables[field] ||
+                listGroups[field] ||
+                listLimits[field]
+            );
+        });
+    }
+
+    // ชื่อ field ไม่เกิน 3 ชื่อ ไว้บอกในข้อความสรุป
+    function shortFieldList(fields) {
+
+        const names = (fields || []).slice(0, 3);
+
+        return names.join(', ') +
+            ((fields || []).length > names.length ? ' …' : '');
+    }
+
+    async function onExportTemplateSettings() {
+
+        if (!state.loaded) {
+
+            await scope.AppDialog.alert(
+                'ยังไม่มีแม่แบบให้ส่งออก'
+            );
+
+            return;
+        }
+
+        const config =
+            getComponent(CONFIG_PAGE);
+
+        if (!config || !config.getValues) {
+            return;
+        }
+
+        const name =
+            currentTemplateName();
+
+        const payload =
+            scope.TemplateSettings.buildExport({
+
+                templateName:
+                    name,
+
+                fields:
+                    state.fields,
+
+                settings:
+                    templateSettingsSnapshot(config)
+            });
+
+        const fileName =
+            scope.TemplateSettings.fileNameFor(name);
+
+        setDbStatus(
+            'กำลังส่งออกค่าตั้ง...'
+        );
+
+        try {
+
+            const result =
+                await scope.TemplateSettings.save(
+                    JSON.stringify(payload, null, 2),
+                    fileName
+                );
+
+            if (result && result.ok === false) {
+                throw new Error(
+                    result.error ||
+                    'บันทึกไฟล์ไม่สำเร็จ'
+                );
+            }
+
+            setDbStatus(
+                'ส่งออกค่าตั้งแล้ว: ' +
+                ((result && result.fileName) || fileName) +
+                ' (โฟลเดอร์ Downloads)'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            setDbStatus(
+                'ส่งออกค่าตั้งไม่สำเร็จ: ' +
+                ((error && error.message) || ''),
+                'error'
+            );
+
+            await scope.AppDialog.alert(
+                'ส่งออกค่าตั้งไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ')
+            );
+        }
+    }
+
+    // อ่านไฟล์ JSON ที่เลือกจาก input แล้วนำเข้าค่าตั้ง
+    async function onTemplateSettingsFileChosen(event) {
+
+        const input =
+            event && event.target;
+
+        const file =
+            input && input.files && input.files[0];
+
+        // ล้างค่า input เพื่อให้เลือกไฟล์เดิมซ้ำได้
+        if (input) input.value = '';
+
+        if (!file) return;
+
+        try {
+
+            await importTemplateSettingsText(
+                await scope.TemplateSettings.readFile(file)
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'อ่านไฟล์ไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ')
+            );
+        }
+    }
+
+    // นำเข้าค่าตั้งจากข้อความ JSON (คืน true = นำเข้าสำเร็จ)
+    async function importTemplateSettingsText(content) {
+
+        if (!state.loaded) {
+
+            await scope.AppDialog.alert(
+                'ยังไม่มีแม่แบบให้ใส่ค่าตั้ง'
+            );
+
+            return false;
+        }
+
+        const parsed =
+            scope.TemplateSettings.parse(content);
+
+        if (!parsed.ok) {
+
+            await scope.AppDialog.alert(
+                parsed.error
+            );
+
+            return false;
+        }
+
+        const config =
+            getComponent(CONFIG_PAGE);
+
+        const fields =
+            state.fields || [];
+
+        const matched =
+            scope.TemplateSettings.matchFields(
+                parsed.settings,
+                fields
+            );
+
+        if (matched.matched.length === 0) {
+
+            await scope.AppDialog.alert(
+                'ไม่มีชื่อ field ที่ตรงกับแม่แบบนี้เลย\n\n' +
+                'ไฟล์นี้มี field: ' +
+                (shortFieldList(
+                    scope.TemplateSettings.fieldNamesIn(parsed.settings)
+                ) || '-') +
+                '\nแม่แบบนี้มี field: ' +
+                (shortFieldList(fields) || '-')
+            );
+
+            return false;
+        }
+
+        // มีค่าตั้งอยู่แล้ว = ถามก่อน กันเผลอทับของเดิม
+        if (hasExistingSettings(config, matched.matched)) {
+
+            const ok =
+                await scope.AppDialog.confirm(
+                    'นำเข้าค่าตั้งจาก' +
+                    (parsed.template.name
+                        ? ' "' + parsed.template.name + '"'
+                        : 'ไฟล์ JSON') +
+                    '\n\nจะเขียนทับค่าตั้งของ ' +
+                    matched.matched.length +
+                    ' field ที่ชื่อตรงกัน' +
+                    (matched.skipped.length > 0
+                        ? ' (ข้าม ' + matched.skipped.length +
+                            ' field ที่ไม่มีในแม่แบบนี้)'
+                        : '') +
+                    '\n\nดำเนินการต่อหรือไม่?'
+                );
+
+            if (!ok) return false;
+        }
+
+        applyTemplateSettings(parsed.settings, matched.matched, config);
+
+        setDbStatus(
+            'นำเข้าค่าตั้งแล้ว: ' +
+            matched.matched.length +
+            ' field' +
+            (matched.skipped.length > 0
+                ? ' · ข้าม ' + matched.skipped.length +
+                    ' field ที่ไม่มีในแม่แบบนี้ (' +
+                    shortFieldList(matched.skipped) + ')'
+                : '') +
+            ' — กด Save Template เพื่อบันทึก'
+        );
+
+        return true;
+    }
+
+    // เขียนค่าที่นำเข้าลง editor — เฉพาะ field ที่ชื่อตรงกัน
+    // ค่าที่ไม่มีในไฟล์ (เช่น ไฟล์ regex-only) จะไม่ถูกแตะ
+    function applyTemplateSettings(settings, fields, config) {
+
+        // 1) type — ต้องรู้ก่อนเพื่อรู้ว่า field ไหนเป็นตาราง/list
+        const types =
+            Object.assign({}, config.getValues());
+
+        fields.forEach(function (field) {
+
+            const type =
+                settings.types && settings.types[field];
+
+            if (typeof type === 'string' && type.trim() !== '') {
+
+                types[field] =
+                    scope.FieldTypes.get(type).value;
+            }
+        });
+
+        // เขียน type กลับลงค่าของหน้า — fillForm จะได้วาด dropdown ให้ตรง
+        const pageValues =
+            getPageValues(CONFIG_PAGE);
+
+        fields.forEach(function (field) {
+            pageValues[field] = types[field];
+        });
+
+        // 2) ค่าตั้งอื่น — เริ่มจากของเดิม แล้วทับเฉพาะ field ที่ตรงกัน
+        const locks =
+            config.getLocks ? config.getLocks() : {};
+
+        const placeholders =
+            config.getPlaceholders ? config.getPlaceholders() : {};
+
+        const patterns =
+            config.getPatterns ? config.getPatterns() : {};
+
+        const tables =
+            config.getTableSchemas ? config.getTableSchemas(types) : {};
+
+        const listGroups =
+            config.getListGroups ? config.getListGroups(types) : {};
+
+        const listLimits =
+            config.getListLimits ? config.getListLimits(types) : {};
+
+        fields.forEach(function (field) {
+
+            // ล็อกตำแหน่ง: ไม่มีในไฟล์ = ปลดล็อก
+            if (settings.locks) {
+
+                if (settings.locks[field]) locks[field] = true;
+                else delete locks[field];
+            }
+
+            // placeholder: ไม่มีในไฟล์ = ล้าง (กลับไปใช้ค่าเริ่มต้น)
+            if (settings.placeholders) {
+
+                if (settings.placeholders[field]) {
+                    placeholders[field] = settings.placeholders[field];
+                } else {
+                    delete placeholders[field];
+                }
+            }
+
+            // regex: ไม่มีในไฟล์ = ล้าง
+            if (settings.patterns) {
+
+                if (settings.patterns[field]) {
+                    patterns[field] = settings.patterns[field];
+                } else {
+                    delete patterns[field];
+                }
+            }
+
+            // โครงตาราง: ใช้เฉพาะเมื่อ field นี้เป็นตาราง
+            if (settings.tables) {
+
+                if (types[field] === 'table' && settings.tables[field]) {
+                    tables[field] = settings.tables[field];
+                } else if (types[field] !== 'table') {
+                    delete tables[field];
+                }
+            }
+
+            // กลุ่มของ list: ใช้เฉพาะเมื่อ field นี้เป็น list
+            if (settings.listGroups) {
+
+                if (types[field] === 'list' && settings.listGroups[field]) {
+                    listGroups[field] = settings.listGroups[field];
+                } else {
+                    delete listGroups[field];
+                }
+            }
+
+            // ความยาวสูงสุดต่อบรรทัด: ใช้เฉพาะเมื่อ field นี้เป็น list
+            if (settings.listLimits) {
+
+                if (types[field] === 'list' && settings.listLimits[field]) {
+                    listLimits[field] = settings.listLimits[field];
+                } else {
+                    delete listLimits[field];
+                }
+            }
+        });
+
+        if (config.setLocks) config.setLocks(locks);
+        if (config.setPlaceholders) config.setPlaceholders(placeholders);
+        if (config.setPatterns) config.setPatterns(patterns);
+        if (config.setTableSchemas) config.setTableSchemas(tables);
+        if (config.setListGroups) config.setListGroups(listGroups);
+        if (config.setListLimits) config.setListLimits(listLimits);
+
+        // วาดฟอร์มใหม่ให้ตรงกับค่าที่เพิ่งนำเข้า (อยู่หน้าเดิม ไม่ปิดโมดัล)
+        fillForm(CONFIG_PAGE);
     }
 
     // เลือก template จาก dropdown ในหน้ารายงาน
@@ -6990,6 +7450,16 @@
         // ใช้โดยหน้า Template Configuration ตอนกด "+ สร้างแม่แบบใหม่"
         resetAll:
             resetAll,
+
+        // ส่งออกค่าตั้งของแม่แบบที่เปิดอยู่เป็น JSON
+        // (ไอคอนมุมบนขวาของหน้าแก้ไข)
+        exportTemplateSettings:
+            onExportTemplateSettings,
+
+        // นำเข้าค่าตั้งจากข้อความ JSON — ใช้เฉพาะ field ที่ชื่อตรงกัน
+        // content = เนื้อหาไฟล์ (คืน true เมื่อนำเข้าสำเร็จ)
+        importTemplateSettings:
+            importTemplateSettingsText,
 
         // อ่านข้อมูลทุกหน้าจากฐานข้อมูลใหม่
         // ใช้โดยหน้าฐานข้อมูลหลังนำเข้าไฟล์ฐานข้อมูลทับของเดิม

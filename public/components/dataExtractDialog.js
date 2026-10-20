@@ -18,7 +18,21 @@
         '<div class="preview-dialog data-dialog" role="dialog" aria-modal="true" aria-labelledby="dataDialogTitle">',
         '    <div class="preview-head">',
         '        <h2 id="dataDialogTitle">ใส่ข้อมูล</h2>',
-        '        <button type="button" class="preview-close" data-data-close aria-label="ปิด">&times;</button>',
+        '        <div class="dialog-head-tools">',
+        '            <button type="button" class="dialog-icon-btn" id="dataSettingsExportBtn"' +
+            ' title="ส่งออก regex ของแม่แบบนี้เป็นไฟล์ JSON"' +
+            ' aria-label="ส่งออก regex เป็นไฟล์ JSON">' +
+            scope.TemplateSettings.ICONS.export +
+            '</button>',
+        '            <button type="button" class="dialog-icon-btn" id="dataSettingsImportBtn"' +
+            ' title="นำเข้า regex จากไฟล์ JSON — ใช้เฉพาะ field ที่ชื่อตรงกัน"' +
+            ' aria-label="นำเข้า regex จากไฟล์ JSON">' +
+            scope.TemplateSettings.ICONS.import +
+            '</button>',
+        '            <input type="file" id="dataSettingsImportInput"' +
+            ' accept=".json,application/json" hidden>',
+        '            <button type="button" class="preview-close" data-data-close aria-label="ปิด">&times;</button>',
+        '        </div>',
         '    </div>',
         '    <p id="dataDialogMeta" class="preview-meta"></p>',
         '    <div class="data-body">',
@@ -102,6 +116,14 @@
         el('dataFillBtn').addEventListener('click', runFill);
         el('dataSavePatternsBtn').addEventListener('click', savePatterns);
 
+        el('dataSettingsExportBtn').addEventListener('click', exportPatterns);
+
+        el('dataSettingsImportBtn').addEventListener('click', function () {
+            el('dataSettingsImportInput').click();
+        });
+
+        el('dataSettingsImportInput').addEventListener('change', importPatternsFromFile);
+
         el('dataUploadDocxBtn').addEventListener('click', function () {
             el('dataDocxInput').click();
         });
@@ -121,6 +143,24 @@
 
     function close() {
         if (overlay) overlay.classList.remove('open');
+    }
+
+    // จำนวน field ที่มี regex (ไม่นับ field ที่เป็นตาราง)
+    function patternCountOf(patterns) {
+        return Object.keys(patterns || {}).filter(function (field) {
+            return settings.types && settings.types[field] === 'table'
+                ? false
+                : String(patterns[field] || '').trim() !== '';
+        }).length;
+    }
+
+    // บรรทัดสรุปใต้หัวกล่อง — อัปเดตเมื่อ regex เปลี่ยน (เช่น หลังนำเข้า)
+    function updateMeta(patterns) {
+        el('dataDialogMeta').textContent = [
+            settings.templateName ? 'แม่แบบ: ' + settings.templateName : '',
+            (settings.fields || []).length + ' field',
+            patternCountOf(patterns) + ' field มี regex'
+        ].filter(Boolean).join(' · ');
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -468,6 +508,141 @@
         close();
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ส่งออก / นำเข้า regex (JSON)
+    //
+    // ไฟล์ที่ส่งออก = เฉพาะ regex ของแม่แบบนี้ (kind = template-patterns)
+    // ตอนนำเข้ารับได้ทั้งไฟล์ regex-only และไฟล์ค่าตั้งทั้งชุด (kind = template-settings)
+    // — ใช้เฉพาะชื่อ field ที่แม่แบบนี้มี และข้าม field ที่เป็นตาราง
+    // ──────────────────────────────────────────────────────────────
+
+    async function exportPatterns() {
+        const button = el('dataSettingsExportBtn');
+        const payload = scope.TemplateSettings.buildPatternExport({
+            templateName: settings.templateName || '',
+            fields: settings.fields || [],
+            patterns: collectPatterns()
+        });
+
+        const fileName = scope.TemplateSettings.fileNameFor(
+            settings.templateName || '',
+            '-regex'
+        );
+
+        button.disabled = true;
+
+        try {
+            const result = await scope.TemplateSettings.save(
+                JSON.stringify(payload, null, 2),
+                fileName
+            );
+
+            if (result && result.ok === false) {
+                throw new Error(result.error || 'บันทึกไฟล์ไม่สำเร็จ');
+            }
+
+            setSourceStatus(
+                'ส่งออก regex แล้ว: ' +
+                ((result && result.fileName) || fileName) +
+                ' (โฟลเดอร์ Downloads)'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'ส่งออก regex ไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ')
+            );
+
+        } finally {
+
+            button.disabled = false;
+        }
+    }
+
+    async function importPatternsFromFile(event) {
+        const input = event && event.target;
+        const file = input && input.files && input.files[0];
+
+        // ล้างค่า input เพื่อให้เลือกไฟล์เดิมซ้ำได้
+        if (input) input.value = '';
+
+        if (!file) return;
+
+        try {
+            const parsed = scope.TemplateSettings.parse(
+                await scope.TemplateSettings.readFile(file)
+            );
+
+            if (!parsed.ok) {
+                await scope.AppDialog.alert(parsed.error);
+                return;
+            }
+
+            // ไฟล์ค่าตั้งทั้งชุด (จากหน้าแก้ไข) ก็นำเข้าได้ — เอาเฉพาะ regex
+            const source = parsed.settings.patterns || {};
+            const fields = settings.fields || [];
+
+            const matched = scope.TemplateSettings.matchFields(
+                { patterns: source },
+                fields
+            );
+
+            if (matched.matched.length === 0) {
+                await scope.AppDialog.alert(
+                    'ไม่มีชื่อ field ที่ตรงกันเลย\n' +
+                    'ไฟล์นี้มี field: ' +
+                    (scope.TemplateSettings.fieldNamesIn(parsed.settings)
+                        .slice(0, 8)
+                        .join(', ') || '-') +
+                    (scope.TemplateSettings.fieldNamesIn(parsed.settings).length > 8
+                        ? ' …'
+                        : '')
+                );
+
+                return;
+            }
+
+            // ช่องของ field ที่เป็นตารางถูกปิดไว้ (regex ใช้กับตารางไม่ได้)
+            const list = el('dataPatternList');
+            let applied = 0;
+
+            list.querySelectorAll('[data-pattern-field]').forEach(function (node) {
+                const field = node.dataset.patternField;
+
+                if (
+                    node.disabled !== true &&
+                    Object.prototype.hasOwnProperty.call(source, field)
+                ) {
+                    node.value = source[field];
+                    applied += 1;
+                }
+            });
+
+            updateMeta(collectPatterns());
+
+            setSourceStatus(
+                'นำเข้า regex แล้ว ' + applied + ' field' +
+                (matched.skipped.length > 0
+                    ? ' · ข้าม ' + matched.skipped.length +
+                        ' field ที่ไม่มีในแม่แบบนี้'
+                    : '') +
+                ' — กด "บันทึก regex" เพื่อเก็บลงแม่แบบ'
+            );
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'นำเข้า regex ไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ')
+            );
+        }
+    }
+
     async function savePatterns() {
         if (!settings.onSavePatterns) {
             return;
@@ -520,23 +695,16 @@
 
         el('dataDialogTitle').textContent = settings.title || 'ใส่ข้อมูล';
 
-        const patterns = settings.patterns || {};
-        const patternCount = Object.keys(patterns).filter(function (field) {
-            return settings.types && settings.types[field] === 'table'
-                ? false
-                : String(patterns[field] || '').trim() !== '';
-        }).length;
-
-        el('dataDialogMeta').textContent = [
-            settings.templateName ? 'แม่แบบ: ' + settings.templateName : '',
-            (settings.fields || []).length + ' field',
-            patternCount + ' field มี regex'
-        ].filter(Boolean).join(' · ');
+        updateMeta(settings.patterns || {});
 
         el('dataPatternSection').hidden = !isConfig;
         el('dataTestBtn').hidden = !isConfig;
         el('dataSavePatternsBtn').hidden = !isConfig;
         el('dataFillBtn').hidden = isConfig;
+
+        // ส่งออก/นำเข้า regex มีเฉพาะโหมดแก้ค่าของแม่แบบ (หน้าข้อมูล)
+        el('dataSettingsExportBtn').hidden = !isConfig;
+        el('dataSettingsImportBtn').hidden = !isConfig;
 
         // โหมด "แหล่งข้อมูล" = เหลือแค่ช่องวางข้อความ/อัปโหลดไฟล์ + ปุ่มตกลง
         const results = overlay.querySelector('.data-results');
