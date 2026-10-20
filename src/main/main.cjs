@@ -1482,6 +1482,60 @@ ipcMain.handle(
 
 
 // ============================================================
+// File Text (ดึงข้อความจาก PDF)
+// ============================================================
+//
+// ปุ่ม "ข้อมูล" ของหน้ารายงาน/ตั้งค่าแม่แบบให้ผู้ใช้อัปโหลด PDF
+// แล้วเอา regex ของแต่ละ field ไปจับค่าจากข้อความที่ได้
+// (ไฟล์ .docx อ่านใน renderer ด้วย JSZip — ดู public/dataExtract.js)
+
+ipcMain.handle(
+    "file:extract-pdf",
+    async function (event, payload) {
+
+        try {
+
+            const data =
+                payload && payload.data;
+
+            if (!data) {
+                throw new Error(
+                    "ไม่ได้รับข้อมูลไฟล์"
+                );
+            }
+
+            // โหลด pdf.js ตอนใช้ครั้งแรก — ถ้าไลบรารีมีปัญหา
+            // แอปส่วนอื่นยังเปิดได้ปกติ (เฉพาะการอ่าน PDF ที่ล้มเหลว)
+            const { extractPdfText } =
+                require("./pdf-text.cjs");
+
+            const text =
+                await extractPdfText(data);
+
+            return {
+                ok: true,
+                text: text
+            };
+
+        } catch (error) {
+
+            console.error(
+                "file:extract-pdf error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    "อ่านข้อความจาก PDF ไม่สำเร็จ"
+            };
+        }
+    }
+);
+
+
+// ============================================================
 // Database File (สำรอง / ย้ายเครื่อง)
 // ============================================================
 //

@@ -34,8 +34,9 @@
         '        <h2>แม่แบบ ที่บันทึกไว้</h2>',
         '        <button id="templateNewBtn" type="button" class="plain"' +
             ' data-modal-open="templateModal">+ สร้างแม่แบบใหม่</button>',
-        '    </div>',        '<p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น' +
+        '    </div>',        '    <p class="hint">กด "แก้ไข" เพื่อเปิดตั้งค่า Type ของแม่แบบนั้น' +
             ' หรือ "จัดตำแหน่ง" เพื่อดูเอกสารจริงแล้วแก้ข้อความ/จัดตำแหน่ง' +
+            ' · "ข้อมูล" เพื่อตั้ง regex และทดสอบดึงข้อมูลจากข้อความ/ไฟล์' +
             ' · "คัดลอก" เพื่อสร้างสำเนาของแม่แบบ</p>',
         '    <p id="dbStatus" class="db-status"></p>',
         '    <ul id="savedList" class="saved-list"></ul>',
@@ -393,6 +394,17 @@
         loadBtn.dataset.action = 'load';
         loadBtn.dataset.id = String(record.id);
 
+        // ตั้งค่า regex ของแต่ละ field + ทดสอบดึงข้อมูลจากข้อความ/ไฟล์
+        // (เปิดกล่องข้อมูล — ดู app.js onOpenTemplateData)
+        const dataBtn = document.createElement('button');
+        dataBtn.type = 'button';
+        dataBtn.className = 'plain';
+        dataBtn.textContent = 'ข้อมูล';
+        dataBtn.title =
+            'ตั้งค่า regex ของแต่ละ field และทดสอบดึงข้อมูลจากข้อความ/ไฟล์ .docx / .pdf';
+        dataBtn.dataset.action = 'data';
+        dataBtn.dataset.id = String(record.id);
+
         // เปิดเอกสารจริง (docx-preview) เพื่อดูตำแหน่งและแก้ข้อความ
         // (logic อยู่ใน app.js เพราะต้องอ่าน/เขียนฐานข้อมูล)
         const layoutBtn = document.createElement('button');
@@ -423,6 +435,7 @@
 
         actions.appendChild(layoutBtn);
         actions.appendChild(loadBtn);
+        actions.appendChild(dataBtn);
         actions.appendChild(copyBtn);
         actions.appendChild(deleteBtn);
 
@@ -1018,6 +1031,9 @@
     // placeholder (ข้อความตัวอย่าง) ของแต่ละ field (เก็บแยกจากค่าของ type)
     let placeholderState = {};
 
+    // regex ที่ใช้ดึงค่าของแต่ละ field (แก้ที่ปุ่ม "ข้อมูล" ของรายการแม่แบบ)
+    let patternState = {};
+
     // เติมสถานะติ๊กกลับเข้า checkbox หลังฟอร์มถูกวาดใหม่
     function renderLockState() {
         const form = document.getElementById('form');
@@ -1298,6 +1314,36 @@
         }
 
         renderAllListLimits();
+    };
+
+    // ── regex ของแต่ละ field (ใช้ดึงข้อมูลด้วยปุ่ม "ข้อมูล") ──
+
+    // เก็บ regex ของ field — เว้นว่าง = ลบออก
+    page.setPattern = function (field, value) {
+        const pattern = String(value == null ? '' : value);
+
+        if (pattern.trim() === '') {
+            delete patternState[field];
+        } else {
+            patternState[field] = pattern;
+        }
+    };
+
+    page.getPatterns = function () {
+        return Object.assign({}, patternState);
+    };
+
+    // คืนค่าที่บันทึกไว้กลับมา (ตอนโหลด template) — null/{} = ไม่มี regex
+    page.setPatterns = function (patterns) {
+        patternState = {};
+
+        if (patterns && typeof patterns === 'object') {
+            Object.keys(patterns).forEach(function (field) {
+                const value = String(patterns[field] == null ? '' : patterns[field]);
+
+                if (value.trim() !== '') patternState[field] = value;
+            });
+        }
     };
 
     page.setPlaceholders = function (placeholders) {

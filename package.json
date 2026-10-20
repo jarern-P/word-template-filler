@@ -16,7 +16,8 @@
     "build:exe:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^13.0.3",
+    "pdfjs-dist": "^3.11.174"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",

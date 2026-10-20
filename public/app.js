@@ -131,6 +131,11 @@
             config.setPlaceholders(null);
         }
 
+        // ล้าง regex ที่ใช้ดึงข้อมูล (ปุ่ม "ข้อมูล")
+        if (config && config.setPatterns) {
+            config.setPatterns(null);
+        }
+
         // ล้างโครงตารางที่ตั้งไว้ (type = Table)
         if (
             config &&
@@ -410,6 +415,10 @@
                 component.showExcelButtons(false);
             }
 
+            if (component.showDataButton) {
+                component.showDataButton(false);
+            }
+
             if (component.setSaveEnabled) {
                 component.setSaveEnabled(false);
             }
@@ -441,6 +450,11 @@
             component.showExcelButtons(state.fields.length > 0);
         }
 
+        // ปุ่ม "ใส่ข้อมูล" (regex) มีเฉพาะหน้ารายงาน
+        if (component.showDataButton) {
+            component.showDataButton(state.fields.length > 0);
+        }
+
         if (component.setSaveEnabled) {
             component.setSaveEnabled(true);
         }
@@ -455,7 +469,8 @@
             scope.SuggestMenu,
             scope.DatePicker,
             scope.MasterLookup,
-            scope.PreviewDialog
+            scope.PreviewDialog,
+            scope.DataExtractDialog
         ].forEach(function (popup) {
 
             if (popup && popup.close) {
@@ -1648,6 +1663,13 @@
                     return;
                 }
 
+                // ใส่ข้อมูลจากข้อความ/ไฟล์ด้วย regex (หน้ารายงาน)
+                if (id === 'reportDataBtn') {
+
+                    onOpenReportData();
+                    return;
+                }
+
                 // นำเข้า / ส่งออก Excel ของหน้ารายงาน
                 if (id === 'reportExportBtn') {
 
@@ -1970,6 +1992,12 @@
                 } else if (action === 'layout') {
 
                     onOpenLayout(
+                        recordId
+                    );
+
+                } else if (action === 'data') {
+
+                    onOpenTemplateData(
                         recordId
                     );
 
@@ -2410,6 +2438,82 @@
             component.getFieldHighlight &&
             component.getFieldHighlight()
         );
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ใส่ข้อมูลด้วย regex (หน้ารายงาน → ปุ่ม "ใส่ข้อมูล")
+    //
+    // เปิดกล่องให้วางข้อความ หรืออัปโหลด .docx / .pdf แล้วจับค่าของแต่ละ field
+    // ด้วย regex ที่บันทึกไว้กับแม่แบบ (ตั้งค่าได้ที่หน้า "ตั้งค่าแม่แบบ"
+    // → ปุ่ม "ข้อมูล" ของรายการแม่แบบ)
+    // ──────────────────────────────────────────────────────────────
+    async function onOpenReportData() {
+
+        if (
+            !state.loaded ||
+            state.fields.length === 0
+        ) {
+
+            await scope.AppDialog.alert(
+                'ยังไม่มี template ให้ใส่ข้อมูล'
+            );
+
+            return;
+        }
+
+        scope.DataExtractDialog.open({
+
+            mode: 'report',
+
+            title: 'ใส่ข้อมูลลงฟอร์ม',
+
+            templateName:
+                getPageMeta(CONFIG_PAGE).templateName ||
+                state.fileName,
+
+            fields: state.fields,
+
+            // type ของ field เก็บไว้ใน state ของหน้า config
+            // (ตอนอยู่หน้ารายงาน #form เป็นฟอร์มของหน้ารายงาน อ่านจาก DOM ไม่ได้)
+            types: scope.App.getFieldTypes(),
+
+            patterns: scope.App.getFieldPatterns(),
+
+            onFill: function (values, result) {
+
+                const report =
+                    getComponent(DEFAULT_PAGE);
+
+                // ค่าธรรมดาเก็บลง pageValues ด้วย เพื่ออยู่ต่อเมื่อสลับหน้า
+                const plain = {};
+
+                Object.keys(values).forEach(function (field) {
+                    if (typeof values[field] === 'string') {
+                        plain[field] = values[field];
+                    }
+                });
+
+                Object.assign(
+                    getPageValues(DEFAULT_PAGE),
+                    plain
+                );
+
+                if (report.applyExtractedValues) {
+                    report.applyExtractedValues(values);
+                }
+
+                clearReplaceWarnings();
+
+                showDownloadStatus(
+                    'เติมข้อมูลจาก regex แล้ว: ' +
+                    result.matched.length +
+                    ' field' +
+                    (result.unmatched.length > 0
+                        ? ' (ไม่พบ ' + result.unmatched.length + ' field)'
+                        : '')
+                );
+            }
+        });
     }
 
     async function onPreview() {
@@ -3412,6 +3516,12 @@
                     placeholders:
                         config.getPlaceholders(),
 
+                    // regex ที่ใช้ดึงข้อมูลของแต่ละ field (ปุ่ม "ข้อมูล")
+                    patterns:
+                        config.getPatterns
+                            ? config.getPatterns()
+                            : {},
+
                     // โครงตาราง (จำนวนคอลัมน์ / ชื่อหัวคอลัมน์)
                     // ของ field ที่เป็น type Table
                     tables:
@@ -3595,6 +3705,13 @@
             if (config.setPlaceholders) {
                 config.setPlaceholders(
                     record.placeholders
+                );
+            }
+
+            // คืน regex ที่บันทึกไว้ใน template (ใช้กับปุ่ม "ข้อมูล")
+            if (config.setPatterns) {
+                config.setPatterns(
+                    record.patterns
                 );
             }
 
@@ -3893,6 +4010,9 @@
                 placeholders:
                     record.placeholders || {},
 
+                patterns:
+                    record.patterns || {},
+
                 tables:
                     record.tables || {},
 
@@ -3918,6 +4038,141 @@
             await scope.AppDialog.alert(
                 'คัดลอกไม่สำเร็จ: ' +
                 error.message
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ข้อมูล (หน้ารายการแม่แบบ → ปุ่ม "ข้อมูล")
+    //
+    // เปิดกล่องตั้ง regex ของแต่ละ field + ทดสอบอัปโหลด/วางข้อความ
+    // การทดสอบไม่ถูกบันทึก — บันทึกเฉพาะ regex กลับลงแม่แบบ
+    // ──────────────────────────────────────────────────────────────
+
+    // บันทึก regex ลงแม่แบบ (ไม่แตะค่าตั้งอื่น)
+    async function saveTemplatePatterns(record, patterns) {
+
+        await ensureDb();
+
+        await scope.Db.save({
+
+            id:
+                record.id,
+
+            name:
+                record.name,
+
+            fileName:
+                record.file_name,
+
+            docx:
+                record.docx,
+
+            fields:
+                record.fields,
+
+            types:
+                record.types,
+
+            locks:
+                record.locks,
+
+            placeholders:
+                record.placeholders,
+
+            patterns:
+                patterns || {},
+
+            tables:
+                record.tables,
+
+            listGroups:
+                record.list_groups,
+
+            listLimits:
+                record.list_limits
+        });
+
+        // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
+        record.patterns = patterns || {};
+
+        // รายการที่แคชไว้ใช้แสดงจำนวน/เปิดกล่องครั้งถัดไป
+        (templateRecords || []).forEach(function (item) {
+            if (item.id === record.id) {
+                item.patterns = record.patterns;
+            }
+        });
+
+        // ถ้าแม่แบบนี้เป็นตัวที่โหลดอยู่ในหน้าแก้ไข/หน้ารายงาน
+        // (state.templateId ใช้ร่วมกันทั้งสองหน้า) ต้องอัปเดตค่าในหน่วยความจำด้วย
+        if (state.templateId === record.id) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setPatterns) {
+                config.setPatterns(record.patterns);
+            }
+        }
+
+        setDbStatus(
+            'บันทึก regex แล้ว: ' + record.name
+        );
+
+        await refreshTemplateList();
+    }
+
+    async function onOpenTemplateData(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            const record =
+                await scope.Db.get(
+                    recordId
+                );
+
+            if (!record) {
+
+                await scope.AppDialog.alert(
+                    'ไม่พบ template นี้ (อาจถูกลบไปแล้ว)'
+                );
+
+                await refreshTemplateList();
+
+                return;
+            }
+
+            scope.DataExtractDialog.open({
+
+                mode: 'config',
+
+                title: 'ข้อมูล — ' + record.name,
+
+                templateName: record.name,
+
+                fields: record.fields || [],
+
+                types: record.types || {},
+
+                patterns: record.patterns || {},
+
+                onSavePatterns: function (patterns) {
+                    return saveTemplatePatterns(record, patterns);
+                }
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'เปิดหน้าข้อมูลไม่สำเร็จ: ' + error.message
             );
         }
     }
@@ -3989,6 +4244,16 @@
             config.setPlaceholders(
                 keepFieldsInConfig(
                     config.getPlaceholders(),
+                    fields
+                )
+            );
+        }
+
+        if (config.getPatterns && config.setPatterns) {
+
+            config.setPatterns(
+                keepFieldsInConfig(
+                    config.getPatterns(),
                     fields
                 )
             );
@@ -4081,6 +4346,11 @@
 
         const placeholders =
             Object.assign({}, record.placeholders);
+
+        // regex ของ field ไม่ได้แก้ในเมนูนี้ — คงค่าเดิมไว้
+        // (ถ้าไม่ส่งไปด้วย การบันทึกจะล้าง regex ทั้งหมด)
+        const patterns =
+            Object.assign({}, record.patterns);
 
         const tables =
             Object.assign({}, record.tables);
@@ -4179,6 +4449,9 @@
             placeholders:
                 placeholders,
 
+            patterns:
+                patterns,
+
             tables:
                 tables,
 
@@ -4193,6 +4466,7 @@
         record.types = types;
         record.locks = locks;
         record.placeholders = placeholders;
+        record.patterns = patterns;
         record.tables = tables;
         record.list_groups = listGroups;
         record.list_limits = listLimits;
@@ -4485,6 +4759,9 @@
         const placeholders =
             keepFieldsInConfig(record.placeholders, fields);
 
+        const patterns =
+            keepFieldsInConfig(record.patterns, fields);
+
         const tables =
             keepFieldsInConfig(record.tables, fields);
 
@@ -4522,6 +4799,9 @@
             placeholders:
                 placeholders,
 
+            patterns:
+                patterns,
+
             tables:
                 tables,
 
@@ -4540,6 +4820,7 @@
         record.types = types;
         record.locks = locks;
         record.placeholders = placeholders;
+        record.patterns = patterns;
         record.tables = tables;
         record.list_groups = listGroups;
         record.list_limits = listLimits;
@@ -4604,6 +4885,9 @@
         const placeholders =
             keepFieldsInConfig(record.placeholders, fields);
 
+        const patterns =
+            keepFieldsInConfig(record.patterns, fields);
+
         const tables =
             keepFieldsInConfig(record.tables, fields);
 
@@ -4641,6 +4925,9 @@
             placeholders:
                 placeholders,
 
+            patterns:
+                patterns,
+
             tables:
                 tables,
 
@@ -4658,6 +4945,7 @@
         record.types = types;
         record.locks = locks;
         record.placeholders = placeholders;
+        record.patterns = patterns;
         record.tables = tables;
         record.list_groups = listGroups;
         record.list_limits = listLimits;
@@ -6723,6 +7011,24 @@
                     config.getPlaceholders
                 )
                     ? config.getPlaceholders()
+                    : {};
+            },
+
+        // regex ที่ใช้ดึงข้อมูลของแต่ละ field
+        // (ตั้งค่าในหน้า "ตั้งค่าแม่แบบ" → ปุ่ม "ข้อมูล")
+        getFieldPatterns:
+            function () {
+
+                const config =
+                    getComponent(
+                        CONFIG_PAGE
+                    );
+
+                return (
+                    config &&
+                    config.getPatterns
+                )
+                    ? config.getPatterns()
                     : {};
             },
 

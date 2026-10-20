@@ -51,6 +51,8 @@
     // ปุ่มดูตัวอย่างก่อนดาวน์โหลด + นำเข้า/ส่งออก Excel (แสดงเฉพาะเมื่อโหลด template แล้ว
     // — ดู showPreviewButton / showExcelButtons)
     const ACTIONS_HTML =
+        '<button id="reportDataBtn" type="button" class="plain" style="display:none">' +
+        'ใส่ข้อมูล</button>' +
         '<button id="previewBtn" type="button" class="plain" style="display:none">' +
         'ดูตัวอย่างก่อนดาวน์โหลด</button>';
 
@@ -257,6 +259,12 @@
 
     page.showPreviewButton = function (show) {
         const btn = document.getElementById('previewBtn');
+        if (btn) btn.style.display = show ? 'block' : 'none';
+    };
+
+    // ปุ่ม "ใส่ข้อมูล" (วางข้อความ/อัปโหลด .docx/.pdf แล้วจับค่าด้วย regex)
+    page.showDataButton = function (show) {
+        const btn = document.getElementById('reportDataBtn');
         if (btn) btn.style.display = show ? 'block' : 'none';
     };
 
@@ -1326,6 +1334,28 @@
         page.syncTables(values);
         page.syncLists(values);
         syncRowsBar();
+    };
+
+    // เติมค่าที่จับได้จากปุ่ม "ใส่ข้อมูล" (regex) ลงฟอร์ม
+    // - ค่าธรรมดา: เขียนลงช่อง [data-field]
+    // - type list: values[field] = { items: [...] } → วาดแถวใหม่
+    // - ถ้ามีชุดข้อมูลจาก Excel อยู่: รวมค่าลง "แถวที่กำลังดู" ไม่ทิ้งแถวอื่น
+    page.applyExtractedValues = function (values) {
+        if (!values) return;
+
+        if (importedRows.length > 0) {
+            importedRows[importedIndex] = Object.assign(
+                {},
+                importedRows[importedIndex],
+                values
+            );
+
+            page.applyValues(importedRows[importedIndex]);
+            syncRowsBar();
+            return;
+        }
+
+        page.applyValues(values);
     };
 
     // เติมแถวของตารางกลับเข้าฟอร์ม (ใช้ตอนกดใช้ซ้ำจากประวัติ)

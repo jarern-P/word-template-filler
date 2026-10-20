@@ -115,6 +115,14 @@ contextBridge.exposeInMainWorld(
             ipcRenderer.invoke(
                 "file:save",
                 payload
+            ),
+
+        // ดึงข้อความจากไฟล์ PDF (ใช้กับปุ่ม "ข้อมูล")
+        // payload = { data } — คืน { ok, text } หรือ { ok:false, error }
+        extractPdfText: (payload) =>
+            ipcRenderer.invoke(
+                "file:extract-pdf",
+                payload
             )
     }
 );
