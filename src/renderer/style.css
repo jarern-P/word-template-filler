@@ -2735,6 +2735,176 @@ body.table-ratio-dragging .table-ratio-handle {
 }
 
 /* ============================================================
+   หน้า Regex (เครื่องมือสร้าง/อธิบาย regex)
+   ============================================================ */
+
+.regex-intro {
+    margin: 0 0 20px;
+}
+
+/* ช่องกรอกของตัวสร้าง — 2 คอลัมน์บนจอกว้าง */
+.regex-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 18px;
+}
+
+.regex-grid .field {
+    margin: 10px 0;
+}
+
+@media (max-width: 900px) {
+    .regex-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.regex-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    margin: 12px 0 4px;
+}
+
+.regex-options label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.regex-options input[type="checkbox"] {
+    width: auto;
+    accent-color: var(--pink-500);
+}
+
+/* กล่องแสดง regex ที่ได้ + ปุ่มคัดลอก */
+.regex-result {
+    margin-top: 14px;
+    padding: 14px 16px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.regex-result-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.regex-result-head h3,
+.regex-explain h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink);
+}
+
+.regex-code {
+    margin: 10px 0 0;
+    padding: 11px 13px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--pink-700);
+    background: var(--surface-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    /* pattern ยาวได้ — ให้ขึ้นบรรทัดใหม่แทนการล้นออกนอกกล่อง */
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.regex-code.empty {
+    font-family: inherit;
+    color: var(--ink-faint);
+}
+
+/* ช่องวาง regex ใช้ฟอนต์ monospace อ่านง่ายกว่า */
+#regexCustom {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 14px;
+}
+
+.regex-explain {
+    margin-top: 18px;
+}
+
+/* คำอธิบายทีละส่วน — อ่านจากบนลงล่างตามลำดับของ regex */
+.regex-steps {
+    margin: 10px 0 0;
+    padding-left: 24px;
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--ink-soft);
+}
+
+.regex-steps:empty {
+    display: none;
+}
+
+.regex-steps li::marker {
+    color: var(--pink-500);
+    font-weight: 700;
+}
+
+.regex-steps li + li {
+    margin-top: 2px;
+}
+
+/* ผลการทดสอบกับข้อความ */
+.regex-matches {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+}
+
+.regex-matches:empty {
+    display: none;
+}
+
+.regex-matches li {
+    padding: 9px 12px;
+    font-size: 14px;
+    background: #fff;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+}
+
+.regex-matches li + li {
+    margin-top: 6px;
+}
+
+.regex-match-head {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--ink-faint);
+}
+
+.regex-match-value {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    color: var(--pink-700);
+    background: var(--pink-50);
+    border-radius: var(--radius-sm);
+    padding: 1px 5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.regex-match-groups {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+/* ============================================================
    หน้าฐานข้อมูล (สำรอง / ย้ายเครื่อง)
    ============================================================ */
 

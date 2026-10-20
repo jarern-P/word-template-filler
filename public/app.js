@@ -32,6 +32,7 @@
         'master-data': 'MasterDataPage',
         'word-suggest': 'WordSuggestPage',
         'history': 'HistoryPage',
+        'regex': 'RegexPage',
         'database': 'DatabasePage'
     };
 
@@ -498,6 +499,13 @@
 
         // เปิดหน้าใหม่ = ล้างสถานะ disabled/readOnly ที่ค้างจากหน้าเดิมออก
         clearDisabledFields();
+
+        // หน้าที่มี onShow (เช่น หน้าเครื่องมือ Regex) เตรียม UI หลังวาดหน้าเสร็จ
+        const component = getComponent(page);
+
+        if (component && component.onShow) {
+            component.onShow();
+        }
     }
 
     // เคลียร์ disabled/readOnly ของช่องกรอกทุกช่องในหน้าปัจจุบัน
