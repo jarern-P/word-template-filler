@@ -115,11 +115,14 @@ async function renderPageToPng(page, scale) {
 // ภาพตัวอย่าง + ตำแหน่งคำ (สำหรับหน้าจอ "ตรวจคำบน PDF")
 // ------------------------------------------------------------------
 
-// ความกว้างภาพตัวอย่าง (px) — พอให้เห็นตำแหน่งคำ และไม่ทำให้ข้อมูลที่ส่งข้าม IPC ใหญ่เกิน
-const PREVIEW_WIDTH = 900;
-const PREVIEW_QUALITY = 0.72;
+// ความกว้างภาพตัวอย่าง (px)
+// ใช้ความละเอียดเต็มของหน้า (~200 DPI ≈ 1650-1800 px กว้าง) ไม่ย่อลงมาเป็น 900
+// เพราะภาพจะแตก/มัวจนอ่านตัวอักษรไทยไม่ออกเมื่อแสดงบนจอ
+// (หน้าจอขยายได้ถึง 2.2x — ภาพระดับนี้ยังคมพอ และ webp ทำให้ไฟล์ไม่ใหญ่)
+const PREVIEW_WIDTH = 1800;
 
 function previewImage(canvas) {
+    // ไม่ขยายเกินความละเอียดจริง — ขยายแล้วได้แต่ภาพเบลอ
     const ratio = Math.min(1, PREVIEW_WIDTH / canvas.width);
     const width = Math.max(1, Math.round(canvas.width * ratio));
     const height = Math.max(1, Math.round(canvas.height * ratio));
@@ -131,9 +134,13 @@ function previewImage(canvas) {
     context.imageSmoothingQuality = "high";
     context.drawImage(canvas, 0, 0, width, height);
 
+    // webp คุณภาพสูง: ตัวอักษรคมกว่า JPEG ที่ระดับความละเอียดเท่ากัน
+    // และไฟล์เล็กกว่า (เนื้อหาส่วนใหญ่เป็นพื้นขาว)
+    // หมายเหตุ: toBuffer ของ @napi-rs/canvas รับคุณภาพเป็น 0-100
+    // (ถ้าส่ง 0.9 จะกลายเป็นคุณภาพ ~1% — ภาพแตกเป็นบล็อก)
     return {
-        image: "data:image/jpeg;base64," +
-            preview.toBuffer("image/jpeg", PREVIEW_QUALITY).toString("base64"),
+        image: "data:image/webp;base64," +
+            preview.toBuffer("image/webp", 85).toString("base64"),
         width: width,
         height: height,
         ratio: ratio
