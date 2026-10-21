@@ -77,6 +77,9 @@
     let settings = null;   // ค่าที่ส่งมาตอน open
     let mode = 'report';
 
+    // กำลังอ่านไฟล์อยู่หรือไม่ — ใช้ตัดสินว่าจะแสดงความคืบหน้าหรือไม่
+    let readingFile = false;
+
     function el(id) {
         return document.getElementById(id);
     }
@@ -131,6 +134,35 @@
         el('dataUploadPdfBtn').addEventListener('click', function () {
             el('dataPdfInput').click();
         });
+
+        // ความคืบหน้าจาก main process ระหว่างอ่าน PDF
+        // (เอกสารสแกนต้อง OCR ทีละหน้า จึงใช้เวลาหลายวินาที)
+        if (window.electronAPI && window.electronAPI.onPdfExtractProgress) {
+            window.electronAPI.onPdfExtractProgress(function (progress) {
+                if (!readingFile || !progress) return;
+
+                if (progress.status === 'ocr') {
+                    const percent = Math.round(
+                        (Number(progress.progress) || 0) * 100
+                    );
+
+                    setSourceStatus(
+                        'พบเอกสารสแกน — กำลัง OCR หน้า ' +
+                        progress.page + '/' + progress.pageCount +
+                        ' (' + percent + '%)...'
+                    );
+                    return;
+                }
+
+                if (progress.status === 'reading') {
+                    setSourceStatus(
+                        'กำลังอ่านหน้า ' +
+                        progress.page + '/' + progress.pageCount +
+                        '...'
+                    );
+                }
+            });
+        }
 
         el('dataDocxInput').addEventListener('change', function (event) {
             readFile(event.target);
@@ -296,16 +328,34 @@
 
         if (!file) return;
 
+        readingFile = true;
         setSourceStatus('กำลังอ่านไฟล์ ' + file.name + '...');
 
         try {
-            const text = await scope.DataExtract.extractFile(file);
+            const result = await scope.DataExtract.extractFile(file);
+
+            // extractFile คืน { text, ocrPages }
+            const text = String(
+                result && typeof result === 'object'
+                    ? result.text || ''
+                    : result || ''
+            );
+
+            const ocrPages =
+                (result && Array.isArray(result.ocrPages))
+                    ? result.ocrPages
+                    : [];
+
             const textarea = el('dataSourceText');
 
             textarea.value = text;
             setSourceStatus(
                 'อ่านแล้ว: ' + file.name +
-                ' — ' + text.length + ' ตัวอักษร'
+                ' — ' + text.length + ' ตัวอักษร' +
+                (ocrPages.length > 0
+                    ? ' (OCR ' + ocrPages.length + ' หน้า: ' +
+                        ocrPages.join(', ') + ')'
+                    : '')
             );
 
             hideResults();
@@ -323,6 +373,9 @@
                     (error && error.message) || 'อ่านไฟล์ไม่สำเร็จ'
                 );
             }
+
+        } finally {
+            readingFile = false;
         }
     }
 

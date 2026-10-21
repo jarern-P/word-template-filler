@@ -1569,6 +1569,12 @@ ipcMain.handle(
 // ปุ่ม "ข้อมูล" ของหน้ารายงาน/ตั้งค่าแม่แบบให้ผู้ใช้อัปโหลด PDF
 // แล้วเอา regex ของแต่ละ field ไปจับค่าจากข้อความที่ได้
 // (ไฟล์ .docx อ่านใน renderer ด้วย JSZip — ดู public/dataExtract.js)
+//
+// PDF ที่เกิดจากการสแกนไม่มีชั้นข้อความ pdf-text.cjs จึงเรนเดอร์หน้าเป็นรูป
+// แล้ว OCR ให้ (tesseract.js) — ผู้ใช้ไม่ต้องทำอะไรเพิ่ม
+
+// ใช้ปิด OCR worker ตอนปิดแอป (worker เป็น thread ที่ค้างอยู่ได้)
+let pdfOcrUsed = false;
 
 ipcMain.handle(
     "file:extract-pdf",
@@ -1590,12 +1596,36 @@ ipcMain.handle(
             const { extractPdfText } =
                 require("./pdf-text.cjs");
 
-            const text =
-                await extractPdfText(data);
+            pdfOcrUsed = true;
+
+            // หน้าไหนไม่มีชั้นข้อความ (ไฟล์สแกน) จะถูก OCR ให้อัตโนมัติ
+            // ระหว่างนั้นส่งความคืบหน้ากลับไปให้หน้าจอด้วย
+            const result =
+                await extractPdfText(
+                    data,
+                    {
+                        onProgress: function (progress) {
+
+                            if (event.sender.isDestroyed()) {
+                                return;
+                            }
+
+                            event.sender.send(
+                                "file:extract-pdf-progress",
+                                progress
+                            );
+                        }
+                    }
+                );
+
 
             return {
                 ok: true,
-                text: text
+                text: result.text,
+                // เลขหน้าที่ต้องใช้ OCR (ว่าง = ไฟล์มีชั้นข้อความครบ)
+                ocrPages: result.ocrPages,
+                // เหตุผลที่ OCR ไม่สำเร็จ (ถ้ามี) — ข้อความที่เหลือยังใช้ได้
+                ocrError: result.ocrError
             };
 
         } catch (error) {
@@ -2124,6 +2154,26 @@ ipcMain.handle(
 // ============================================================
 // App Lifecycle
 // ============================================================
+
+// ปิด tesseract worker ก่อนจบโปรเซส (ถ้าเคย OCR)
+// ไม่ให้มี thread/หน่วยความจำค้างหลังปิดหน้าต่างสุดท้าย
+app.on(
+    "before-quit",
+    () => {
+
+        if (!pdfOcrUsed) {
+            return;
+        }
+
+        try {
+            require("./pdf-ocr.cjs")
+                .disposeOcr();
+        } catch (error) {
+            // ปิดไม่ทันก็ไม่เป็นไร โปรเซสจะจบอยู่แล้ว
+        }
+    }
+);
+
 
 app.whenReady().then(() => {
 

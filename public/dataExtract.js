@@ -8,6 +8,7 @@
 //   - ข้อความที่พิมพ์/วางในช่อง
 //   - เนื้อหาไฟล์ .docx (อ่าน word/document.xml ด้วย JSZip)
 //   - เนื้อหาไฟล์ .pdf  (อ่านที่ main process — ดู src/main/pdf-text.cjs)
+//     หน้าไหนไม่มีชั้นข้อความ (ไฟล์จากการสแกน) จะถูก OCR ให้อัตโนมัติ
 //
 // รูปแบบ regex ที่รองรับ:
 //   - พิมพ์เฉพาะ pattern เช่น   เลขที่\s*([^\n]+)
@@ -110,6 +111,8 @@
     // ข้อความจากไฟล์ .pdf
     // ──────────────────────────────────────────────────────────────
 
+    // คืน { text, ocrPages }
+    //   ocrPages = เลขหน้าที่ไม่มีชั้นข้อความ จึงต้องอ่านด้วย OCR (ไฟล์สแกน)
     async function textFromPdf(data) {
         if (!window.electronAPI || !window.electronAPI.extractPdfText) {
             throw new Error(
@@ -131,7 +134,25 @@
             throw error;
         }
 
-        return normalizeText(result.text || '');
+        const text = normalizeText(result.text || '');
+        const ocrPages = Array.isArray(result.ocrPages) ? result.ocrPages : [];
+
+        // เอกสารสแกน + OCR ใช้ไม่ได้ = ไม่มีข้อความให้ regex จับเลย
+        // ต้องบอกสาเหตุ ไม่ใช่ปล่อยให้ผู้ใช้เห็นช่องว่างเฉย ๆ
+        if (text === '' && result.ocrError) {
+            const error = new Error(
+                'PDF นี้เป็นเอกสารสแกน และ OCR อ่านไม่สำเร็จ: ' +
+                result.ocrError
+            );
+
+            error.expected = true;
+            throw error;
+        }
+
+        return {
+            text: text,
+            ocrPages: ocrPages
+        };
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -166,6 +187,7 @@
         return kept.join('\n');
     }
 
+    // คืน { text, ocrPages }
     async function extractFile(file) {
         const name = String((file && file.name) || '').toLowerCase();
 
@@ -178,7 +200,10 @@
         }
 
         if (name.endsWith('.docx')) {
-            return textFromDocx(await file.arrayBuffer());
+            return {
+                text: await textFromDocx(await file.arrayBuffer()),
+                ocrPages: []
+            };
         }
 
         const error = new Error('รองรับเฉพาะไฟล์ .docx และ .pdf');

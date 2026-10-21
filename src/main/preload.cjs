@@ -126,11 +126,30 @@ contextBridge.exposeInMainWorld(
             ),
 
         // ดึงข้อความจากไฟล์ PDF (ใช้กับปุ่ม "ข้อมูล")
-        // payload = { data } — คืน { ok, text } หรือ { ok:false, error }
+        // payload = { data } — คืน { ok, text, ocrPages, ocrError } หรือ { ok:false, error }
+        // (หน้าไหนไม่มีชั้นข้อความ จะถูก OCR ให้อัตโนมัติ)
         extractPdfText: (payload) =>
             ipcRenderer.invoke(
                 "file:extract-pdf",
                 payload
-            )
+            ),
+
+        // ความคืบหน้าระหว่างอ่าน PDF (รวมขั้นตอน OCR)
+        // callback ได้ { page, pageCount, status: 'reading'|'ocr', progress }
+        onPdfExtractProgress: (callback) => {
+            if (typeof callback !== "function") return;
+
+            ipcRenderer.on(
+                "file:extract-pdf-progress",
+                (event, progress) => callback(progress)
+            );
+        },
+
+        // เลิกฟังความคืบหน้าทั้งหมด (เรียกตอนปิดกล่อง)
+        offPdfExtractProgress: () => {
+            ipcRenderer.removeAllListeners(
+                "file:extract-pdf-progress"
+            );
+        }
     }
 );

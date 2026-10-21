@@ -16,8 +16,10 @@
     "build:exe:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.12",
     "better-sqlite3": "^13.0.3",
-    "pdfjs-dist": "^3.11.174"
+    "pdfjs-dist": "^3.11.174",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
@@ -43,7 +45,17 @@
     ],
     "asarUnpack": [
       "**/*.node",
-      "src/main/db/**"
+      "src/main/db/**",
+      "src/main/ocr/**",
+      "node_modules/tesseract.js/**",
+      "node_modules/tesseract.js-core/**",
+      "node_modules/wasm-feature-detect/**",
+      "node_modules/bmp-js/**",
+      "node_modules/is-url/**",
+      "node_modules/node-fetch/**",
+      "node_modules/regenerator-runtime/**",
+      "node_modules/zlibjs/**",
+      "node_modules/@napi-rs/**"
     ],
     "win": {
       "target": [
