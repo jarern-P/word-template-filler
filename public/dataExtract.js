@@ -31,6 +31,112 @@
     const CHECKBOX_TYPE = 'checkbox';
 
     // ──────────────────────────────────────────────────────────────
+    // คำที่แก้เอง (แทนคำที่ OCR อ่านผิด)
+    // ──────────────────────────────────────────────────────────────
+    // OCR ภาษาไทยมักตกไม้โท/สระบนตัวอักษรเล็ก (เช่น "เลขที" แทน "เลขที่")
+    // ผู้ใช้แก้คำที่เจอได้ในกล่อง "ข้อมูล" แล้วระบบจะแทนให้อัตโนมัติ
+    // เก็บใน localStorage เพราะเป็นการตั้งค่าของเครื่องนี้ (เหมือนค่าตั้งอื่น ๆ ของแอป)
+    const TEXT_FIX_KEY = 'wordTemplateFiller:textFixes';
+    const TEXT_FIX_LIMIT = 200;
+
+    function normalizeTextFix(entry) {
+        const from = String((entry && entry.from) || '').trim();
+        const to = String((entry && entry.to) || '').trim();
+
+        return from === '' ? null : { from: from, to: to };
+    }
+
+    function loadTextFixes() {
+        try {
+            const raw = window.localStorage.getItem(TEXT_FIX_KEY);
+            const list = raw ? JSON.parse(raw) : [];
+
+            if (!Array.isArray(list)) return [];
+
+            return list
+                .map(normalizeTextFix)
+                .filter(Boolean)
+                .slice(0, TEXT_FIX_LIMIT);
+
+        } catch (error) {
+            // ข้อมูลใน localStorage เสีย/อ่านไม่ได้ = เริ่มจากรายการว่าง
+            return [];
+        }
+    }
+
+    function saveTextFixes(list) {
+        try {
+            window.localStorage.setItem(
+                TEXT_FIX_KEY,
+                JSON.stringify(
+                    (list || [])
+                        .map(normalizeTextFix)
+                        .filter(Boolean)
+                        .slice(0, TEXT_FIX_LIMIT)
+                )
+            );
+        } catch (error) {
+            // เก็บไม่ได้ก็ยังใช้กับข้อความรอบนี้ได้
+        }
+    }
+
+    // อักขระที่ต้องหลบก่อนเอาไปสร้าง RegExp (คีย์ค้นหามาจากผู้ใช้)
+    // รวม backslash (charCode 92) ด้วย เผื่อผู้ใช้พิมพ์ backslash มาในคำ
+    const BACKSLASH = String.fromCharCode(92);
+    const REGEX_SPECIALS = '.*+?^${}()|[]' + BACKSLASH;
+
+    function escapeRegExp(value) {
+        const backslash = BACKSLASH;
+
+        return String(value)
+            .split('')
+            .map(function (char) {
+                return REGEX_SPECIALS.indexOf(char) === -1
+                    ? char
+                    : backslash + char;
+            })
+            .join('');
+    }
+
+    // แทนคำแบบตรงตัว (ไม่ใช่ regex) — คำยาวก่อน กันคำสั้นแทนซ้อนข้างใน
+    // คืน { text, changed } เพื่อให้หน้าจอรู้ว่ามีการแก้จริงหรือไม่
+    //
+    // คำที่ถูกต้องมักมีคำที่ผิดเป็นส่วนนำ (เช่น "เลขที" -> "เลขที่")
+    // ถ้าแทนซ้ำ (อ่านไฟล์ใหม่/แก้ข้อความอีกครั้ง) จะเติมไม้โทเพิ่มอีกตัว
+    // จึงไม่แทนเมื่อมีส่วนที่เพิ่มอยู่แล้ว — แทนซ้ำกี่ครั้งผลก็เท่าเดิม
+    function applyTextFixes(text) {
+        const source = String(text == null ? '' : text);
+        const fixes = loadTextFixes().sort(function (a, b) {
+            return b.from.length - a.from.length;
+        });
+
+        let result = source;
+
+        fixes.forEach(function (fix) {
+            if (fix.to === fix.from) return;
+
+            const suffix = fix.to.indexOf(fix.from) === 0
+                ? fix.to.slice(fix.from.length)
+                : '';
+
+            const pattern = new RegExp(
+                escapeRegExp(fix.from) +
+                (suffix === '' ? '' : '(?!' + escapeRegExp(suffix) + ')'),
+                'g'
+            );
+
+            result = result.replace(pattern, function () {
+                return fix.to;
+            });
+        });
+
+        return {
+            text: result,
+            changed: result !== source
+        };
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // ข้อความจากไฟล์ .docx
     // ──────────────────────────────────────────────────────────────
 
@@ -187,7 +293,8 @@
         return kept.join('\n');
     }
 
-    // คืน { text, ocrPages }
+    // คืน { text, ocrPages, fixed }
+    //   fixed = มีการแทนคำตามรายการ "คำที่แก้เอง" หรือไม่
     async function extractFile(file) {
         const name = String((file && file.name) || '').toLowerCase();
 
@@ -195,20 +302,29 @@
             throw new Error('ไม่พบไฟล์');
         }
 
-        if (name.endsWith('.pdf')) {
-            return textFromPdf(await file.arrayBuffer());
-        }
+        let result;
 
-        if (name.endsWith('.docx')) {
-            return {
+        if (name.endsWith('.pdf')) {
+            result = await textFromPdf(await file.arrayBuffer());
+        } else if (name.endsWith('.docx')) {
+            result = {
                 text: await textFromDocx(await file.arrayBuffer()),
                 ocrPages: []
             };
+        } else {
+            const error = new Error('รองรับเฉพาะไฟล์ .docx และ .pdf');
+            error.expected = true;
+            throw error;
         }
 
-        const error = new Error('รองรับเฉพาะไฟล์ .docx และ .pdf');
-        error.expected = true;
-        throw error;
+        // คำที่ผู้ใช้แก้ไว้ ใช้กับข้อความที่อ่านจากไฟล์ทุกชนิด
+        const fixed = applyTextFixes(result.text);
+
+        return {
+            text: fixed.text,
+            ocrPages: result.ocrPages,
+            fixed: fixed.changed
+        };
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -480,6 +596,10 @@
     }
 
     scope.DataExtract = {
+        TEXT_FIX_KEY: TEXT_FIX_KEY,
+        loadTextFixes: loadTextFixes,
+        saveTextFixes: saveTextFixes,
+        applyTextFixes: applyTextFixes,
         normalizeText: normalizeText,
         textFromDocumentXml: textFromDocumentXml,
         textFromDocx: textFromDocx,

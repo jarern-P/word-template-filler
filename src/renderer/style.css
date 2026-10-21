@@ -4243,6 +4243,90 @@ body.table-ratio-dragging .table-ratio-handle {
     border-radius: var(--radius);
 }
 
+/* ── คำที่แก้เอง (แทนคำที่ OCR อ่านผิด) ── */
+.data-fixes {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+}
+
+.data-fixes h4 {
+    margin: 0 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+}
+
+.data-fixes > .hint {
+    margin: 0 0 8px;
+}
+
+.data-fix-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.data-fix-list .hint {
+    margin: 0;
+}
+
+.data-fix-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 4px 2px 10px;
+    font-size: 12px;
+    color: var(--ink);
+    background: var(--pink-50);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+}
+
+.data-fix-remove {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.data-fix-remove:hover {
+    color: var(--danger);
+    background: var(--danger-soft);
+}
+
+.data-fix-add {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.data-fix-add input {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.data-fix-add button {
+    flex: none;
+    margin-top: 0;
+}
+
+.data-fix-arrow {
+    color: var(--ink-faint);
+    font-size: 13px;
+}
+
 .data-result-body {
     display: flex;
     flex-direction: column;

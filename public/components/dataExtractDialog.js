@@ -58,6 +58,18 @@
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
+        '            <div class="data-fixes">',
+        '                <h4>คำที่แก้เอง</h4>',
+        '                <p class="hint">OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — เพิ่มคำที่อ่านผิดกับคำที่ถูกต้อง',
+        '                    แล้วระบบจะแทนให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป (เก็บไว้ในเครื่องนี้)</p>',
+        '                <div id="dataFixList" class="data-fix-list"></div>',
+        '                <div class="data-fix-add">',
+        '                    <input id="dataFixFrom" type="text" maxlength="120" placeholder="อ่านผิด เช่น เลขที">',
+        '                    <span class="data-fix-arrow" aria-hidden="true">&rarr;</span>',
+        '                    <input id="dataFixTo" type="text" maxlength="120" placeholder="ถูกต้อง เช่น เลขที่">',
+        '                    <button id="dataFixAddBtn" type="button" class="plain">เพิ่ม</button>',
+        '                </div>',
+        '            </div>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -171,6 +183,133 @@
         el('dataPdfInput').addEventListener('change', function (event) {
             readFile(event.target);
         });
+
+        // คำที่แก้เอง — เพิ่มด้วยปุ่ม หรือกด Enter ในช่องกรอก
+        el('dataFixAddBtn').addEventListener('click', addTextFix);
+
+        ['dataFixFrom', 'dataFixTo'].forEach(function (id) {
+            el(id).addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addTextFix();
+                }
+            });
+        });
+
+        renderTextFixes();
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // คำที่แก้เอง (เก็บใน localStorage — ใช้กับไฟล์ที่อ่านครั้งถัดไป)
+    // ──────────────────────────────────────────────────────────────
+
+    function renderTextFixes() {
+        const list = el('dataFixList');
+
+        if (!list) return;
+
+        list.innerHTML = '';
+
+        const fixes = scope.DataExtract.loadTextFixes();
+
+        if (fixes.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'ยังไม่มีคำที่แก้ — เพิ่มจากช่องด้านล่างได้เลย';
+            list.appendChild(empty);
+            return;
+        }
+
+        fixes.forEach(function (fix) {
+            const chip = document.createElement('span');
+            chip.className = 'data-fix-chip';
+
+            const label = document.createElement('span');
+            label.textContent = fix.from + ' → ' + fix.to;
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'data-fix-remove';
+            remove.title = 'ลบคำที่แก้นี้';
+            remove.setAttribute('aria-label', 'ลบ ' + fix.from);
+            remove.textContent = '×';
+            remove.addEventListener('click', function () {
+                removeTextFix(fix.from);
+            });
+
+            chip.appendChild(label);
+            chip.appendChild(remove);
+            list.appendChild(chip);
+        });
+    }
+
+    function addTextFix() {
+        const fromInput = el('dataFixFrom');
+        const toInput = el('dataFixTo');
+
+        const from = String(fromInput.value || '').trim();
+        const to = String(toInput.value || '').trim();
+
+        // ยังกรอกไม่ครบ — ให้ไปที่ช่องที่ยังว่าง ไม่ต้องเดา
+        if (from === '') {
+            fromInput.focus();
+            return;
+        }
+
+        if (to === '') {
+            toInput.focus();
+            return;
+        }
+
+        if (from === to) {
+            fromInput.focus();
+            return;
+        }
+
+        const fixes = scope.DataExtract.loadTextFixes();
+        const existing = fixes.find(function (fix) {
+            return fix.from === from;
+        });
+
+        if (existing) {
+            existing.to = to;
+        } else {
+            fixes.push({ from: from, to: to });
+        }
+
+        scope.DataExtract.saveTextFixes(fixes);
+
+        fromInput.value = '';
+        toInput.value = '';
+
+        renderTextFixes();
+
+        // แก้ข้อความที่อ่านไว้แล้วด้วย เพื่อให้เห็นผลทันที
+        applyTextFixesToSource();
+    }
+
+    function removeTextFix(from) {
+        const fixes = scope.DataExtract.loadTextFixes().filter(function (fix) {
+            return fix.from !== from;
+        });
+
+        scope.DataExtract.saveTextFixes(fixes);
+        renderTextFixes();
+    }
+
+    // แทนคำในข้อความต้นทางที่แสดงอยู่ (ถ้ามี)
+    function applyTextFixesToSource() {
+        const textarea = el('dataSourceText');
+
+        if (!textarea || textarea.value === '') return;
+
+        const applied = scope.DataExtract.applyTextFixes(textarea.value);
+
+        if (!applied.changed) return;
+
+        textarea.value = applied.text;
+        setSourceStatus('แก้คำในข้อความตามรายการที่บันทึกไว้แล้ว');
+        hideResults();
     }
 
     function close() {
@@ -355,7 +494,8 @@
                 (ocrPages.length > 0
                     ? ' (OCR ' + ocrPages.length + ' หน้า: ' +
                         ocrPages.join(', ') + ')'
-                    : '')
+                    : '') +
+                (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '')
             );
 
             hideResults();
