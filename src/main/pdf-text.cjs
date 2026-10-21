@@ -187,7 +187,8 @@ function pageLines(items) {
  *   scale      = ความละเอียดที่ใช้ OCR (ตัวคูณจาก 72 DPI, ค่าเริ่มต้น ~200 DPI)
  *   langPath/workerPath = ทับค่าที่ใช้อยู่ (สำหรับทดสอบ)
  *   onProgress = ฟังก์ชันรับความคืบหน้า { page, pageCount, status, progress }
- * @returns {Promise<{text:string, ocrPages:number[], ocrError:string|null}>}
+ * @returns {Promise<{text:string, ocrPages:number[], ocrError:string|null, pages:Array}>}
+ *   pages = หน้าที่ผ่าน OCR พร้อมภาพตัวอย่างและตำแหน่งคำ (สำหรับตรวจคำบน PDF)
  */
 async function extractPdfText(data, options) {
     const opts = options || {};
@@ -206,6 +207,7 @@ async function extractPdfText(data, options) {
     const document = await task.promise;
     const lines = [];
     const ocrPages = [];
+    const pages = [];
     let ocrError = null;
 
     // หน้าปัจจุบัน — ใช้เติมเลขหน้าในรายงานความคืบหน้าตอน OCR
@@ -266,16 +268,27 @@ async function extractPdfText(data, options) {
 
                 if (useOcr && needsOcr) {
                     try {
-                        const ocrText = await ocrPage(page, ocrOptions);
+                        const ocr = await ocrPage(page, ocrOptions);
 
-                        if (ocrText !== "") {
+                        if (ocr.text !== "") {
                             ocrPages.push(pageNumber);
 
                             // ข้อความเดิมที่เสีย (รหัส glyph) ไม่มีประโยชน์กับ regex
                             // ใช้ข้อความจาก OCR แทน — ถ้าข้อความเดิมใช้ได้ ให้เก็บต่อท้าย
                             pageText = quality.usable
-                                ? [pageText, ocrText].filter(Boolean).join("\n")
-                                : ocrText;
+                                ? [pageText, ocr.text].filter(Boolean).join("\n")
+                                : ocr.text;
+                        }
+
+                        // เก็บภาพ+ตำแหน่งคำไว้ให้หน้าจอตรวจคำ (เฉพาะเมื่อมีคำให้ตรวจ)
+                        if (ocr.words.length > 0) {
+                            pages.push({
+                                page: pageNumber,
+                                image: ocr.image,
+                                width: ocr.width,
+                                height: ocr.height,
+                                words: ocr.words
+                            });
                         }
                     } catch (error) {
                         // OCR หน้าเดียวพังไม่ควรทำให้ทั้งไฟล์อ่านไม่ได้
@@ -308,7 +321,8 @@ async function extractPdfText(data, options) {
     return {
         text: lines.join("\n"),
         ocrPages: ocrPages,
-        ocrError: ocrError
+        ocrError: ocrError,
+        pages: pages
     };
 }
 

@@ -1624,6 +1624,9 @@ ipcMain.handle(
                 text: result.text,
                 // เลขหน้าที่ต้องใช้ OCR (ว่าง = ไฟล์มีชั้นข้อความครบ)
                 ocrPages: result.ocrPages,
+                // ภาพหน้า + กล่องคำสำหรับหน้าจอ "ตรวจคำบน PDF"
+                // (ว่าง = ไม่มีหน้าไหนต้อง OCR)
+                pages: result.pages || [],
                 // เหตุผลที่ OCR ไม่สำเร็จ (ถ้ามี) — ข้อความที่เหลือยังใช้ได้
                 ocrError: result.ocrError
             };

@@ -126,8 +126,8 @@ contextBridge.exposeInMainWorld(
             ),
 
         // ดึงข้อความจากไฟล์ PDF (ใช้กับปุ่ม "ข้อมูล")
-        // payload = { data } — คืน { ok, text, ocrPages, ocrError } หรือ { ok:false, error }
-        // (หน้าไหนไม่มีชั้นข้อความ จะถูก OCR ให้อัตโนมัติ)
+        // payload = { data } — คืน { ok, text, ocrPages, ocrError, pages } หรือ { ok:false, error }
+        // (หน้าไหนไม่มีชั้นข้อความ จะถูก OCR ให้อัตโนมัติ — pages มีภาพ+ตำแหน่งคำ)
         extractPdfText: (payload) =>
             ipcRenderer.invoke(
                 "file:extract-pdf",

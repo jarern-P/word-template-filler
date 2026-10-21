@@ -59,16 +59,14 @@
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
         '            <div class="data-fixes">',
-        '                <h4>คำที่แก้เอง</h4>',
-        '                <p class="hint">OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — เพิ่มคำที่อ่านผิดกับคำที่ถูกต้อง',
-        '                    แล้วระบบจะแทนให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป (เก็บไว้ในเครื่องนี้)</p>',
-        '                <div id="dataFixList" class="data-fix-list"></div>',
-        '                <div class="data-fix-add">',
-        '                    <input id="dataFixFrom" type="text" maxlength="120" placeholder="อ่านผิด เช่น เลขที">',
-        '                    <span class="data-fix-arrow" aria-hidden="true">&rarr;</span>',
-        '                    <input id="dataFixTo" type="text" maxlength="120" placeholder="ถูกต้อง เช่น เลขที่">',
-        '                    <button id="dataFixAddBtn" type="button" class="plain">เพิ่ม</button>',
+        '                <div class="data-fixes-head">',
+        '                    <h4>คำที่แก้เอง</h4>',
+        '                    <button id="dataFixOpenBtn" type="button" class="plain" disabled>',
+        '                        ตรวจคำบน PDF',
+        '                    </button>',
         '                </div>',
+        '                <p id="dataFixHint" class="hint">OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — ' +
+            'อัปโหลด PDF แล้วกด "ตรวจคำบน PDF" เพื่อแก้คำจากตำแหน่งจริงบนหน้ากระดาษ</p>',
         '            </div>',
         '        </section>',
         '        <section class="data-results">',
@@ -91,6 +89,11 @@
 
     // กำลังอ่านไฟล์อยู่หรือไม่ — ใช้ตัดสินว่าจะแสดงความคืบหน้าหรือไม่
     let readingFile = false;
+
+    // หน้า OCR ของไฟล์ที่เพิ่งอ่าน (ไว้เปิดหน้าจอตรวจคำ)
+    // ไฟล์ .docx / PDF ที่มีชั้นข้อความ จะว่าง — ไม่มีภาพให้ตรวจ
+    let lastPages = [];
+    let lastFileName = '';
 
     function el(id) {
         return document.getElementById(id);
@@ -123,7 +126,12 @@
         });
 
         document.addEventListener('keydown', function (event) {
-            if (event.key === 'Escape') close();
+            if (event.key !== 'Escape') return;
+
+            // มีหน้าจอตรวจคำเปิดทับอยู่ — ปล่อยให้ Escape ปิดตัวนั้นตัวเดียว
+            if (document.querySelector('.words-overlay.open')) return;
+
+            close();
         });
 
         el('dataCloseBtn').addEventListener('click', close);
@@ -184,117 +192,49 @@
             readFile(event.target);
         });
 
-        // คำที่แก้เอง — เพิ่มด้วยปุ่ม หรือกด Enter ในช่องกรอก
-        el('dataFixAddBtn').addEventListener('click', addTextFix);
-
-        ['dataFixFrom', 'dataFixTo'].forEach(function (id) {
-            el(id).addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault();
-                    addTextFix();
-                }
-            });
-        });
-
-        renderTextFixes();
+        // คำที่แก้เอง — เปิดภาพหน้า PDF เพื่อแก้คำตรงตำแหน่งจริง
+        el('dataFixOpenBtn').addEventListener('click', openWordsPreview);
     }
 
     // ──────────────────────────────────────────────────────────────
     // คำที่แก้เอง (เก็บใน localStorage — ใช้กับไฟล์ที่อ่านครั้งถัดไป)
     // ──────────────────────────────────────────────────────────────
 
-    function renderTextFixes() {
-        const list = el('dataFixList');
+    // เปิดภาพหน้า PDF ที่ OCR อ่าน พร้อมกล่องคำตามตำแหน่งจริง
+    // ไม่มีภาพ (docx / ไฟล์ที่มีชั้นข้อความ) = ปุ่มถูกปิดไว้ตั้งแต่ต้น
+    function openWordsPreview() {
+        if (lastPages.length === 0 || !scope.PdfWordsDialog) return;
 
-        if (!list) return;
-
-        list.innerHTML = '';
-
-        const fixes = scope.DataExtract.loadTextFixes();
-
-        if (fixes.length === 0) {
-            const empty = document.createElement('p');
-            empty.className = 'hint';
-            empty.textContent = 'ยังไม่มีคำที่แก้ — เพิ่มจากช่องด้านล่างได้เลย';
-            list.appendChild(empty);
-            return;
-        }
-
-        fixes.forEach(function (fix) {
-            const chip = document.createElement('span');
-            chip.className = 'data-fix-chip';
-
-            const label = document.createElement('span');
-            label.textContent = fix.from + ' → ' + fix.to;
-
-            const remove = document.createElement('button');
-            remove.type = 'button';
-            remove.className = 'data-fix-remove';
-            remove.title = 'ลบคำที่แก้นี้';
-            remove.setAttribute('aria-label', 'ลบ ' + fix.from);
-            remove.textContent = '×';
-            remove.addEventListener('click', function () {
-                removeTextFix(fix.from);
-            });
-
-            chip.appendChild(label);
-            chip.appendChild(remove);
-            list.appendChild(chip);
+        scope.PdfWordsDialog.open({
+            pages: lastPages,
+            title: lastFileName,
+            onChange: applyTextFixesToSource
         });
     }
 
-    function addTextFix() {
-        const fromInput = el('dataFixFrom');
-        const toInput = el('dataFixTo');
+    // เปิด/ปิดปุ่มตรวจคำตามไฟล์ที่อ่านล่าสุด + บอกเหตุผลเมื่อเปิดไม่ได้
+    function setWordPreviewPages(pages, fileName) {
+        lastPages = Array.isArray(pages) ? pages : [];
+        lastFileName = fileName || '';
 
-        const from = String(fromInput.value || '').trim();
-        const to = String(toInput.value || '').trim();
+        const button = el('dataFixOpenBtn');
+        const hint = el('dataFixHint');
 
-        // ยังกรอกไม่ครบ — ให้ไปที่ช่องที่ยังว่าง ไม่ต้องเดา
-        if (from === '') {
-            fromInput.focus();
-            return;
-        }
+        if (!button || !hint) return;
 
-        if (to === '') {
-            toInput.focus();
-            return;
-        }
+        button.disabled = lastPages.length === 0;
 
-        if (from === to) {
-            fromInput.focus();
-            return;
-        }
-
-        const fixes = scope.DataExtract.loadTextFixes();
-        const existing = fixes.find(function (fix) {
-            return fix.from === from;
-        });
-
-        if (existing) {
-            existing.to = to;
+        if (lastPages.length > 0) {
+            hint.textContent =
+                'พบ ' + lastPages.length + ' หน้าที่ OCR อ่าน — ' +
+                'กด "ตรวจคำบน PDF" แล้วคลิกคำที่อ่านผิดบนหน้าเพื่อแก้ ' +
+                '(ไม่ต้องพิมพ์คำที่อ่านผิดเอง) — ระบบจะแทนให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป';
         } else {
-            fixes.push({ from: from, to: to });
+            hint.textContent =
+                'OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — ' +
+                'อัปโหลด PDF ที่เป็นเอกสารสแกน แล้วกด "ตรวจคำบน PDF" ' +
+                'เพื่อแก้คำจากตำแหน่งจริงบนหน้ากระดาษ';
         }
-
-        scope.DataExtract.saveTextFixes(fixes);
-
-        fromInput.value = '';
-        toInput.value = '';
-
-        renderTextFixes();
-
-        // แก้ข้อความที่อ่านไว้แล้วด้วย เพื่อให้เห็นผลทันที
-        applyTextFixesToSource();
-    }
-
-    function removeTextFix(from) {
-        const fixes = scope.DataExtract.loadTextFixes().filter(function (fix) {
-            return fix.from !== from;
-        });
-
-        scope.DataExtract.saveTextFixes(fixes);
-        renderTextFixes();
     }
 
     // แทนคำในข้อความต้นทางที่แสดงอยู่ (ถ้ามี)
@@ -470,10 +410,13 @@
         readingFile = true;
         setSourceStatus('กำลังอ่านไฟล์ ' + file.name + '...');
 
+        // ภาพหน้าของไฟล์ก่อนหน้าต้องไม่ถูกนำมาใช้ระหว่าง/หลังอ่านไฟล์ใหม่
+        setWordPreviewPages([], '');
+
         try {
             const result = await scope.DataExtract.extractFile(file);
 
-            // extractFile คืน { text, ocrPages }
+            // extractFile คืน { text, ocrPages, pages, fixed }
             const text = String(
                 result && typeof result === 'object'
                     ? result.text || ''
@@ -483,6 +426,11 @@
             const ocrPages =
                 (result && Array.isArray(result.ocrPages))
                     ? result.ocrPages
+                    : [];
+
+            const pages =
+                (result && Array.isArray(result.pages))
+                    ? result.pages
                     : [];
 
             const textarea = el('dataSourceText');
@@ -495,8 +443,11 @@
                     ? ' (OCR ' + ocrPages.length + ' หน้า: ' +
                         ocrPages.join(', ') + ')'
                     : '') +
-                (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '')
+                (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '') +
+                (pages.length > 0 ? ' · ตรวจคำบน PDF ได้' : '')
             );
+
+            setWordPreviewPages(pages, file.name);
 
             hideResults();
 
@@ -911,6 +862,7 @@
 
         el('dataSourceText').value = '';
         setSourceStatus('');
+        setWordPreviewPages([], '');
         hideResults();
 
         overlay.classList.add('open');

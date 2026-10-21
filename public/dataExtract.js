@@ -257,7 +257,10 @@
 
         return {
             text: text,
-            ocrPages: ocrPages
+            ocrPages: ocrPages,
+            // หน้า OCR พร้อมภาพตัวอย่าง + ตำแหน่งของแต่ละคำ
+            // ใช้ในหน้าจอ "ตรวจคำบน PDF" (หน้าเอกสารที่มีชั้นข้อความไม่มีภาพ)
+            pages: Array.isArray(result.pages) ? result.pages : []
         };
     }
 
@@ -293,7 +296,8 @@
         return kept.join('\n');
     }
 
-    // คืน { text, ocrPages, fixed }
+    // คืน { text, ocrPages, pages, fixed }
+    //   pages = หน้า OCR พร้อมภาพ+ตำแหน่งคำ (สำหรับหน้าจอตรวจคำ)
     //   fixed = มีการแทนคำตามรายการ "คำที่แก้เอง" หรือไม่
     async function extractFile(file) {
         const name = String((file && file.name) || '').toLowerCase();
@@ -309,7 +313,8 @@
         } else if (name.endsWith('.docx')) {
             result = {
                 text: await textFromDocx(await file.arrayBuffer()),
-                ocrPages: []
+                ocrPages: [],
+                pages: []
             };
         } else {
             const error = new Error('รองรับเฉพาะไฟล์ .docx และ .pdf');
@@ -323,6 +328,7 @@
         return {
             text: fixed.text,
             ocrPages: result.ocrPages,
+            pages: result.pages || [],
             fixed: fixed.changed
         };
     }
@@ -595,10 +601,59 @@
         return result;
     }
 
+    // เพิ่ม/แก้คำที่อ่านผิด (คีย์คือคำที่อ่านผิด — มีได้ครั้งเดียว)
+    function setTextFix(from, to) {
+        const key = String(from == null ? '' : from).trim();
+        const value = String(to == null ? '' : to).trim();
+
+        if (key === '' || value === '' || key === value) return false;
+
+        const fixes = loadTextFixes();
+        const existing = fixes.find(function (fix) {
+            return fix.from === key;
+        });
+
+        if (existing) {
+            if (existing.to === value) return false;
+            existing.to = value;
+        } else {
+            fixes.push({ from: key, to: value });
+        }
+
+        saveTextFixes(fixes);
+        return true;
+    }
+
+    // ลบคำที่แก้ — คืน true เมื่อมีรายการให้ลบจริง
+    function deleteTextFix(from) {
+        const key = String(from == null ? '' : from).trim();
+        const fixes = loadTextFixes();
+        const rest = fixes.filter(function (fix) {
+            return fix.from !== key;
+        });
+
+        if (rest.length === fixes.length) return false;
+
+        saveTextFixes(rest);
+        return true;
+    }
+
+    // คำที่แก้ของคำนี้ (ถ้ามี)
+    function findTextFix(from) {
+        const key = String(from == null ? '' : from).trim();
+
+        return loadTextFixes().find(function (fix) {
+            return fix.from === key;
+        }) || null;
+    }
+
     scope.DataExtract = {
         TEXT_FIX_KEY: TEXT_FIX_KEY,
         loadTextFixes: loadTextFixes,
         saveTextFixes: saveTextFixes,
+        setTextFix: setTextFix,
+        deleteTextFix: deleteTextFix,
+        findTextFix: findTextFix,
         applyTextFixes: applyTextFixes,
         normalizeText: normalizeText,
         textFromDocumentXml: textFromDocumentXml,

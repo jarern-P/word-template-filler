@@ -4250,79 +4250,186 @@ body.table-ratio-dragging .table-ratio-handle {
     border-top: 1px dashed var(--line);
 }
 
+.data-fixes-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
 .data-fixes h4 {
-    margin: 0 0 2px;
+    margin: 0;
     font-size: 13px;
     font-weight: 600;
     color: var(--ink-soft);
 }
 
-.data-fixes > .hint {
-    margin: 0 0 8px;
-}
-
-.data-fix-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 8px;
-}
-
-.data-fix-list .hint {
-    margin: 0;
-}
-
-.data-fix-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px 4px 2px 10px;
-    font-size: 12px;
-    color: var(--ink);
-    background: var(--pink-50);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-pill);
-}
-
-.data-fix-remove {
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    line-height: 1;
-    color: var(--ink-faint);
-    background: transparent;
-    border: 0;
-    border-radius: 50%;
-    cursor: pointer;
-    box-shadow: none;
-}
-
-.data-fix-remove:hover {
-    color: var(--danger);
-    background: var(--danger-soft);
-}
-
-.data-fix-add {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.data-fix-add input {
-    flex: 1 1 0;
-    min-width: 0;
-}
-
-.data-fix-add button {
+.data-fixes-head button {
     flex: none;
     margin-top: 0;
 }
 
-.data-fix-arrow {
+.data-fixes > .hint {
+    margin: 4px 0 0;
+}
+
+/* ── ตรวจคำบน PDF (ภาพหน้าเอกสาร + กล่องคำตามตำแหน่งจริง) ── */
+.words-dialog {
+    width: 1020px;
+    max-width: calc(100vw - 40px);
+    height: 88vh;
+    max-height: 88vh;
+}
+
+.words-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0;
+}
+
+.words-toolbar button {
+    margin-top: 0;
+}
+
+.words-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.words-toolbar-gap {
+    flex: 1;
+}
+
+.words-page-label {
+    min-width: 110px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+.words-stage-wrap {
+    flex: 1;
+    min-height: 0;
+    padding: 14px;
+    overflow: auto;
+    background: var(--pink-50);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+}
+
+/* กล่องคำใช้ตำแหน่งเป็น % ของภาพ — ขยาย/ย่อแล้วยังตรงตำแหน่งเดิม */
+.words-stage {
+    position: relative;
+    width: 100%;
+    margin: 0 auto;
+    background: #ffffff;
+    box-shadow: 0 2px 10px rgba(75, 58, 68, 0.14);
+}
+
+.words-image {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.words-layer {
+    position: absolute;
+    inset: 0;
+}
+
+.words-word {
+    position: absolute;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 2px;
+    box-shadow: none;
+    cursor: pointer;
+    transition: background 0.08s ease, outline-color 0.08s ease;
+}
+
+.words-word:hover {
+    background: rgba(251, 127, 174, 0.22);
+    outline: 1px solid var(--pink-500);
+    box-shadow: none;
+}
+
+.words-word:focus-visible {
+    outline: 2px solid var(--pink-600);
+    box-shadow: none;
+}
+
+.words-word.selected {
+    background: rgba(251, 127, 174, 0.32);
+    outline: 2px solid var(--pink-600);
+}
+
+.words-word.fixed {
+    background: rgba(47, 158, 107, 0.20);
+    outline: 1px solid var(--ok);
+}
+
+.words-word.fixed.selected {
+    background: rgba(47, 158, 107, 0.35);
+    outline: 2px solid var(--ok);
+}
+
+.words-editor {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--pink-50);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.words-editor-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.words-editor-label {
+    font-size: 12px;
+    color: var(--ink-soft);
+}
+
+.words-from {
+    padding: 2px 8px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+.words-editor-row input {
+    flex: 1 1 200px;
+    min-width: 140px;
+}
+
+.words-editor-row button {
+    flex: none;
+    margin-top: 0;
+}
+
+.words-editor-hint {
+    margin: 6px 0 0;
+    min-height: 15px;
+}
+
+.words-editor-hint.ok {
+    color: var(--ok);
+}
+
+.words-editor-hint.error {
+    color: var(--warn);
+}
+
+.words-editor-arrow {
     color: var(--ink-faint);
     font-size: 13px;
 }
