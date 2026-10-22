@@ -34,19 +34,68 @@
     // คำที่แก้เอง (แทนคำที่ OCR อ่านผิด)
     // ──────────────────────────────────────────────────────────────
     // OCR ภาษาไทยมักตกไม้โท/สระบนตัวอักษรเล็ก (เช่น "เลขที" แทน "เลขที่")
-    // ผู้ใช้แก้คำที่เจอได้ในกล่อง "ข้อมูล" แล้วระบบจะแทนให้อัตโนมัติ
-    // เก็บใน localStorage เพราะเป็นการตั้งค่าของเครื่องนี้ (เหมือนค่าตั้งอื่น ๆ ของแอป)
+    // ผู้ใช้แก้ได้ในหน้า "ฝึก OCR" หรือกล่อง "ข้อมูล" แล้วระบบจะแทนให้อัตโนมัติ
+    //
+    // แหล่งจริงของรายการคือตาราง ocr_fixes ในฐานข้อมูล (สำรอง/ย้ายเครื่องได้)
+    // แต่ UI ต้องอ่านแบบ synchronous จึงเก็บสำเนาไว้ในหน่วยความจำ
+    // localStorage ใช้เฉพาะเมื่อไม่มีฐานข้อมูล (เช่นเปิดในเบราว์เซอร์ระหว่างพัฒนา)
+    // และใช้เป็นข้อมูลตั้งต้นให้ migrate ครั้งแรก
     const TEXT_FIX_KEY = 'wordTemplateFiller:textFixes';
-    const TEXT_FIX_LIMIT = 200;
+    const TEXT_FIX_MIGRATION_KEY = 'wordTemplateFiller:textFixesMigrated';
+    const TEXT_FIX_LIMIT = 2000;
+
+    let textFixCache = null;
+    let textFixRefreshPromise = null;
+
+    function toCount(value) {
+        const number = Math.floor(Number(value));
+
+        return Number.isFinite(number) && number > 0 ? number : 0;
+    }
 
     function normalizeTextFix(entry) {
         const from = String((entry && entry.from) || '').trim();
         const to = String((entry && entry.to) || '').trim();
 
-        return from === '' ? null : { from: from, to: to };
+        if (from === '') return null;
+
+        return {
+            from: from,
+            to: to,
+            hits: toCount(entry && entry.hits),
+            accepted: toCount(entry && entry.accepted),
+            rejected: toCount(entry && entry.rejected),
+            lastConfidence: Number.isFinite(Number(entry && entry.lastConfidence))
+                ? Number(entry.lastConfidence)
+                : null
+        };
     }
 
-    function loadTextFixes() {
+    function dbFixesAvailable() {
+        return Boolean(
+            window.electronAPI &&
+            scope.Db &&
+            typeof scope.Db.ocrFixList === 'function'
+        );
+    }
+
+    function readMigrationFlag() {
+        try {
+            return window.localStorage.getItem(TEXT_FIX_MIGRATION_KEY) === '1';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function writeMigrationFlag() {
+        try {
+            window.localStorage.setItem(TEXT_FIX_MIGRATION_KEY, '1');
+        } catch (error) {
+            // เขียนไม่ได้ก็ migrate ซ้ำได้ (ฐานข้อมูลกันคำซ้ำด้วย UNIQUE อยู่แล้ว)
+        }
+    }
+
+    function readLocalTextFixes() {
         try {
             const raw = window.localStorage.getItem(TEXT_FIX_KEY);
             const list = raw ? JSON.parse(raw) : [];
@@ -64,7 +113,7 @@
         }
     }
 
-    function saveTextFixes(list) {
+    function writeLocalTextFixes(list) {
         try {
             window.localStorage.setItem(
                 TEXT_FIX_KEY,
@@ -78,6 +127,138 @@
         } catch (error) {
             // เก็บไม่ได้ก็ยังใช้กับข้อความรอบนี้ได้
         }
+    }
+
+    // รายการในหน่วยความจำ — เรียกได้แบบ synchronous ทุกที่ที่เคยใช้
+    function loadTextFixes() {
+        if (!textFixCache) {
+            textFixCache = readLocalTextFixes();
+        }
+
+        return textFixCache;
+    }
+
+    // เขียนทับทั้งชุด (ใช้เมื่อไม่มีฐานข้อมูล)
+    function saveTextFixes(list) {
+        textFixCache = (list || [])
+            .map(normalizeTextFix)
+            .filter(Boolean)
+            .slice(0, TEXT_FIX_LIMIT);
+
+        if (!dbFixesAvailable()) {
+            writeLocalTextFixes(textFixCache);
+        }
+
+        return textFixCache;
+    }
+
+    function rowToTextFix(row) {
+        return normalizeTextFix({
+            from: row && row.wrong,
+            to: row && row.right,
+            hits: row && row.hits,
+            accepted: row && row.accepted,
+            rejected: row && row.rejected,
+            lastConfidence: row && row.last_confidence
+        });
+    }
+
+    // โหลดรายการจากฐานข้อมูล (ครั้งแรกจะนำเข้ารายการเดิมจาก localStorage ให้)
+    function refreshTextFixes() {
+        if (textFixRefreshPromise) return textFixRefreshPromise;
+
+        textFixRefreshPromise = Promise.resolve()
+            .then(function () {
+                const local = readLocalTextFixes();
+
+                if (!dbFixesAvailable()) {
+                    textFixCache = textFixCache || local;
+                    return null;
+                }
+
+                return scope.Db.ocrFixList()
+                    .then(function (rows) {
+                        if (!Array.isArray(rows)) rows = [];
+
+                        const migrated = readMigrationFlag();
+
+                        // มีรายการเดิมใน localStorage = ย้ายครั้งแรก
+                        // (ย้ายเฉพาะคำที่ยังไม่มีในฐานข้อมูล — ไม่ทับคำที่แก้ใหม่กว่า)
+                        if (!migrated && local.length > 0) {
+                            const existing = new Set(rows.map(function (row) {
+                                return row.wrong;
+                            }));
+
+                            const missing = local.filter(function (fix) {
+                                return !existing.has(fix.from);
+                            });
+
+                            let failed = 0;
+
+                            return missing
+                                .reduce(function (chain, fix) {
+                                    return chain.then(function () {
+                                        return scope.Db.ocrFixSave({
+                                            wrong: fix.from,
+                                            right: fix.to
+                                        }).catch(function (error) {
+                                            failed += 1;
+                                            console.error(
+                                                'นำเข้าคำที่แก้ไม่สำเร็จ:',
+                                                error
+                                            );
+                                        });
+                                    });
+                                }, Promise.resolve())
+                                .then(function () {
+                                    // มีรายการที่ย้ายไม่สำเร็จ = ลองใหม่ครั้งถัดไป
+                                    if (failed === 0) writeMigrationFlag();
+
+                                    return scope.Db.ocrFixList();
+                                });
+                        }
+
+                        if (!migrated) writeMigrationFlag();
+
+                        return rows;
+                    })
+                    .then(function (rows) {
+                        if (Array.isArray(rows)) {
+                            textFixCache = rows
+                                .map(rowToTextFix)
+                                .filter(Boolean);
+                        }
+                    })
+                    .catch(function (error) {
+                        console.error(
+                            'อ่านคลังคำที่แก้จากฐานข้อมูลไม่สำเร็จ:',
+                            error
+                        );
+
+                        // ใช้รายการในหน่วยความจำต่อ (ถ้ามี) ไม่ให้งานที่ทำอยู่หาย
+                        textFixCache = textFixCache || local;
+                    });
+            })
+            .then(function () {
+                return loadTextFixes();
+            })
+            .finally(function () {
+                textFixRefreshPromise = null;
+            });
+
+        return textFixRefreshPromise;
+    }
+
+    function persistFixToDb(fix, confidence) {
+        if (!dbFixesAvailable()) return Promise.resolve(false);
+
+        return scope.Db.ocrFixSave({
+            wrong: fix.from,
+            right: fix.to,
+            confidence: confidence
+        }).then(function () {
+            return true;
+        });
     }
 
     // อักขระที่ต้องหลบก่อนเอาไปสร้าง RegExp (คีย์ค้นหามาจากผู้ใช้)
@@ -104,12 +285,14 @@
     // คำที่ถูกต้องมักมีคำที่ผิดเป็นส่วนนำ (เช่น "เลขที" -> "เลขที่")
     // ถ้าแทนซ้ำ (อ่านไฟล์ใหม่/แก้ข้อความอีกครั้ง) จะเติมไม้โทเพิ่มอีกตัว
     // จึงไม่แทนเมื่อมีส่วนที่เพิ่มอยู่แล้ว — แทนซ้ำกี่ครั้งผลก็เท่าเดิม
-    function applyTextFixes(text) {
+    // options.track = true → นับ hits ให้คำที่ถูกแทนจริง (ใช้ตอนอ่านไฟล์)
+    function applyTextFixes(text, options) {
         const source = String(text == null ? '' : text);
-        const fixes = loadTextFixes().sort(function (a, b) {
+        const fixes = loadTextFixes().slice().sort(function (a, b) {
             return b.from.length - a.from.length;
         });
 
+        const applied = [];
         let result = source;
 
         fixes.forEach(function (fix) {
@@ -126,13 +309,19 @@
             );
 
             result = result.replace(pattern, function () {
+                applied.push(fix.from);
                 return fix.to;
             });
         });
 
+        if (options && options.track && applied.length > 0) {
+            trackTextFixHits(applied);
+        }
+
         return {
             text: result,
-            changed: result !== source
+            changed: result !== source,
+            applied: applied.length
         };
     }
 
@@ -332,7 +521,13 @@
         }
 
         // คำที่ผู้ใช้แก้ไว้ ใช้กับข้อความที่อ่านจากไฟล์ทุกชนิด
-        const fixed = applyTextFixes(result.text);
+        // (โหลดรายการล่าสุดจากฐานข้อมูลก่อน แล้วนับว่าแทนคำไหนไปบ้าง)
+        await refreshTextFixes();
+
+        const fixed = applyTextFixes(result.text, {
+            // หน้า "ฝึก OCR" อ่านไฟล์เพื่อเก็บตัวอย่าง ไม่ต้องนับสถิติการแทนคำ
+            track: !(options && options.trackFixes === false)
+        });
 
         return {
             text: fixed.text,
@@ -611,12 +806,99 @@
         return result;
     }
 
-    // เพิ่ม/แก้คำที่อ่านผิด (คีย์คือคำที่อ่านผิด — มีได้ครั้งเดียว)
-    function setTextFix(from, to) {
+    // ──────────────────────────────────────────────────────────────
+    // คลังคำที่แก้ — เขียน/ลบ/นับสถิติ
+    // ──────────────────────────────────────────────────────────────
+
+    // อัปเดตตัวนับในหน่วยความจำ + ฐานข้อมูล (ฐานข้อมูลล้มเหลวไม่ทำให้ UI พัง)
+    function applyStatUpdates(updates) {
+        if (!Array.isArray(updates) || updates.length === 0) return;
+
+        const byKey = {};
+
+        updates.forEach(function (item) {
+            const key = String((item && item.wrong) || '').trim();
+
+            if (key === '') return;
+
+            if (!byKey[key]) byKey[key] = { hits: 0, accepted: 0, rejected: 0 };
+
+            byKey[key].hits += toCount(item.hits);
+            byKey[key].accepted += toCount(item.accepted);
+            byKey[key].rejected += toCount(item.rejected);
+        });
+
+        if (Object.keys(byKey).length === 0) return;
+
+        loadTextFixes().forEach(function (fix) {
+            const delta = byKey[fix.from];
+
+            if (!delta) return;
+
+            fix.hits += delta.hits;
+            fix.accepted += delta.accepted;
+            fix.rejected += delta.rejected;
+        });
+
+        if (dbFixesAvailable()) {
+            scope.Db.ocrFixStat({ updates: updates }).catch(function (error) {
+                console.error('อัปเดตสถิติคำที่แก้ไม่สำเร็จ:', error);
+            });
+        }
+    }
+
+    // นับว่าคำนี้ถูกแทนให้จริงกี่ครั้งในการอ่านไฟล์หนึ่งครั้ง
+    function trackTextFixHits(list) {
+        const counts = {};
+
+        (list || []).forEach(function (from) {
+            const key = String(from || '').trim();
+
+            if (key !== '') counts[key] = (counts[key] || 0) + 1;
+        });
+
+        applyStatUpdates(Object.keys(counts).map(function (wrong) {
+            return { wrong: wrong, hits: counts[wrong] };
+        }));
+    }
+
+    // ผู้ใช้ยอมรับ/ปฏิเสธคำแนะนำ → ใช้จัดอันดับคำใกล้เคียงครั้งถัดไป
+    function trackTextFixFeedback(wrong, accepted) {
+        const key = String(wrong == null ? '' : wrong).trim();
+
+        if (key === '') return;
+
+        applyStatUpdates([{
+            wrong: key,
+            accepted: accepted ? 1 : 0,
+            rejected: accepted ? 0 : 1
+        }]);
+    }
+
+    function removeTextFixValue(from) {
+        const key = String(from == null ? '' : from).trim();
+
+        if (key === '') return null;
+
+        const fixes = loadTextFixes();
+        const rest = fixes.filter(function (fix) {
+            return fix.from !== key;
+        });
+
+        if (rest.length === fixes.length) return null;
+
+        textFixCache = rest;
+        return key;
+    }
+
+    // ตรวจค่าและคืนรายการที่จะบันทึก (ไม่บันทึกเอง)
+    function applyTextFixValue(from, to) {
         const key = String(from == null ? '' : from).trim();
         const value = String(to == null ? '' : to).trim();
 
-        if (key === '' || value === '' || key === value) return false;
+        if (key === '' || value === '' || key === value) {
+            return { changed: false, fix: null };
+        }
 
         const fixes = loadTextFixes();
         const existing = fixes.find(function (fix) {
@@ -624,27 +906,99 @@
         });
 
         if (existing) {
-            if (existing.to === value) return false;
+            if (existing.to === value) return { changed: false, fix: existing };
+
             existing.to = value;
-        } else {
-            fixes.push({ from: key, to: value });
+
+            // เปลี่ยนคำตอบ = หลักฐานเดิม (ยอมรับ/ปฏิเสธ) ใช้ไม่ได้แล้ว
+            existing.accepted = 0;
+            existing.rejected = 0;
+
+            return { changed: true, fix: existing };
         }
 
-        saveTextFixes(fixes);
+        const fix = {
+            from: key,
+            to: value,
+            hits: 0,
+            accepted: 0,
+            rejected: 0,
+            lastConfidence: null
+        };
+
+        fixes.push(fix);
+
+        return { changed: true, fix: fix };
+    }
+
+    // เพิ่ม/แก้คำที่อ่านผิด (คีย์คือคำที่อ่านผิด — มีได้ครั้งเดียว)
+    function setTextFix(from, to, options) {
+        const result = applyTextFixValue(from, to);
+
+        if (!result.changed) return false;
+
+        if (Number.isFinite(Number(options && options.confidence))) {
+            result.fix.lastConfidence = Number(options.confidence);
+        }
+
+        if (!dbFixesAvailable()) {
+            writeLocalTextFixes(loadTextFixes());
+        }
+
+        persistFixToDb(result.fix, options && options.confidence).catch(function (error) {
+            console.error('บันทึกคำที่แก้ลงฐานข้อมูลไม่สำเร็จ:', error);
+        });
+
+        return true;
+    }
+
+    // เหมือน setTextFix แต่รอผลการบันทึก (หน้า "ฝึก OCR" ใช้แสดงสถานะ)
+    async function saveTextFixAsync(from, to, options) {
+        const result = applyTextFixValue(from, to);
+
+        if (!result.changed) return false;
+
+        if (Number.isFinite(Number(options && options.confidence))) {
+            result.fix.lastConfidence = Number(options.confidence);
+        }
+
+        if (!dbFixesAvailable()) {
+            writeLocalTextFixes(loadTextFixes());
+            return true;
+        }
+
+        await persistFixToDb(result.fix, options && options.confidence);
         return true;
     }
 
     // ลบคำที่แก้ — คืน true เมื่อมีรายการให้ลบจริง
     function deleteTextFix(from) {
-        const key = String(from == null ? '' : from).trim();
-        const fixes = loadTextFixes();
-        const rest = fixes.filter(function (fix) {
-            return fix.from !== key;
-        });
+        const key = removeTextFixValue(from);
 
-        if (rest.length === fixes.length) return false;
+        if (!key) return false;
 
-        saveTextFixes(rest);
+        if (!dbFixesAvailable()) {
+            writeLocalTextFixes(loadTextFixes());
+        } else {
+            scope.Db.ocrFixDelete(key).catch(function (error) {
+                console.error('ลบคำที่แก้ในฐานข้อมูลไม่สำเร็จ:', error);
+            });
+        }
+
+        return true;
+    }
+
+    async function deleteTextFixAsync(from) {
+        const key = removeTextFixValue(from);
+
+        if (!key) return false;
+
+        if (!dbFixesAvailable()) {
+            writeLocalTextFixes(loadTextFixes());
+            return true;
+        }
+
+        await scope.Db.ocrFixDelete(key);
         return true;
     }
 
@@ -657,13 +1011,105 @@
         }) || null;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // คำใกล้เคียง (Levenshtein) — ใช้แนะนำในหน้า "ฝึก OCR"
+    // ──────────────────────────────────────────────────────────────
+
+    function levenshteinDistance(first, second) {
+        const a = String(first == null ? '' : first);
+        const b = String(second == null ? '' : second);
+
+        if (a === b) return 0;
+        if (a.length === 0) return b.length;
+        if (b.length === 0) return a.length;
+
+        let previous = new Array(b.length + 1);
+
+        for (let index = 0; index <= b.length; index++) {
+            previous[index] = index;
+        }
+
+        for (let row = 1; row <= a.length; row++) {
+            const current = [row];
+
+            for (let column = 1; column <= b.length; column++) {
+                const cost = a[row - 1] === b[column - 1] ? 0 : 1;
+
+                current[column] = Math.min(
+                    current[column - 1] + 1,
+                    previous[column] + 1,
+                    previous[column - 1] + cost
+                );
+            }
+
+            previous = current;
+        }
+
+        return previous[b.length];
+    }
+
+    // หาคำที่เคยแก้ไว้ซึ่งใกล้กับคำที่ OCR อ่านได้ (แนะนำเท่านั้น ไม่แทนเอง)
+    function findFuzzyFixes(token, options) {
+        const key = String(token == null ? '' : token).trim();
+        const limit = Math.max(1, Math.floor(Number(options && options.limit) || 3));
+
+        if (key.length < 2) return [];
+
+        // คำสั้นผิดได้ไม่เกิน 1 ตัว — คำยาวอนุโลม 2 ตัว
+        const maxDistance = key.length <= 4 ? 1 : 2;
+
+        return loadTextFixes()
+            .filter(function (fix) {
+                return fix.from !== key && fix.to !== key && fix.to !== '';
+            })
+            .map(function (fix) {
+                return {
+                    fix: fix,
+                    distance: levenshteinDistance(key, fix.from)
+                };
+            })
+            .filter(function (item) {
+                if (item.distance > maxDistance) return false;
+
+                return item.distance /
+                    Math.max(key.length, item.fix.from.length) <= 0.34;
+            })
+            .map(function (item) {
+                const total = item.fix.accepted + item.fix.rejected;
+                const accuracy = (item.fix.accepted + 1) / (total + 2);
+
+                return {
+                    from: item.fix.from,
+                    to: item.fix.to,
+                    distance: item.distance,
+                    accepted: item.fix.accepted,
+                    rejected: item.fix.rejected,
+                    hits: item.fix.hits,
+                    score:
+                        accuracy -
+                        item.distance * 0.3 +
+                        Math.min(0.25, item.fix.hits * 0.03)
+                };
+            })
+            .sort(function (a, b) {
+                return b.score - a.score || a.distance - b.distance;
+            })
+            .slice(0, limit);
+    }
+
     scope.DataExtract = {
         TEXT_FIX_KEY: TEXT_FIX_KEY,
         loadTextFixes: loadTextFixes,
         saveTextFixes: saveTextFixes,
+        refreshTextFixes: refreshTextFixes,
         setTextFix: setTextFix,
+        saveTextFixAsync: saveTextFixAsync,
         deleteTextFix: deleteTextFix,
+        deleteTextFixAsync: deleteTextFixAsync,
         findTextFix: findTextFix,
+        trackTextFixFeedback: trackTextFixFeedback,
+        findFuzzyFixes: findFuzzyFixes,
+        levenshteinDistance: levenshteinDistance,
         applyTextFixes: applyTextFixes,
         normalizeText: normalizeText,
         textFromDocumentXml: textFromDocumentXml,

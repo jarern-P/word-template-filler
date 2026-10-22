@@ -307,6 +307,46 @@
 
         },
 
+        // ── คำที่ OCR อ่านผิด (ฝึก OCR / แทนคำอัตโนมัติ) ──
+
+        // คืน [{ id, wrong, right, hits, accepted, rejected, ... }]
+        ocrFixList: function () {
+
+            return dbRequest(
+                'dbOcrFixList'
+            );
+
+        },
+
+        // payload = { wrong, right, confidence }
+        ocrFixSave: function (payload) {
+
+            return dbRequest(
+                'dbOcrFixSave',
+                payload
+            );
+
+        },
+
+        ocrFixDelete: function (wrong) {
+
+            return dbRequest(
+                'dbOcrFixDelete',
+                wrong
+            );
+
+        },
+
+        // payload = { updates: [{ wrong, hits, accepted, rejected }, ...] }
+        ocrFixStat: function (payload) {
+
+            return dbRequest(
+                'dbOcrFixStat',
+                payload
+            );
+
+        },
+
         // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
 
         // payload = { templateId, templateName, values, modes, retentionDays }

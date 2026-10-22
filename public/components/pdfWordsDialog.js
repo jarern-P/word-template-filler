@@ -11,8 +11,9 @@
 //   มาจาก pdf-text.cjs (พิกัดเป็น px บนภาพตัวอย่าง ไม่ใช่พิกัด PDF)
 //
 // การแก้คำ:
-//   - บันทึกเป็นรายการ "อ่านผิด -> ถูกต้อง" ผ่าน DataExtract.setTextFix
-//     (รายการเดียวกันกับที่ใช้แทนคำตอนอ่านไฟล์ครั้งถัดไป)
+//   - บันทึกเป็นรายการ "อ่านผิด -> ถูกต้อง" ผ่าน DataExtract.saveTextFixAsync
+//     (เก็บในตาราง ocr_fixes ของฐานข้อมูล — รายการเดียวกันกับที่ใช้แทนคำ
+//      ตอนอ่านไฟล์ครั้งถัดไป และที่เห็นในหน้า "ฝึก OCR")
 //   - คำที่แก้แล้วขึ้นสีเขียวทุกที่ที่ปรากฏบนหน้า (เพราะแทนทั้งข้อความ)
 //   - onChange ถูกเรียกหลังบันทึก/ลบ เพื่อให้กล่อง "ข้อมูล" แทนคำในข้อความทันที
 //
@@ -140,7 +141,8 @@
         if (overlay) overlay.classList.remove('open');
     }
 
-    // payload = { pages, title, onChange }
+    // payload = { pages, title, onChange, pageIndex }
+    //   pageIndex = หน้าที่ต้องการเปิดก่อน (ใช้จากหน้าฝึก OCR ที่เลือกหน้าจากคิว)
     function open(payload) {
         const data = payload || {};
         const pages = Array.isArray(data.pages) ? data.pages : [];
@@ -149,8 +151,12 @@
 
         build();
 
+        const requested = Math.floor(Number(data.pageIndex));
+        const startIndex =
+            requested >= 0 && requested < pages.length ? requested : 0;
+
         state.pages = pages;
-        state.index = 0;
+        state.index = startIndex;
         state.selected = null;
         state.onChange = typeof data.onChange === 'function' ? data.onChange : null;
         state.zoom = 0;
@@ -163,7 +169,7 @@
             : 'ตรวจคำบน PDF';
 
         overlay.classList.add('open');
-        showPage(0);
+        showPage(startIndex);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -349,7 +355,8 @@
         hint.classList.remove('error', 'ok');
     }
 
-    function saveSelected() {
+    // รอบันทึกก่อนแจ้ง onChange — หน้า "ฝึก OCR" จะได้อ่านรายการล่าสุดจากฐานข้อมูล
+    async function saveSelected() {
         const word = state.selected;
 
         if (!word) return;
@@ -368,8 +375,22 @@
             return;
         }
 
-        if (!scope.DataExtract.setTextFix(word.text, to)) {
-            setEditorHint('คำนี้ถูกแก้เป็น "' + to + '" อยู่แล้ว');
+        try {
+            const saved = await scope.DataExtract.saveTextFixAsync(
+                word.text,
+                to
+            );
+
+            if (!saved) {
+                setEditorHint('คำนี้ถูกแก้เป็น "' + to + '" อยู่แล้ว');
+                return;
+            }
+
+        } catch (error) {
+            setEditorHint(
+                (error && error.message) ||
+                'บันทึกไม่สำเร็จ'
+            );
             return;
         }
 
@@ -381,12 +402,25 @@
         notifyChange();
     }
 
-    function removeSelected() {
+    async function removeSelected() {
         const word = state.selected;
 
         if (!word) return;
 
-        if (!scope.DataExtract.deleteTextFix(word.text)) return;
+        try {
+            const removed = await scope.DataExtract.deleteTextFixAsync(
+                word.text
+            );
+
+            if (!removed) return;
+
+        } catch (error) {
+            setEditorHint(
+                (error && error.message) ||
+                'ลบไม่สำเร็จ'
+            );
+            return;
+        }
 
         el('wordsTo').value = '';
         el('wordsRemoveBtn').hidden = true;

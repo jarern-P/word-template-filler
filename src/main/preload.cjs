@@ -76,6 +76,20 @@ contextBridge.exposeInMainWorld(
         dbWordDelete: (id) =>
             ipcRenderer.invoke("db:word-delete", id),
 
+        // คำที่ OCR อ่านผิด -> คำที่ถูกต้อง (หน้า "ฝึก OCR" และการแทนคำอัตโนมัติ)
+        dbOcrFixList: () =>
+            ipcRenderer.invoke("db:ocr-fix-list"),
+
+        dbOcrFixSave: (payload) =>
+            ipcRenderer.invoke("db:ocr-fix-save", payload),
+
+        dbOcrFixDelete: (wrong) =>
+            ipcRenderer.invoke("db:ocr-fix-delete", wrong),
+
+        // อัปเดตตัวนับ hits/accepted/rejected หลายรายการพร้อมกัน
+        dbOcrFixStat: (payload) =>
+            ipcRenderer.invoke("db:ocr-fix-stat", payload),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),

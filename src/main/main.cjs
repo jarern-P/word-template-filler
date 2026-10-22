@@ -1408,6 +1408,143 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB OCR Fixes (คำที่ OCR อ่านผิด)
+// ============================================================
+
+ipcMain.handle(
+    "db:ocr-fix-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-fix-list",
+                {}
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-fix-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-fix-save",
+                payload
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-fix-delete",
+    async (
+        event,
+        wrong
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-fix-delete",
+                { wrong }
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-fix-stat",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-fix-stat",
+                payload
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 

@@ -104,6 +104,26 @@ const SCHEMA = `
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+
+    -- คำที่ OCR อ่านผิดและผู้ใช้แก้ไว้
+    --   ใช้แทนคำอัตโนมัติตอนอ่าน PDF และเป็นชุดข้อมูลฝึกในหน้า "ฝึก OCR"
+    --   hits     = จำนวนครั้งที่ระบบแทนคำนี้ให้จริง
+    --   accepted = จำนวนครั้งที่ผู้ใช้ยอมรับคำแนะนำที่มาจากคู่นี้
+    --   rejected = จำนวนครั้งที่ผู้ใช้บอกว่าไม่ใช่ (ใช้ลดอันดับคำแนะนำ)
+    CREATE TABLE IF NOT EXISTS ocr_fixes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        wrong           TEXT NOT NULL UNIQUE,
+        right           TEXT NOT NULL,
+        hits            INTEGER NOT NULL DEFAULT 0,
+        accepted        INTEGER NOT NULL DEFAULT 0,
+        rejected        INTEGER NOT NULL DEFAULT 0,
+        last_confidence REAL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ocr_fixes_hits
+        ON ocr_fixes(hits DESC);
 `;
 
 
@@ -2378,6 +2398,281 @@ function handleWordDelete(message) {
 // ============================================================
 
 // ============================================================
+// OCR Fixes (คำที่ OCR อ่านผิดและผู้ใช้แก้ไว้)
+// ============================================================
+
+function handleOcrFixList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    wrong,
+                    right,
+                    hits,
+                    accepted,
+                    rejected,
+                    last_confidence,
+                    created_at,
+                    updated_at
+                FROM ocr_fixes
+                ORDER BY hits DESC, wrong ASC
+            `)
+            .all();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrFixSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+        const wrong = String(payload.wrong || "").trim();
+        const right = String(payload.right || "").trim();
+
+        if (!wrong) {
+            throw new Error("กรุณาระบุคำที่อ่านผิด");
+        }
+
+        if (!right) {
+            throw new Error("กรุณาระบุคำที่ถูกต้อง");
+        }
+
+        if (wrong === right) {
+            throw new Error("คำที่ถูกต้องต้องต่างจากคำที่อ่านผิด");
+        }
+
+        const confidence = Number(payload.confidence);
+        const lastConfidence = Number.isFinite(confidence) ? confidence : null;
+        const now = new Date().toISOString();
+
+        const existing =
+            db.prepare(`
+                SELECT
+                    id,
+                    right
+                FROM ocr_fixes
+                WHERE wrong = ?
+            `)
+            .get(wrong);
+
+        let resultId;
+
+        if (existing) {
+
+            // เปลี่ยนคำที่ถูกต้อง = หลักฐานเดิม (ยอมรับ/ปฏิเสธ) ใช้ไม่ได้แล้ว
+            if (existing.right !== right) {
+
+                db.prepare(`
+                    UPDATE ocr_fixes
+                    SET
+                        right = ?,
+                        accepted = 0,
+                        rejected = 0,
+                        last_confidence = COALESCE(?, last_confidence),
+                        updated_at = ?
+                    WHERE wrong = ?
+                `)
+                .run(right, lastConfidence, now, wrong);
+
+            } else {
+
+                db.prepare(`
+                    UPDATE ocr_fixes
+                    SET
+                        last_confidence = COALESCE(?, last_confidence),
+                        updated_at = ?
+                    WHERE wrong = ?
+                `)
+                .run(lastConfidence, now, wrong);
+            }
+
+            resultId = existing.id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO ocr_fixes (
+                        wrong,
+                        right,
+                        last_confidence,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                `)
+                .run(wrong, right, lastConfidence, now, now);
+
+            resultId = Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId,
+                created: !existing
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrFixDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const wrong =
+            String(message.payload?.wrong || "").trim();
+
+        if (!wrong) {
+            throw new Error("ไม่พบคำที่ต้องลบ");
+        }
+
+        const result =
+            db.prepare(`
+                DELETE FROM ocr_fixes
+                WHERE wrong = ?
+            `)
+            .run(wrong);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// อัปเดตตัวนับหลายรายการในครั้งเดียว (hits ตอนแทนคำ / accepted-rejected ตอนฝึก)
+// payload = { updates: [{ wrong, hits, accepted, rejected }, ...] }
+function handleOcrFixStat(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const updates =
+            Array.isArray(message.payload?.updates)
+                ? message.payload.updates
+                : [];
+
+        const now = new Date().toISOString();
+
+        const statement =
+            db.prepare(`
+                UPDATE ocr_fixes
+                SET
+                    hits = hits + ?,
+                    accepted = accepted + ?,
+                    rejected = rejected + ?,
+                    updated_at = ?
+                WHERE wrong = ?
+            `);
+
+        const apply =
+            db.transaction(function (list) {
+
+                let changes = 0;
+
+                list.forEach(function (item) {
+
+                    const wrong = String(item?.wrong || "").trim();
+
+                    if (!wrong) return;
+
+                    const hits = Math.max(0, Math.floor(Number(item.hits) || 0));
+                    const accepted = Math.max(0, Math.floor(Number(item.accepted) || 0));
+                    const rejected = Math.max(0, Math.floor(Number(item.rejected) || 0));
+
+                    if (hits === 0 && accepted === 0 && rejected === 0) return;
+
+                    changes +=
+                        statement.run(hits, accepted, rejected, now, wrong).changes;
+                });
+
+                return changes;
+            });
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                updated: apply(updates)
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // History (ประวัติการกรอก)
 // ============================================================
 
@@ -3753,6 +4048,41 @@ parentPort.on("message", (message) => {
             case "word-delete":
 
                 handleWordDelete(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // OCR Fixes (คำที่ OCR อ่านผิด)
+            // ------------------------------------------------
+
+            case "ocr-fix-list":
+
+                handleOcrFixList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-fix-save":
+
+                handleOcrFixSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-fix-delete":
+
+                handleOcrFixDelete(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-fix-stat":
+
+                handleOcrFixStat(message);
 
                 break;
 
