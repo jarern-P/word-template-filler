@@ -1545,6 +1545,143 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB OCR Word Groups (คำที่ถูกตัดข้ามบรรทัด)
+// ============================================================
+
+ipcMain.handle(
+    "db:ocr-group-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-group-list",
+                {}
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-group-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-group-save",
+                payload
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-group-delete",
+    async (
+        event,
+        tokens
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-group-delete",
+                { tokens }
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-group-stat",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-group-stat",
+                payload
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 

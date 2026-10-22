@@ -347,6 +347,46 @@
 
         },
 
+        // ── กลุ่มคำที่ถูกตัดข้ามบรรทัด ──
+
+        // คืน [{ id, tokens: [...], merged, hits, ... }]
+        ocrGroupList: function () {
+
+            return dbRequest(
+                'dbOcrGroupList'
+            );
+
+        },
+
+        // payload = { tokens: [...], merged }
+        ocrGroupSave: function (payload) {
+
+            return dbRequest(
+                'dbOcrGroupSave',
+                payload
+            );
+
+        },
+
+        ocrGroupDelete: function (tokens) {
+
+            return dbRequest(
+                'dbOcrGroupDelete',
+                tokens
+            );
+
+        },
+
+        // payload = { updates: [{ tokens, hits, accepted, rejected }, ...] }
+        ocrGroupStat: function (payload) {
+
+            return dbRequest(
+                'dbOcrGroupStat',
+                payload
+            );
+
+        },
+
         // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
 
         // payload = { templateId, templateName, values, modes, retentionDays }

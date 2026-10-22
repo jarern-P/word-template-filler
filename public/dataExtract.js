@@ -261,6 +261,231 @@
         });
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // กลุ่มคำที่ถูกตัดข้ามบรรทัด (เช่น "เลข" + "ที่")
+    // ──────────────────────────────────────────────────────────────
+
+    let wordGroupCache = null;
+    let wordGroupRefreshPromise = null;
+
+    function dbGroupsAvailable() {
+        return Boolean(
+            window.electronAPI &&
+            scope.Db &&
+            typeof scope.Db.ocrGroupList === 'function'
+        );
+    }
+
+    function normalizeGroupTokens(tokens) {
+        if (!Array.isArray(tokens)) return [];
+
+        return tokens
+            .map(function (token) {
+                return String(token == null ? '' : token).trim();
+            })
+            .filter(Boolean);
+    }
+
+    function groupKey(tokens) {
+        return normalizeGroupTokens(tokens).join('\u001f');
+    }
+
+    function rowToWordGroup(row) {
+        const tokens = normalizeGroupTokens(row && row.tokens);
+
+        if (tokens.length < 2) return null;
+
+        return {
+            id: row.id,
+            tokens: tokens,
+            merged: String((row && row.merged) || '').trim(),
+            hits: toCount(row && row.hits),
+            accepted: toCount(row && row.accepted),
+            rejected: toCount(row && row.rejected)
+        };
+    }
+
+    function loadWordGroups() {
+        if (!wordGroupCache) wordGroupCache = [];
+
+        return wordGroupCache;
+    }
+
+    // โหลดกลุ่มคำจากฐานข้อมูล (เก็บในหน่วยความจำเพื่อใช้แบบ synchronous)
+    function refreshWordGroups() {
+        if (wordGroupRefreshPromise) return wordGroupRefreshPromise;
+
+        wordGroupRefreshPromise = Promise.resolve()
+            .then(function () {
+                if (!dbGroupsAvailable()) {
+                    wordGroupCache = [];
+                    return;
+                }
+
+                return scope.Db.ocrGroupList()
+                    .then(function (rows) {
+                        wordGroupCache = (Array.isArray(rows) ? rows : [])
+                            .map(rowToWordGroup)
+                            .filter(Boolean);
+                    })
+                    .catch(function (error) {
+                        console.error(
+                            'อ่านกลุ่มคำจากฐานข้อมูลไม่สำเร็จ:',
+                            error
+                        );
+
+                        wordGroupCache = wordGroupCache || [];
+                    });
+            })
+            .then(function () {
+                return loadWordGroups();
+            })
+            .finally(function () {
+                wordGroupRefreshPromise = null;
+            });
+
+        return wordGroupRefreshPromise;
+    }
+
+    function persistWordGroup(tokens, merged) {
+        if (!dbGroupsAvailable()) {
+            return Promise.reject(
+                new Error('บันทึกกลุ่มคำได้เฉพาะในแอป (Electron)')
+            );
+        }
+
+        return scope.Db.ocrGroupSave({
+            tokens: tokens,
+            merged: merged
+        });
+    }
+
+    // เพิ่ม/แก้กลุ่มคำ — คืน true เมื่อบันทึกสำเร็จ
+    async function saveWordGroupAsync(tokens, merged) {
+        const list = normalizeGroupTokens(tokens);
+        const text = String(merged == null ? '' : merged).trim();
+
+        if (list.length < 2) return false;
+        if (text === '') return false;
+
+        await persistWordGroup(list, text);
+
+        const key = groupKey(list);
+        const groups = loadWordGroups();
+        const existing = groups.find(function (group) {
+            return groupKey(group.tokens) === key;
+        });
+
+        if (existing) {
+            existing.merged = text;
+        } else {
+            groups.push({
+                id: 0,
+                tokens: list,
+                merged: text,
+                hits: 0,
+                accepted: 0,
+                rejected: 0
+            });
+        }
+
+        return true;
+    }
+
+    async function deleteWordGroupAsync(tokens) {
+        const list = normalizeGroupTokens(tokens);
+
+        if (list.length < 2) return false;
+
+        if (dbGroupsAvailable()) {
+            await scope.Db.ocrGroupDelete(list);
+        }
+
+        const key = groupKey(list);
+        wordGroupCache = loadWordGroups().filter(function (group) {
+            return groupKey(group.tokens) !== key;
+        });
+
+        return true;
+    }
+
+    function trackWordGroupHits(list) {
+        const counts = {};
+        const tokensByKey = {};
+
+        (list || []).forEach(function (tokens) {
+            const normalized = normalizeGroupTokens(tokens);
+
+            if (normalized.length < 2) return;
+
+            const key = groupKey(normalized);
+            counts[key] = (counts[key] || 0) + 1;
+            tokensByKey[key] = normalized;
+        });
+
+        if (Object.keys(counts).length === 0) return;
+
+        loadWordGroups().forEach(function (group) {
+            const count = counts[groupKey(group.tokens)];
+
+            if (count) group.hits += count;
+        });
+
+        if (!dbGroupsAvailable()) return;
+
+        const updates = Object.keys(counts).map(function (key) {
+            return {
+                tokens: tokensByKey[key],
+                hits: counts[key]
+            };
+        });
+
+        scope.Db.ocrGroupStat({ updates: updates }).catch(function (error) {
+            console.error('อัปเดตสถิติกลุ่มคำไม่สำเร็จ:', error);
+        });
+    }
+
+    // รวมคำที่ถูกตัดข้ามบรรทัดตามกลุ่มที่เรียนรู้ไว้
+    // ต้องมีขึ้นบรรทัดใหม่คั่นระหว่างคำเท่านั้น (คำที่อยู่บรรทัดเดียวกันไม่ถูกแตะ)
+    function applyWordGroupMerges(text, options) {
+        const source = String(text == null ? '' : text);
+        const groups = loadWordGroups()
+            .slice()
+            .sort(function (a, b) {
+                return b.tokens.length - a.tokens.length ||
+                    b.merged.length - a.merged.length;
+            });
+
+        const applied = [];
+        let result = source;
+
+        groups.forEach(function (group) {
+            if (group.tokens.length < 2 || group.merged === '') return;
+
+            const pattern = new RegExp(
+                group.tokens
+                    .map(escapeRegExp)
+                    .join('[ \\t]*\\r?\\n[ \\t]*'),
+                'g'
+            );
+
+            result = result.replace(pattern, function () {
+                applied.push(group.tokens);
+                return group.merged;
+            });
+        });
+
+        if (options && options.track && applied.length > 0) {
+            trackWordGroupHits(applied);
+        }
+
+        return {
+            text: result,
+            changed: result !== source,
+            applied: applied.length
+        };
+    }
+
     // อักขระที่ต้องหลบก่อนเอาไปสร้าง RegExp (คีย์ค้นหามาจากผู้ใช้)
     // รวม backslash (charCode 92) ด้วย เผื่อผู้ใช้พิมพ์ backslash มาในคำ
     const BACKSLASH = String.fromCharCode(92);
@@ -520,11 +745,17 @@
             throw error;
         }
 
-        // คำที่ผู้ใช้แก้ไว้ ใช้กับข้อความที่อ่านจากไฟล์ทุกชนิด
+        // คำที่ผู้ใช้แก้ไว้ / กลุ่มคำที่ถูกตัดข้ามบรรทัด ใช้กับข้อความที่อ่านจากไฟล์ทุกชนิด
         // (โหลดรายการล่าสุดจากฐานข้อมูลก่อน แล้วนับว่าแทนคำไหนไปบ้าง)
         await refreshTextFixes();
+        await refreshWordGroups();
 
-        const fixed = applyTextFixes(result.text, {
+        // กลุ่มคำต้องรวมก่อน แล้วค่อยแก้คำ เพราะคำที่รวมแล้วอาจตรงกับคำที่แก้ไว้
+        const grouped = applyWordGroupMerges(result.text, {
+            track: !(options && options.trackFixes === false)
+        });
+
+        const fixed = applyTextFixes(grouped.text, {
             // หน้า "ฝึก OCR" อ่านไฟล์เพื่อเก็บตัวอย่าง ไม่ต้องนับสถิติการแทนคำ
             track: !(options && options.trackFixes === false)
         });
@@ -534,6 +765,7 @@
             ocrPages: result.ocrPages,
             pages: result.pages || [],
             fixed: fixed.changed,
+            grouped: grouped.applied,
             joined: Number(result.joined) || 0
         };
     }
@@ -1102,6 +1334,11 @@
         loadTextFixes: loadTextFixes,
         saveTextFixes: saveTextFixes,
         refreshTextFixes: refreshTextFixes,
+        refreshWordGroups: refreshWordGroups,
+        loadWordGroups: loadWordGroups,
+        saveWordGroupAsync: saveWordGroupAsync,
+        deleteWordGroupAsync: deleteWordGroupAsync,
+        applyWordGroupMerges: applyWordGroupMerges,
         setTextFix: setTextFix,
         saveTextFixAsync: saveTextFixAsync,
         deleteTextFix: deleteTextFix,

@@ -37,6 +37,9 @@
         '        <span id="wordsPageLabel" class="words-page-label"></span>',
         '        <button id="wordsNextBtn" type="button" class="plain" title="หน้าถัดไป">ถัดไป ›</button>',
         '        <span class="words-toolbar-gap"></span>',
+        '        <button id="wordsGroupModeBtn" type="button" class="plain"',
+        '                title="เลือกหลายคำเพื่อรวมเป็นคำเดียว (เช่น คำที่ถูกตัดข้ามบรรทัด)">จัดกลุ่มคำ</button>',
+        '        <span class="words-toolbar-gap"></span>',
         '        <button id="wordsZoomOutBtn" type="button" class="plain" title="ย่อ" aria-label="ย่อ">&minus;</button>',
         '        <button id="wordsZoomInBtn" type="button" class="plain" title="ขยาย" aria-label="ขยาย">+</button>',
         '    </div>',
@@ -58,6 +61,21 @@
         '        </div>',
         '        <p id="wordsEditorHint" class="hint words-editor-hint"></p>',
         '    </form>',
+        '    <form id="wordsGroupEditor" class="words-editor words-group-editor" hidden>',
+        '        <div class="words-editor-row">',
+        '            <span class="words-editor-label">กลุ่มคำที่เลือก</span>',
+        '            <div id="wordsGroupChips" class="words-group-chips"></div>',
+        '        </div>',
+        '        <div class="words-editor-row">',
+        '            <span class="words-editor-label">รวมเป็น</span>',
+        '            <input id="wordsGroupMerged" type="text" maxlength="120" autocomplete="off"',
+        '                   placeholder="คำที่รวมแล้ว เช่น เลขที่">',
+        '            <button id="wordsGroupSaveBtn" type="submit">บันทึกกลุ่มคำ</button>',
+        '            <button id="wordsGroupClearBtn" type="button" class="plain">ล้างที่เลือก</button>',
+        '            <button id="wordsGroupRemoveBtn" type="button" class="plain" hidden>ลบกลุ่มนี้</button>',
+        '        </div>',
+        '        <p id="wordsGroupHint" class="hint words-editor-hint"></p>',
+        '    </form>',
         '    <p class="preview-foot">คลิกคำบนหน้ากระดาษเพื่อแก้ — คำที่แก้แล้วจะขึ้นสีเขียว ' +
             'และถูกแทนให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป (เก็บไว้ในเครื่องนี้)</p>',
         '</div>'
@@ -73,7 +91,9 @@
         zoom: 0,          // ดัชนีใน ZOOMS
         selected: null,   // คำที่กำลังแก้
         focus: null,      // คำที่ต้องไฮไลต์เมื่อเปิด (จากหน้าฝึก OCR)
-        onChange: null
+        onChange: null,
+        mode: 'fix',      // 'fix' = แก้คำ, 'group' = เลือกหลายคำเพื่อรวมกลุ่ม
+        picks: []         // ลำดับคำที่เลือกในโหมดจัดกลุ่ม (ดัชนีใน page.words)
     };
 
     function el(id) {
@@ -128,13 +148,32 @@
 
         el('wordsRemoveBtn').addEventListener('click', removeSelected);
 
+        el('wordsGroupModeBtn').addEventListener('click', function () {
+            setMode(state.mode === 'group' ? 'fix' : 'group');
+        });
+
+        el('wordsGroupEditor').addEventListener('submit', function (event) {
+            event.preventDefault();
+            saveGroup();
+        });
+
+        el('wordsGroupClearBtn').addEventListener('click', clearPicks);
+        el('wordsGroupRemoveBtn').addEventListener('click', removeGroup);
+
         // คลิกที่กล่องคำ (สร้างทีละคำบนหน้า — ใช้ event delegation)
         el('wordsLayer').addEventListener('click', function (event) {
             const box = event.target.closest('[data-word-index]');
 
             if (!box) return;
 
-            selectWord(Number(box.dataset.wordIndex));
+            const index = Number(box.dataset.wordIndex);
+
+            if (state.mode === 'group') {
+                togglePick(index);
+                return;
+            }
+
+            selectWord(index);
         });
     }
 
@@ -142,9 +181,10 @@
         if (overlay) overlay.classList.remove('open');
     }
 
-    // payload = { pages, title, onChange, pageIndex, focusWord }
+    // payload = { pages, title, onChange, pageIndex, focusWord, mode }
     //   pageIndex = หน้าที่ต้องการเปิดก่อน (ใช้จากหน้าฝึก OCR ที่เลือกหน้าจากคิว)
     //   focusWord = { text, x, y } คำที่ต้องไฮไลต์/เลื่อนไปหาเมื่อเปิด
+    //   mode = 'group' เปิดในโหมดเลือกหลายคำ (คำใน focusWord ถูกเลือกไว้ก่อน)
     function open(payload) {
         const data = payload || {};
         const pages = Array.isArray(data.pages) ? data.pages : [];
@@ -167,12 +207,19 @@
         state.onChange = typeof data.onChange === 'function' ? data.onChange : null;
         state.zoom = 0;
 
+        // เปิดใหม่ทุกครั้งให้เริ่มที่โหมดที่ขอ (ค่าเริ่มต้น = โหมดแก้คำ)
+        state.mode = data.mode === 'group' ? 'group' : 'fix';
+        state.picks = [];
+
         // เปิดครั้งใหม่ให้กลับไปขนาดพอดีหน้าต่าง (ไม่ค้างซูมจากครั้งก่อน)
         setZoom(0, true);
 
         el('wordsTitle').textContent = data.title
             ? 'ตรวจคำบน PDF — ' + data.title
             : 'ตรวจคำบน PDF';
+
+        syncModeButton();
+        hideGroupEditor();
 
         overlay.classList.add('open');
         showPage(startIndex);
@@ -188,6 +235,7 @@
 
         state.index = index;
         state.selected = null;
+        state.picks = [];
 
         const page = state.pages[index];
         const width = Number(page.width) || 1;
@@ -213,15 +261,37 @@
         el('wordsStageWrap').scrollLeft = 0;
 
         hideEditor();
+        hideGroupEditor();
         updateMeta();
     }
 
     // หาคำที่หน้าฝึก OCR ส่งมา แล้วเลือก + เลื่อนไปหา + กะพริบให้เห็นตำแหน่ง
     function focusInitialWord() {
+        const index = findInitialWordIndex();
+
+        if (index === -1) return;
+
+        // โหมดจัดกลุ่ม: คำที่ส่งมาเป็นคำแรกของกลุ่ม (ยังไม่เปิดแผงคำ)
+        if (state.mode === 'group') {
+            state.picks = [index];
+            markPicks();
+            renderGroupEditor();
+            scrollToWord(index);
+            flashWord(index);
+            return;
+        }
+
+        selectWord(index);
+        scrollToWord(index);
+        flashWord(index);
+    }
+
+    // หาดัปนีของคำที่ต้องโฟกัส (-1 = ไม่พบ)
+    function findInitialWordIndex() {
         const page = state.pages[state.index];
         const focus = state.focus;
 
-        if (!page || !focus) return;
+        if (!page || !focus) return -1;
 
         const words = Array.isArray(page.words) ? page.words : [];
         const x = Number(focus.x);
@@ -256,11 +326,7 @@
             });
         }
 
-        if (index === -1) return;
-
-        selectWord(index);
-        scrollToWord(index);
-        flashWord(index);
+        return index;
     }
 
     // เลื่อนกล่องเลื่อนของหน้าให้คำอยู่กลางจอ
@@ -411,6 +477,239 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // โหมดจัดกลุ่มคำ
+    // ──────────────────────────────────────────────────────────────
+
+    function setMode(mode) {
+        state.mode = mode === 'group' ? 'group' : 'fix';
+
+        syncModeButton();
+        clearPicks();
+
+        if (state.mode === 'fix') hideGroupEditor();
+    }
+
+    function syncModeButton() {
+        const button = el('wordsGroupModeBtn');
+        const active = state.mode === 'group';
+
+        button.classList.toggle('active', active);
+        button.textContent = active ? 'เสร็จสิ้น' : 'จัดกลุ่มคำ';
+
+        if (active) hideEditor();
+    }
+
+    // เลือก/ยกเลิกคำในโหมดจัดกลุ่ม (เลือกข้ามบรรทัดได้)
+    function togglePick(index) {
+        const page = state.pages[state.index];
+        const word = page && page.words[index];
+
+        if (!word) return;
+
+        const at = state.picks.indexOf(index);
+
+        if (at === -1) {
+            state.picks.push(index);
+        } else {
+            state.picks.splice(at, 1);
+        }
+
+        markPicks();
+        renderGroupEditor();
+    }
+
+    function markPicks() {
+        const layer = el('wordsLayer');
+
+        if (!layer) return;
+
+        layer.querySelectorAll('[data-word-index]').forEach(function (box) {
+            box.classList.toggle(
+                'picked',
+                state.picks.indexOf(Number(box.dataset.wordIndex)) !== -1
+            );
+        });
+    }
+
+    function pickedWords() {
+        const page = state.pages[state.index];
+        const words = page && Array.isArray(page.words) ? page.words : [];
+
+        return state.picks
+            .map(function (index) {
+                return words[index];
+            })
+            .filter(Boolean);
+    }
+
+    function pickedTokens() {
+        return pickedWords()
+            .map(function (word) {
+                return String((word && word.text) || '').trim();
+            })
+            .filter(Boolean);
+    }
+
+    // คำที่เลือกอยู่บรรทัดเดียวกันหมดไหม (เตือน เพราะระบบรวมเฉพาะคำข้ามบรรทัด)
+    function picksOnSameLine() {
+        const words = pickedWords();
+
+        if (words.length < 2) return false;
+
+        const base = Number(words[0].y) || 0;
+        const tolerance = Math.max(2, (Number(words[0].height) || 12) / 2);
+
+        return words.every(function (word) {
+            return Math.abs((Number(word.y) || 0) - base) <= tolerance;
+        });
+    }
+
+    function findGroupByTokens(tokens) {
+        const key = tokens.join('\u001f');
+
+        return scope.DataExtract.loadWordGroups().find(function (group) {
+            return group.tokens.join('\u001f') === key;
+        }) || null;
+    }
+
+    function renderGroupEditor() {
+        const editor = el('wordsGroupEditor');
+        const tokens = pickedTokens();
+
+        if (state.mode !== 'group' || tokens.length === 0) {
+            hideGroupEditor();
+            return;
+        }
+
+        editor.hidden = false;
+
+        const chips = el('wordsGroupChips');
+        chips.textContent = '';
+
+        tokens.forEach(function (token, index) {
+            const chip = document.createElement('span');
+            chip.className = 'words-group-chip';
+            chip.textContent = (index + 1) + '. ' + token;
+            chips.appendChild(chip);
+        });
+
+        const saved = tokens.length >= 2 ? findGroupByTokens(tokens) : null;
+        const mergedInput = el('wordsGroupMerged');
+
+        mergedInput.value = saved ? saved.merged : tokens.join('');
+        el('wordsGroupRemoveBtn').hidden = !saved;
+        el('wordsGroupSaveBtn').disabled = tokens.length < 2;
+
+        setGroupHint(groupHint(tokens, saved));
+    }
+
+    function groupHint(tokens, saved) {
+        if (tokens.length < 2) {
+            return 'เลือกอย่างน้อย 2 คำ — คลิกคำบนหน้ากระดาษเพื่อเพิ่ม/เอาออก';
+        }
+
+        if (picksOnSameLine()) {
+            return 'คำที่เลือกอยู่บรรทัดเดียวกัน — ระบบจะรวมเฉพาะคำที่ถูกตัดข้ามบรรทัด';
+        }
+
+        if (saved) {
+            return 'กลุ่มนี้บันทึกไว้แล้ว: ' + saved.merged +
+                ' (แก้ข้อความหรือกด "ลบกลุ่มนี้" ได้)';
+        }
+
+        return 'ครั้งถัดไปที่อ่านไฟล์ ระบบจะรวมคำเหล่านี้อัตโนมัติเมื่อขึ้นบรรทัดใหม่';
+    }
+
+    function setGroupHint(text) {
+        const hint = el('wordsGroupHint');
+
+        hint.textContent = text || '';
+        hint.classList.remove('error', 'ok');
+    }
+
+    function hideGroupEditor() {
+        const editor = el('wordsGroupEditor');
+
+        if (!editor) return;
+
+        editor.hidden = true;
+
+        const mergedInput = el('wordsGroupMerged');
+
+        if (mergedInput) mergedInput.value = '';
+
+        setGroupHint('');
+    }
+
+    function clearPicks() {
+        state.picks = [];
+        markPicks();
+        hideGroupEditor();
+    }
+
+    async function saveGroup() {
+        const tokens = pickedTokens();
+
+        if (tokens.length < 2) {
+            setGroupHint('เลือกอย่างน้อย 2 คำก่อนบันทึก');
+            return;
+        }
+
+        const merged = String(el('wordsGroupMerged').value || '').trim();
+
+        if (merged === '') {
+            setGroupHint('พิมพ์คำที่รวมแล้วก่อนบันทึก');
+            el('wordsGroupMerged').focus();
+            return;
+        }
+
+        try {
+            const saved = await scope.DataExtract.saveWordGroupAsync(
+                tokens,
+                merged
+            );
+
+            if (!saved) {
+                setGroupHint('บันทึกกลุ่มคำไม่สำเร็จ ลองใหม่อีกครั้ง');
+                return;
+            }
+
+        } catch (error) {
+            setGroupHint(
+                (error && error.message) || 'บันทึกกลุ่มคำไม่สำเร็จ'
+            );
+            return;
+        }
+
+        el('wordsGroupRemoveBtn').hidden = false;
+        el('wordsGroupHint').textContent = 'บันทึกแล้ว: ' + tokens.join(' + ') +
+            ' → ' + merged;
+        el('wordsGroupHint').classList.add('ok');
+
+        notifyChange();
+    }
+
+    async function removeGroup() {
+        const tokens = pickedTokens();
+
+        if (tokens.length < 2) return;
+
+        try {
+            await scope.DataExtract.deleteWordGroupAsync(tokens);
+        } catch (error) {
+            setGroupHint(
+                (error && error.message) || 'ลบกลุ่มคำไม่สำเร็จ'
+            );
+            return;
+        }
+
+        el('wordsGroupRemoveBtn').hidden = true;
+        setGroupHint('ลบกลุ่มนี้แล้ว — จะไม่รวมคำเหล่านี้อีก');
+
+        notifyChange();
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // แก้คำที่เลือก
     // ──────────────────────────────────────────────────────────────
 
@@ -432,6 +731,11 @@
         });
 
         const fix = scope.DataExtract.findTextFix(word.text);
+
+        // โหมดแก้คำเปิดพร้อมกันได้ทีละอย่าง — ปิดแผงจัดกลุ่มไว้
+        state.picks = [];
+        markPicks();
+        hideGroupEditor();
 
         el('wordsEditor').hidden = false;
         el('wordsFrom').textContent = word.text;

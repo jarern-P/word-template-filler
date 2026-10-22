@@ -90,6 +90,19 @@ contextBridge.exposeInMainWorld(
         dbOcrFixStat: (payload) =>
             ipcRenderer.invoke("db:ocr-fix-stat", payload),
 
+        // กลุ่มคำที่ถูกตัดข้ามบรรทัด (ใช้ก่อนจับ regex)
+        dbOcrGroupList: () =>
+            ipcRenderer.invoke("db:ocr-group-list"),
+
+        dbOcrGroupSave: (payload) =>
+            ipcRenderer.invoke("db:ocr-group-save", payload),
+
+        dbOcrGroupDelete: (tokens) =>
+            ipcRenderer.invoke("db:ocr-group-delete", tokens),
+
+        dbOcrGroupStat: (payload) =>
+            ipcRenderer.invoke("db:ocr-group-stat", payload),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),

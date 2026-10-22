@@ -4628,6 +4628,44 @@ body.table-ratio-dragging .table-ratio-handle {
     outline: 2px solid var(--ok);
 }
 
+/* คำที่เลือกไว้ในโหมดจัดกลุ่ม (เลือกข้ามบรรทัดได้) */
+.words-word.picked {
+    background: rgba(64, 118, 214, 0.24);
+    outline: 2px solid #4076d6;
+}
+
+.words-word.picked.fixed {
+    background: rgba(64, 118, 214, 0.32);
+    outline: 2px solid #4076d6;
+}
+
+.words-group-editor .words-editor-row + .words-editor-row {
+    margin-top: 8px;
+}
+
+.words-group-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 1 240px;
+}
+
+.words-group-chip {
+    padding: 2px 8px;
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+}
+
+/* ปุ่มเปิดโหมดจัดกลุ่มในแถบเครื่องมือ */
+.words-toolbar button.active {
+    background: var(--pink-100, #fde7f0);
+    border-color: var(--pink-500);
+    color: var(--ink);
+}
+
+
 .words-editor {
     margin-top: 10px;
     padding: 10px 12px;

@@ -77,11 +77,29 @@
         '        <p id="ocrFixStatus" class="db-status"></p>',
         '        <ul id="ocrFixList" class="saved-list"></ul>',
         '    </section>',
+
+        '    <section class="saved-templates">',
+        '        <h2>กลุ่มคำที่ถูกตัดข้ามบรรทัด</h2>',
+
+        '        <p class="hint">',
+        '            คำเดียวที่ OCR ตัดเป็นสองบรรทัด (เช่น "เลข" อยู่บรรทัดบน "ที่" อยู่บรรทัดล่าง)',
+        '            — คลิกเลือกคำบนภาพ PDF เพื่อสร้างกลุ่ม แล้วระบบจะรวมให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป',
+        '        </p>',
+
+        '        <div class="form-actions">',
+        '            <button id="ocrGroupAddBtn" type="button">สร้างกลุ่มจาก PDF</button>',
+        '            <span id="ocrGroupHint" class="hint"></span>',
+        '        </div>',
+
+        '        <p id="ocrGroupStatus" class="db-status"></p>',
+        '        <ul id="ocrGroupList" class="saved-list"></ul>',
+        '    </section>',
         '</div>'
     ].join('\n');
 
     const state = {
         fixes: [],
+        groups: [],      // กลุ่มคำที่ถูกตัดข้ามบรรทัด (จากตาราง ocr_word_groups)
         pages: [],       // หน้า OCR ล่าสุด (อยู่ในหน่วยความจำจนปิดแอป)
         fileName: '',
         queue: [],
@@ -120,10 +138,18 @@
             console.error(error);
         }
 
+        try {
+            await scope.DataExtract.refreshWordGroups();
+        } catch (error) {
+            console.error(error);
+        }
+
         state.fixes = scope.DataExtract.loadTextFixes();
+        state.groups = scope.DataExtract.loadWordGroups();
 
         renderStats();
         renderFixes();
+        renderGroups();
     }
 
     function renderStats() {
@@ -249,6 +275,170 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // กลุ่มคำที่ถูกตัดข้ามบรรทัด
+    // ──────────────────────────────────────────────────────────────
+
+    function renderGroups() {
+        const list = el('ocrGroupList');
+
+        if (!list) return;
+
+        list.innerHTML = '';
+
+        if (state.groups.length === 0) {
+            const empty = document.createElement('li');
+            empty.className = 'empty';
+            empty.textContent =
+                'ยังไม่มีกลุ่มคำ — อัปโหลด PDF แล้วกด "สร้างกลุ่มจาก PDF" เพื่อเลือกคำที่ถูกตัดข้ามบรรทัด';
+
+            list.appendChild(empty);
+            return;
+        }
+
+        state.groups.slice(0, MAX_LIBRARY).forEach(function (group) {
+            const item = document.createElement('li');
+            item.className = 'saved-item';
+
+            const info = document.createElement('div');
+            info.className = 'info';
+
+            const pair = document.createElement('strong');
+            pair.className = 'ocr-fix-pair';
+            pair.textContent = group.tokens.join(' + ') + ' → ' + group.merged;
+
+            const meta = document.createElement('span');
+            meta.className = 'meta';
+            meta.textContent = 'รวมให้ ' + group.hits + ' ครั้ง';
+
+            info.appendChild(pair);
+            info.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'actions';
+
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'plain';
+            edit.textContent = 'แก้';
+            edit.dataset.ocrGroupEdit = JSON.stringify(group.tokens);
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'danger';
+            remove.textContent = 'ลบ';
+            remove.dataset.ocrGroupDelete = JSON.stringify(group.tokens);
+
+            actions.appendChild(edit);
+            actions.appendChild(remove);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            list.appendChild(item);
+        });
+    }
+
+    function tokensFromDataset(value) {
+        try {
+            const parsed = JSON.parse(value);
+
+            return Array.isArray(parsed)
+                ? parsed.map(function (token) {
+                    return String(token);
+                })
+                : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
+    async function editGroup(tokens, merged) {
+        const value = await scope.AppDialog.prompt(
+            'คำที่รวมแล้วของ "' + tokens.join(' + ') + '"',
+            merged
+        );
+
+        if (value == null) return;
+
+        const target = String(value).trim();
+
+        if (target === '') {
+            setStatus('ocrGroupStatus', 'คำที่รวมแล้วต้องไม่ว่าง', 'warn');
+            return;
+        }
+
+        try {
+            await scope.DataExtract.saveWordGroupAsync(tokens, target);
+            await reloadFixes();
+            setStatus(
+                'ocrGroupStatus',
+                'บันทึกแล้ว: ' + tokens.join(' + ') + ' → ' + target,
+                'ok'
+            );
+        } catch (error) {
+            setStatus(
+                'ocrGroupStatus',
+                (error && error.message) || 'บันทึกไม่สำเร็จ',
+                'error'
+            );
+        }
+    }
+
+    async function removeGroup(tokens) {
+        const confirmed = await scope.AppDialog.confirm(
+            'ลบกลุ่ม "' + tokens.join(' + ') + '" ออกจากคลัง?\n' +
+            'การอ่านไฟล์ครั้งถัดไปจะไม่รวมคำนี้อีก',
+            { danger: true }
+        );
+
+        if (!confirmed) return;
+
+        try {
+            await scope.DataExtract.deleteWordGroupAsync(tokens);
+            await reloadFixes();
+            setStatus(
+                'ocrGroupStatus',
+                'ลบแล้ว: ' + tokens.join(' + '),
+                'ok'
+            );
+        } catch (error) {
+            setStatus(
+                'ocrGroupStatus',
+                (error && error.message) || 'ลบไม่สำเร็จ',
+                'error'
+            );
+        }
+    }
+
+    // เปิดภาพ PDF ในโหมดเลือกหลายคำ (เริ่มจากคำในคิว ถ้ามี)
+    function openGroupOnPdf(item) {
+        if (!scope.PdfWordsDialog) return;
+
+        if (state.pages.length === 0) {
+            setStatus(
+                'ocrGroupStatus',
+                'อัปโหลด PDF ด้านบนก่อน แล้วจึงสร้างกลุ่มจากภาพได้',
+                'warn'
+            );
+            return;
+        }
+
+        scope.PdfWordsDialog.open({
+            pages: state.pages,
+            title: state.fileName,
+            pageIndex: item ? item.pageIndex : 0,
+            mode: 'group',
+            focusWord: item
+                ? { text: item.text, x: item.x, y: item.y }
+                : null,
+            onChange: function () {
+                reloadFixes().then(function () {
+                    rebuildQueue();
+                });
+            }
+        });
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // คิวคำที่ confidence ต่ำ
     // ──────────────────────────────────────────────────────────────
 
@@ -364,9 +554,17 @@
         locate.textContent = 'ดูบนหน้า';
         locate.dataset.ocrLocate = '1';
 
+        const group = document.createElement('button');
+        group.type = 'button';
+        group.className = 'plain';
+        group.textContent = 'รวมกลุ่ม';
+        group.title = 'คำนี้อาจถูกตัดข้ามบรรทัด — เลือกคำที่เหลือบนภาพเพื่อรวมเป็นคำเดียว';
+        group.dataset.ocrGroup = '1';
+
         actions.appendChild(edit);
         actions.appendChild(ignore);
         actions.appendChild(locate);
+        actions.appendChild(group);
 
         line.appendChild(info);
         line.appendChild(actions);
@@ -618,6 +816,9 @@
 
             const fileLabel = el('ocrTrainFile');
             if (fileLabel) fileLabel.textContent = 'ไฟล์: ' + file.name;
+
+            const groupHint = el('ocrGroupHint');
+            if (groupHint) groupHint.textContent = 'ใช้ภาพจาก ' + file.name;
 
             if (pages.length === 0) {
                 state.pages = [];
@@ -941,6 +1142,11 @@
                 return;
             }
 
+            if (event.target.closest('[data-ocr-group]')) {
+                openGroupOnPdf(item);
+                return;
+            }
+
             if (event.target.closest('[data-ocr-cancel]')) {
                 const form = row.querySelector('form');
 
@@ -988,6 +1194,32 @@
             saveQueueWord(item, input.value);
         });
 
+        // ── กลุ่มคำ ──
+
+        el('ocrGroupAddBtn').addEventListener('click', function () {
+            openGroupOnPdf(null);
+        });
+
+        el('ocrGroupList').addEventListener('click', function (event) {
+            const edit = event.target.closest('[data-ocr-group-edit]');
+
+            if (edit) {
+                const tokens = tokensFromDataset(edit.dataset.ocrGroupEdit);
+                const group = state.groups.find(function (item) {
+                    return item.tokens.join('\u001f') === tokens.join('\u001f');
+                });
+
+                if (group) editGroup(tokens, group.merged);
+                return;
+            }
+
+            const remove = event.target.closest('[data-ocr-group-delete]');
+
+            if (remove) {
+                removeGroup(tokensFromDataset(remove.dataset.ocrGroupDelete));
+            }
+        });
+
         // ── คลังคำ ──
 
         const list = el('ocrFixList');
@@ -1032,6 +1264,13 @@
             if (fileLabel) {
                 fileLabel.textContent = state.fileName
                     ? 'ไฟล์: ' + state.fileName
+                    : '';
+            }
+
+            const groupHint = el('ocrGroupHint');
+            if (groupHint) {
+                groupHint.textContent = state.fileName
+                    ? 'ใช้ภาพจาก ' + state.fileName
                     : '';
             }
 

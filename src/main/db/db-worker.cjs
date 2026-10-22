@@ -124,6 +124,23 @@ const SCHEMA = `
 
     CREATE INDEX IF NOT EXISTS idx_ocr_fixes_hits
         ON ocr_fixes(hits DESC);
+
+    -- กลุ่มคำที่ OCR ตัดข้ามบรรทัด (เช่น "เลข" บรรทัดบน + "ที่" บรรทัดล่าง)
+    --   tokens = JSON array ของคำที่เลือกเรียงตามลำดับในหน้า
+    --   merged = คำที่รวมแล้ว ใช้แทนข้อความที่มีขึ้นบรรทัดใหม่คั่นกลาง
+    CREATE TABLE IF NOT EXISTS ocr_word_groups (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        tokens     TEXT NOT NULL UNIQUE,
+        merged     TEXT NOT NULL,
+        hits       INTEGER NOT NULL DEFAULT 0,
+        accepted   INTEGER NOT NULL DEFAULT 0,
+        rejected   INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ocr_word_groups_hits
+        ON ocr_word_groups(hits DESC);
 `;
 
 
@@ -2673,6 +2690,294 @@ function handleOcrFixStat(message) {
 
 
 // ============================================================
+// OCR Word Groups (คำที่ถูกตัดข้ามบรรทัด)
+// ============================================================
+
+function groupTokensOf(value) {
+
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .map(function (token) {
+            return String(token == null ? "" : token).trim();
+        })
+        .filter(Boolean);
+}
+
+
+function groupRowToRecord(row) {
+
+    let tokens = [];
+
+    try {
+        tokens = JSON.parse(row.tokens || "[]");
+    } catch (error) {
+        tokens = [];
+    }
+
+    return {
+        id: row.id,
+        tokens: Array.isArray(tokens) ? tokens : [],
+        merged: row.merged,
+        hits: row.hits,
+        accepted: row.accepted,
+        rejected: row.rejected,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+    };
+}
+
+
+function handleOcrGroupList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    tokens,
+                    merged,
+                    hits,
+                    accepted,
+                    rejected,
+                    created_at,
+                    updated_at
+                FROM ocr_word_groups
+                ORDER BY hits DESC, id ASC
+            `)
+            .all();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows.map(groupRowToRecord)
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrGroupSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+        const tokens = groupTokensOf(payload.tokens);
+        const merged = String(payload.merged || "").trim();
+
+        if (tokens.length < 2) {
+            throw new Error("ต้องเลือกอย่างน้อย 2 คำ");
+        }
+
+        if (!merged) {
+            throw new Error("กรุณาระบุคำที่รวมแล้ว");
+        }
+
+        const key = JSON.stringify(tokens);
+        const now = new Date().toISOString();
+
+        const existing =
+            db.prepare(`
+                SELECT
+                    id
+                FROM ocr_word_groups
+                WHERE tokens = ?
+            `)
+            .get(key);
+
+        let resultId;
+
+        if (existing) {
+
+            db.prepare(`
+                UPDATE ocr_word_groups
+                SET
+                    merged = ?,
+                    updated_at = ?
+                WHERE tokens = ?
+            `)
+            .run(merged, now, key);
+
+            resultId = existing.id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO ocr_word_groups (
+                        tokens,
+                        merged,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?)
+                `)
+                .run(key, merged, now, now);
+
+            resultId = Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId,
+                created: !existing
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrGroupDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const tokens = groupTokensOf(message.payload?.tokens);
+
+        if (tokens.length === 0) {
+            throw new Error("ไม่พบกลุ่มคำที่ต้องลบ");
+        }
+
+        const result =
+            db.prepare(`
+                DELETE FROM ocr_word_groups
+                WHERE tokens = ?
+            `)
+            .run(JSON.stringify(tokens));
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// payload = { updates: [{ tokens: [...], hits, accepted, rejected }, ...] }
+function handleOcrGroupStat(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const updates =
+            Array.isArray(message.payload?.updates)
+                ? message.payload.updates
+                : [];
+
+        const now = new Date().toISOString();
+
+        const statement =
+            db.prepare(`
+                UPDATE ocr_word_groups
+                SET
+                    hits = hits + ?,
+                    accepted = accepted + ?,
+                    rejected = rejected + ?,
+                    updated_at = ?
+                WHERE tokens = ?
+            `);
+
+        const apply =
+            db.transaction(function (list) {
+
+                let changes = 0;
+
+                list.forEach(function (item) {
+
+                    const tokens = groupTokensOf(item?.tokens);
+
+                    if (tokens.length === 0) return;
+
+                    const hits = Math.max(0, Math.floor(Number(item.hits) || 0));
+                    const accepted = Math.max(0, Math.floor(Number(item.accepted) || 0));
+                    const rejected = Math.max(0, Math.floor(Number(item.rejected) || 0));
+
+                    if (hits === 0 && accepted === 0 && rejected === 0) return;
+
+                    changes +=
+                        statement.run(
+                            hits,
+                            accepted,
+                            rejected,
+                            now,
+                            JSON.stringify(tokens)
+                        ).changes;
+                });
+
+                return changes;
+            });
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                updated: apply(updates)
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // History (ประวัติการกรอก)
 // ============================================================
 
@@ -4083,6 +4388,41 @@ parentPort.on("message", (message) => {
             case "ocr-fix-stat":
 
                 handleOcrFixStat(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // OCR Word Groups (คำที่ถูกตัดข้ามบรรทัด)
+            // ------------------------------------------------
+
+            case "ocr-group-list":
+
+                handleOcrGroupList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-group-save":
+
+                handleOcrGroupSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-group-delete":
+
+                handleOcrGroupDelete(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-group-stat":
+
+                handleOcrGroupStat(message);
 
                 break;
 
