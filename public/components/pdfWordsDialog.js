@@ -72,6 +72,7 @@
         index: 0,
         zoom: 0,          // ดัชนีใน ZOOMS
         selected: null,   // คำที่กำลังแก้
+        focus: null,      // คำที่ต้องไฮไลต์เมื่อเปิด (จากหน้าฝึก OCR)
         onChange: null
     };
 
@@ -141,8 +142,9 @@
         if (overlay) overlay.classList.remove('open');
     }
 
-    // payload = { pages, title, onChange, pageIndex }
+    // payload = { pages, title, onChange, pageIndex, focusWord }
     //   pageIndex = หน้าที่ต้องการเปิดก่อน (ใช้จากหน้าฝึก OCR ที่เลือกหน้าจากคิว)
+    //   focusWord = { text, x, y } คำที่ต้องไฮไลต์/เลื่อนไปหาเมื่อเปิด
     function open(payload) {
         const data = payload || {};
         const pages = Array.isArray(data.pages) ? data.pages : [];
@@ -158,6 +160,10 @@
         state.pages = pages;
         state.index = startIndex;
         state.selected = null;
+        state.focus =
+            data.focusWord && typeof data.focusWord === 'object'
+                ? data.focusWord
+                : null;
         state.onChange = typeof data.onChange === 'function' ? data.onChange : null;
         state.zoom = 0;
 
@@ -170,6 +176,7 @@
 
         overlay.classList.add('open');
         showPage(startIndex);
+        focusInitialWord();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -207,6 +214,109 @@
 
         hideEditor();
         updateMeta();
+    }
+
+    // หาคำที่หน้าฝึก OCR ส่งมา แล้วเลือก + เลื่อนไปหา + กะพริบให้เห็นตำแหน่ง
+    function focusInitialWord() {
+        const page = state.pages[state.index];
+        const focus = state.focus;
+
+        if (!page || !focus) return;
+
+        const words = Array.isArray(page.words) ? page.words : [];
+        const x = Number(focus.x);
+        const y = Number(focus.y);
+
+        let index = -1;
+
+        // ใช้พิกัดก่อน (แม่นกว่าเมื่อคำเดียวกันปรากฏหลายที่)
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+            let bestDistance = Infinity;
+
+            words.forEach(function (word, wordIndex) {
+                const distance =
+                    Math.abs((Number(word.x) || 0) - x) +
+                    Math.abs((Number(word.y) || 0) - y);
+
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    index = wordIndex;
+                }
+            });
+
+            // พิกัดคลาดเคลื่อนเกินไป = ไม่ใช่คำเดียวกัน
+            if (bestDistance > 12) index = -1;
+        }
+
+        // ไม่มีพิกัด/หาพิกัดไม่เจอ = ใช้ข้อความ
+        if (index === -1 && focus.text) {
+            index = words.findIndex(function (word) {
+                return String((word && word.text) || '').trim() ===
+                    String(focus.text).trim();
+            });
+        }
+
+        if (index === -1) return;
+
+        selectWord(index);
+        scrollToWord(index);
+        flashWord(index);
+    }
+
+    // เลื่อนกล่องเลื่อนของหน้าให้คำอยู่กลางจอ
+    function scrollToWord(index) {
+        const layer = el('wordsLayer');
+        const wrap = el('wordsStageWrap');
+
+        if (!layer || !wrap) return;
+
+        const box = layer.querySelector('[data-word-index="' + index + '"]');
+
+        if (!box) return;
+
+        const wrapRect = wrap.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+
+        const left = wrap.scrollLeft +
+            (boxRect.left - wrapRect.left) -
+            (wrap.clientWidth - boxRect.width) / 2;
+
+        const top = wrap.scrollTop +
+            (boxRect.top - wrapRect.top) -
+            (wrap.clientHeight - boxRect.height) / 2;
+
+        if (typeof wrap.scrollTo === 'function') {
+            wrap.scrollTo({
+                left: Math.max(0, left),
+                top: Math.max(0, top),
+                behavior: 'smooth'
+            });
+            return;
+        }
+
+        wrap.scrollLeft = Math.max(0, left);
+        wrap.scrollTop = Math.max(0, top);
+    }
+
+    // กะพริบกรอบคำสองครั้งแล้วเอาคลาสออก
+    function flashWord(index) {
+        const layer = el('wordsLayer');
+
+        if (!layer) return;
+
+        const box = layer.querySelector('[data-word-index="' + index + '"]');
+
+        if (!box) return;
+
+        box.classList.remove('focus-flash');
+
+        // บังคับให้เบราว์เซอร์คำนวณใหม่ เพื่อให้ animation เล่นซ้ำได้
+        box.getBoundingClientRect();
+        box.classList.add('focus-flash');
+
+        window.setTimeout(function () {
+            box.classList.remove('focus-flash');
+        }, 2200);
     }
 
     function renderWords(page, width, height) {

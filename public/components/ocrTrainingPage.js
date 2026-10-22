@@ -274,7 +274,17 @@
 
                 if (existing) {
                     existing.occurrences += 1;
-                    existing.confidence = Math.min(existing.confidence, value);
+
+                    // เก็บตำแหน่งที่มั่นใจต่ำที่สุดไว้ — กด "ดูบนหน้า"
+                    // จะได้ไปตรงจุดที่ควรตรวจก่อน
+                    if (value < existing.confidence) {
+                        existing.confidence = value;
+                        existing.pageIndex = pageIndex;
+                        existing.page = page.page || pageIndex + 1;
+                        existing.x = Number(word.x) || 0;
+                        existing.y = Number(word.y) || 0;
+                    }
+
                     return;
                 }
 
@@ -283,7 +293,10 @@
                     confidence: value,
                     pageIndex: pageIndex,
                     page: page.page || pageIndex + 1,
-                    occurrences: 1
+                    occurrences: 1,
+                    // พิกัดบนภาพตัวอย่าง — ใช้ไฮไลต์คำในหน้าตรวจคำ
+                    x: Number(word.x) || 0,
+                    y: Number(word.y) || 0
                 };
             });
         });
@@ -561,6 +574,11 @@
             pages: state.pages,
             title: state.fileName,
             pageIndex: item.pageIndex,
+            focusWord: {
+                text: item.text,
+                x: item.x,
+                y: item.y
+            },
             onChange: function () {
                 reloadFixes().then(function () {
                     rebuildQueue();

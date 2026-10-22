@@ -4603,6 +4603,21 @@ body.table-ratio-dragging .table-ratio-handle {
     outline: 2px solid var(--pink-600);
 }
 
+/* คำที่เปิดมาจากหน้าฝึก OCR — กะพริบกรอบให้เห็นตำแหน่งชัด ๆ */
+@keyframes words-focus-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(251, 127, 174, 0);
+    }
+
+    40% {
+        box-shadow: 0 0 0 5px rgba(251, 127, 174, 0.65);
+    }
+}
+
+.words-word.focus-flash {
+    animation: words-focus-pulse 0.9s ease-in-out 2;
+}
+
 .words-word.fixed {
     background: rgba(47, 158, 107, 0.20);
     outline: 1px solid var(--ok);
