@@ -94,12 +94,29 @@
         '        <p id="ocrGroupStatus" class="db-status"></p>',
         '        <ul id="ocrGroupList" class="saved-list"></ul>',
         '    </section>',
+
+        '    <section class="saved-templates">',
+        '        <h2>คำที่ OCR เก็บเกิน</h2>',
+
+        '        <p class="hint">',
+        '            สระ/วรรณยุกต์ที่ OCR แยกออกมาเป็นคำต่างหาก หรือคำที่ไม่ต้องใช้ —',
+        '            คำในรายการนี้จะถูกตัดออกจากข้อความก่อนจับ regex',
+        '        </p>',
+
+        '        <p class="hint">',
+        '            เพิ่มได้จากภาพ PDF: เปิดหน้าตรวจคำ แล้วกดปุ่ม "ลบคำ" ที่คำนั้น',
+        '        </p>',
+
+        '        <p id="ocrDropStatus" class="db-status"></p>',
+        '        <ul id="ocrDropList" class="saved-list"></ul>',
+        '    </section>',
         '</div>'
     ].join('\n');
 
     const state = {
         fixes: [],
         groups: [],      // กลุ่มคำที่ถูกตัดข้ามบรรทัด (จากตาราง ocr_word_groups)
+        drops: [],       // คำที่ OCR เก็บเกิน — ตัดออกตอนอ่านไฟล์ (ocr_drop_words)
         pages: [],       // หน้า OCR ล่าสุด (อยู่ในหน่วยความจำจนปิดแอป)
         fileName: '',
         queue: [],
@@ -140,16 +157,19 @@
 
         try {
             await scope.DataExtract.refreshWordGroups();
+            await scope.DataExtract.refreshDropWords();
         } catch (error) {
             console.error(error);
         }
 
         state.fixes = scope.DataExtract.loadTextFixes();
         state.groups = scope.DataExtract.loadWordGroups();
+        state.drops = scope.DataExtract.loadDropWords();
 
         renderStats();
         renderFixes();
         renderGroups();
+        renderDrops();
     }
 
     function renderStats() {
@@ -439,6 +459,78 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // คำที่ OCR เก็บเกิน
+    // ──────────────────────────────────────────────────────────────
+
+    function renderDrops() {
+        const list = el('ocrDropList');
+
+        if (!list) return;
+
+        list.innerHTML = '';
+
+        if (state.drops.length === 0) {
+            const empty = document.createElement('li');
+            empty.className = 'empty';
+            empty.textContent =
+                'ยังไม่มีคำที่ไม่ใช้ — เปิดภาพ PDF แล้วกดปุ่ม "ลบคำ" ที่สระ/ตัวอักษรที่ OCR เก็บเกิน';
+
+            list.appendChild(empty);
+            return;
+        }
+
+        state.drops.slice(0, MAX_LIBRARY).forEach(function (entry) {
+            const item = document.createElement('li');
+            item.className = 'saved-item';
+
+            const info = document.createElement('div');
+            info.className = 'info';
+
+            const word = document.createElement('strong');
+            word.className = 'ocr-fix-pair';
+            word.textContent = entry.word;
+
+            const meta = document.createElement('span');
+            meta.className = 'meta';
+            meta.textContent = 'ตัดออกจากข้อความเมื่ออ่านไฟล์';
+
+            info.appendChild(word);
+            info.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'actions';
+
+            const restore = document.createElement('button');
+            restore.type = 'button';
+            restore.className = 'plain';
+            restore.textContent = 'ใช้คำนี้';
+            restore.title = 'เลิกตัดคำนี้ออกจากข้อความ';
+            restore.dataset.ocrDropDelete = entry.word;
+
+            actions.appendChild(restore);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            list.appendChild(item);
+        });
+    }
+
+    async function restoreDropWord(word) {
+        try {
+            await scope.DataExtract.deleteDropWordAsync(word);
+            await reloadFixes();
+            rebuildQueue();
+            setStatus('ocrDropStatus', 'ใช้คำนี้อีกครั้ง: ' + word, 'ok');
+        } catch (error) {
+            setStatus(
+                'ocrDropStatus',
+                (error && error.message) || 'บันทึกไม่สำเร็จ',
+                'error'
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // คิวคำที่ confidence ต่ำ
     // ──────────────────────────────────────────────────────────────
 
@@ -447,13 +539,19 @@
             return fix.from;
         }));
 
+        // คำที่ผู้ใช้บอกว่าไม่ใช้แล้ว — ไม่ต้องถามซ้ำในคิว
+        const dropped = new Set(state.drops.map(function (entry) {
+            return entry.word;
+        }));
+
         const found = {};
 
         state.pages.forEach(function (page, pageIndex) {
             (page.words || []).forEach(function (word) {
                 const text = String((word && word.text) || '').trim();
 
-                if (text === '' || fixed.has(text) || state.ignored[text]) return;
+                if (text === '' || fixed.has(text) || dropped.has(text) ||
+                    state.ignored[text]) return;
 
                 const confidence = Number(word.confidence);
                 const value = Number.isFinite(confidence) ? confidence : 0;
@@ -561,10 +659,18 @@
         group.title = 'คำนี้อาจถูกตัดข้ามบรรทัด — เลือกคำที่เหลือบนภาพเพื่อรวมเป็นคำเดียว';
         group.dataset.ocrGroup = '1';
 
+        const drop = document.createElement('button');
+        drop.type = 'button';
+        drop.className = 'plain';
+        drop.textContent = 'ลบคำ';
+        drop.title = 'คำนี้ OCR เก็บเกิน (เช่น สระ/วรรณยุกต์หลงมา) — ตัดออกจากข้อความเมื่ออ่านไฟล์';
+        drop.dataset.ocrDrop = '1';
+
         actions.appendChild(edit);
         actions.appendChild(ignore);
         actions.appendChild(locate);
         actions.appendChild(group);
+        actions.appendChild(drop);
 
         line.appendChild(info);
         line.appendChild(actions);
@@ -756,6 +862,27 @@
                 'ok'
             );
 
+        } catch (error) {
+            setStatus(
+                'ocrTrainStatus',
+                (error && error.message) || 'บันทึกไม่สำเร็จ',
+                'error'
+            );
+        }
+    }
+
+    // ตัดคำที่ OCR เก็บเกินออกจากข้อความ (เช่น สระหลงมา) — คืนคำได้จากรายการด้านล่าง
+    async function dropQueueWord(item) {
+        try {
+            await scope.DataExtract.saveDropWordAsync(item.text);
+            await reloadFixes();
+            rebuildQueue();
+            setStatus(
+                'ocrTrainStatus',
+                'ตัดคำนี้แล้ว: ' + item.text +
+                    ' (จะไม่ถูกใช้เมื่ออ่านไฟล์ครั้งถัดไป — คืนได้ที่ "คำที่ OCR เก็บเกิน")',
+                'ok'
+            );
         } catch (error) {
             setStatus(
                 'ocrTrainStatus',
@@ -1147,6 +1274,11 @@
                 return;
             }
 
+            if (event.target.closest('[data-ocr-drop]')) {
+                dropQueueWord(item);
+                return;
+            }
+
             if (event.target.closest('[data-ocr-cancel]')) {
                 const form = row.querySelector('form');
 
@@ -1218,6 +1350,14 @@
             if (remove) {
                 removeGroup(tokensFromDataset(remove.dataset.ocrGroupDelete));
             }
+        });
+
+        // ── คำที่ OCR เก็บเกิน ──
+
+        el('ocrDropList').addEventListener('click', function (event) {
+            const restore = event.target.closest('[data-ocr-drop-delete]');
+
+            if (restore) restoreDropWord(restore.dataset.ocrDropDelete);
         });
 
         // ── คลังคำ ──

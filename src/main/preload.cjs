@@ -103,6 +103,16 @@ contextBridge.exposeInMainWorld(
         dbOcrGroupStat: (payload) =>
             ipcRenderer.invoke("db:ocr-group-stat", payload),
 
+        // คำที่ OCR เก็บเกิน (สระ/วรรณยุกต์ที่ถูกแยกเป็นคำ) — ตัดออกตอนอ่านไฟล์
+        dbOcrDropList: () =>
+            ipcRenderer.invoke("db:ocr-drop-list"),
+
+        dbOcrDropSave: (payload) =>
+            ipcRenderer.invoke("db:ocr-drop-save", payload),
+
+        dbOcrDropDelete: (word) =>
+            ipcRenderer.invoke("db:ocr-drop-delete", word),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),

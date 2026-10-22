@@ -486,6 +486,181 @@
         };
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // คำที่ OCR เก็บเกิน (สระ/วรรณยุกต์ที่แยกเป็นคำ) — ตัดทิ้งเมื่ออ่านไฟล์
+    // ──────────────────────────────────────────────────────────────
+
+    let dropWordCache = null;
+    let dropWordRefreshPromise = null;
+
+    function dbDropsAvailable() {
+        return Boolean(
+            window.electronAPI &&
+            scope.Db &&
+            typeof scope.Db.ocrDropList === 'function'
+        );
+    }
+
+    function loadDropWords() {
+        if (!dropWordCache) dropWordCache = [];
+
+        return dropWordCache;
+    }
+
+    // โหลดรายการคำที่ไม่ใช้จากฐานข้อมูล (เก็บในหน่วยความจำเพื่อใช้แบบ synchronous)
+    function refreshDropWords() {
+        if (dropWordRefreshPromise) return dropWordRefreshPromise;
+
+        dropWordRefreshPromise = Promise.resolve()
+            .then(function () {
+                if (!dbDropsAvailable()) {
+                    dropWordCache = [];
+                    return;
+                }
+
+                return scope.Db.ocrDropList()
+                    .then(function (rows) {
+                        dropWordCache = (Array.isArray(rows) ? rows : [])
+                            .map(function (row) {
+                                return {
+                                    id: row && row.id,
+                                    word: String((row && row.word) || '').trim()
+                                };
+                            })
+                            .filter(function (entry) {
+                                return entry.word !== '';
+                            });
+                    })
+                    .catch(function (error) {
+                        console.error(
+                            'อ่านรายการคำที่ไม่ใช้จากฐานข้อมูลไม่สำเร็จ:',
+                            error
+                        );
+
+                        dropWordCache = dropWordCache || [];
+                    });
+            })
+            .then(function () {
+                return loadDropWords();
+            })
+            .finally(function () {
+                dropWordRefreshPromise = null;
+            });
+
+        return dropWordRefreshPromise;
+    }
+
+    function findDropWord(word) {
+        const key = String(word == null ? '' : word).trim();
+
+        if (key === '') return null;
+
+        return loadDropWords().find(function (entry) {
+            return entry.word === key;
+        }) || null;
+    }
+
+    // เพิ่มคำที่ไม่ใช้ — คืน true เมื่อบันทึกสำเร็จ
+    async function saveDropWordAsync(word) {
+        const value = String(word == null ? '' : word).trim();
+
+        if (value === '') return false;
+
+        if (!dbDropsAvailable()) {
+            throw new Error('บันทึกคำที่ไม่ใช้ได้เฉพาะในแอป (Electron)');
+        }
+
+        await scope.Db.ocrDropSave({ word: value });
+
+        if (!findDropWord(value)) {
+            loadDropWords().push({ id: 0, word: value });
+        }
+
+        return true;
+    }
+
+    async function deleteDropWordAsync(word) {
+        const value = String(word == null ? '' : word).trim();
+
+        if (value === '') return false;
+
+        if (dbDropsAvailable()) {
+            await scope.Db.ocrDropDelete(value);
+        }
+
+        dropWordCache = loadDropWords().filter(function (entry) {
+            return entry.word !== value;
+        });
+
+        return true;
+    }
+
+    // ตัดคำที่ไม่ใช้ออกจากข้อความ (เฉพาะคำที่แยกเป็น token ของตัวเอง)
+    // ไม่แตะคำที่ถูกต่ออยู่กับคำอื่น — กรณีนั้นใช้คลังคำที่แก้แทน
+    function removeDropWords(text) {
+        const source = String(text == null ? '' : text);
+        const words = loadDropWords();
+
+        if (words.length === 0) {
+            return { text: source, changed: false, applied: 0 };
+        }
+
+        const drops = {};
+
+        words.forEach(function (entry) {
+            drops[entry.word] = true;
+        });
+
+        let applied = 0;
+        const keptLines = [];
+
+        source.split('\n').forEach(function (line) {
+            if (line === '') {
+                keptLines.push(line);
+                return;
+            }
+
+            // คงช่องว่างให้เหมือนเดิม ยกเว้นช่องว่างที่ติดกับคำที่ถูกตัด
+            const parts = line.split(/([ \t]+)/);
+            const kept = [];
+            let removed = false;
+
+            for (let index = 0; index < parts.length; index++) {
+                const part = parts[index];
+
+                if (index % 2 === 1) {
+                    kept.push(part);
+                    continue;
+                }
+
+                if (!drops[part]) {
+                    kept.push(part);
+                    continue;
+                }
+
+                removed = true;
+                applied += 1;
+                index += 1;
+
+                // คำท้ายบรรทัด = ไม่มีช่องว่างตามหลัง — เอาช่องว่างหน้ามันทิ้งด้วย
+                if (parts[index] === undefined) kept.pop();
+            }
+
+            // บรรทัดที่มีแต่คำที่ถูกตัด → เอาทั้งบรรทัดออก (ไม่ทิ้งบรรทัดว่างคั่นกลาง)
+            if (removed && kept.join('').trim() === '') return;
+
+            keptLines.push(kept.join(''));
+        });
+
+        const result = keptLines.join('\n');
+
+        return {
+            text: result,
+            changed: result !== source,
+            applied: applied
+        };
+    }
+
     // อักขระที่ต้องหลบก่อนเอาไปสร้าง RegExp (คีย์ค้นหามาจากผู้ใช้)
     // รวม backslash (charCode 92) ด้วย เผื่อผู้ใช้พิมพ์ backslash มาในคำ
     const BACKSLASH = String.fromCharCode(92);
@@ -745,13 +920,17 @@
             throw error;
         }
 
-        // คำที่ผู้ใช้แก้ไว้ / กลุ่มคำที่ถูกตัดข้ามบรรทัด ใช้กับข้อความที่อ่านจากไฟล์ทุกชนิด
+        // คำที่แก้ไว้ / กลุ่มคำ / คำที่ OCR เก็บเกิน ใช้กับข้อความที่อ่านจากไฟล์ทุกชนิด
         // (โหลดรายการล่าสุดจากฐานข้อมูลก่อน แล้วนับว่าแทนคำไหนไปบ้าง)
         await refreshTextFixes();
         await refreshWordGroups();
+        await refreshDropWords();
 
-        // กลุ่มคำต้องรวมก่อน แล้วค่อยแก้คำ เพราะคำที่รวมแล้วอาจตรงกับคำที่แก้ไว้
-        const grouped = applyWordGroupMerges(result.text, {
+        // ตัดคำที่ OCR เก็บเกินก่อน (คำสระที่คั่นกลางจะได้ไม่ขวางการรวมกลุ่ม)
+        // แล้วค่อยรวมกลุ่ม และค่อยแก้คำ เพราะคำที่รวมแล้วอาจตรงกับคำที่แก้ไว้
+        const dropped = removeDropWords(result.text);
+
+        const grouped = applyWordGroupMerges(dropped.text, {
             track: !(options && options.trackFixes === false)
         });
 
@@ -766,6 +945,7 @@
             pages: result.pages || [],
             fixed: fixed.changed,
             grouped: grouped.applied,
+            dropped: dropped.applied,
             joined: Number(result.joined) || 0
         };
     }
@@ -1339,6 +1519,12 @@
         saveWordGroupAsync: saveWordGroupAsync,
         deleteWordGroupAsync: deleteWordGroupAsync,
         applyWordGroupMerges: applyWordGroupMerges,
+        refreshDropWords: refreshDropWords,
+        loadDropWords: loadDropWords,
+        findDropWord: findDropWord,
+        saveDropWordAsync: saveDropWordAsync,
+        deleteDropWordAsync: deleteDropWordAsync,
+        removeDropWords: removeDropWords,
         setTextFix: setTextFix,
         saveTextFixAsync: saveTextFixAsync,
         deleteTextFix: deleteTextFix,

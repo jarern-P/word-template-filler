@@ -387,6 +387,36 @@
 
         },
 
+        // ── คำที่ OCR เก็บเกิน (สระ/วรรณยุกต์ที่แยกเป็นคำ) ──
+
+        // คืน [{ id, word, created_at, updated_at }]
+        ocrDropList: function () {
+
+            return dbRequest(
+                'dbOcrDropList'
+            );
+
+        },
+
+        // payload = { word }
+        ocrDropSave: function (payload) {
+
+            return dbRequest(
+                'dbOcrDropSave',
+                payload
+            );
+
+        },
+
+        ocrDropDelete: function (word) {
+
+            return dbRequest(
+                'dbOcrDropDelete',
+                word
+            );
+
+        },
+
         // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
 
         // payload = { templateId, templateName, values, modes, retentionDays }

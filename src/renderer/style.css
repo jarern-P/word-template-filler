@@ -4634,6 +4634,13 @@ body.table-ratio-dragging .table-ratio-handle {
     outline: 2px solid #4076d6;
 }
 
+/* คำที่ OCR เก็บเกิน — ผู้ใช้ตัดออก จะถูกตัดจากข้อความเมื่ออ่านไฟล์ */
+.words-word.dropped {
+    background: rgba(196, 59, 59, 0.20);
+    outline: 1px dashed #c43b3b;
+    text-decoration: line-through;
+}
+
 .words-word.picked.fixed {
     background: rgba(64, 118, 214, 0.32);
     outline: 2px solid #4076d6;

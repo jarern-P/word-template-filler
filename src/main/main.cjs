@@ -1682,6 +1682,109 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB OCR Drop Words (คำที่ OCR เก็บเกิน)
+// ============================================================
+
+ipcMain.handle(
+    "db:ocr-drop-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-drop-list",
+                {}
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-drop-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-drop-save",
+                payload
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-drop-delete",
+    async (
+        event,
+        word
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-drop-delete",
+                { word }
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 

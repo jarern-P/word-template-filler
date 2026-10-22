@@ -141,6 +141,15 @@ const SCHEMA = `
 
     CREATE INDEX IF NOT EXISTS idx_ocr_word_groups_hits
         ON ocr_word_groups(hits DESC);
+
+    -- คำที่ OCR เก็บมาเกิน (เช่น สระ/วรรณยุกต์ที่ถูกแยกเป็นคำต่างหาก)
+    --   ค้ำพวกนี้ผู้ใช้ไม่ต้องใช้ → ตัดออกเมื่ออ่านไฟล์ ไม่ต้องแก้เป็นคำอื่น
+    CREATE TABLE IF NOT EXISTS ocr_drop_words (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        word       TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
 `;
 
 
@@ -2978,6 +2987,175 @@ function handleOcrGroupStat(message) {
 
 
 // ============================================================
+// OCR Drop Words (คำที่ OCR เก็บเกิน)
+// ============================================================
+
+function handleOcrDropList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    word,
+                    created_at,
+                    updated_at
+                FROM ocr_drop_words
+                ORDER BY word ASC
+            `)
+            .all();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows.map(function (row) {
+                return {
+                    id: row.id,
+                    word: row.word,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at
+                };
+            })
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrDropSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const word =
+            String(message.payload?.word || "").trim();
+
+        if (!word) {
+            throw new Error("กรุณาระบุคำที่ต้องตัดออก");
+        }
+
+        const now = new Date().toISOString();
+
+        const existing =
+            db.prepare(`
+                SELECT id
+                FROM ocr_drop_words
+                WHERE word = ?
+            `)
+            .get(word);
+
+        let resultId;
+
+        if (existing) {
+
+            db.prepare(`
+                UPDATE ocr_drop_words
+                SET updated_at = ?
+                WHERE word = ?
+            `)
+            .run(now, word);
+
+            resultId = existing.id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO ocr_drop_words (
+                        word,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?)
+                `)
+                .run(word, now, now);
+
+            resultId = Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId,
+                created: !existing
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrDropDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const word =
+            String(message.payload?.word || "").trim();
+
+        if (!word) {
+            throw new Error("ไม่พบคำที่ต้องลบ");
+        }
+
+        const result =
+            db.prepare(`
+                DELETE FROM ocr_drop_words
+                WHERE word = ?
+            `)
+            .run(word);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // History (ประวัติการกรอก)
 // ============================================================
 
@@ -4423,6 +4601,33 @@ parentPort.on("message", (message) => {
             case "ocr-group-stat":
 
                 handleOcrGroupStat(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // OCR Drop Words (คำที่ OCR เก็บเกิน)
+            // ------------------------------------------------
+
+            case "ocr-drop-list":
+
+                handleOcrDropList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-drop-save":
+
+                handleOcrDropSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-drop-delete":
+
+                handleOcrDropDelete(message);
 
                 break;
 
