@@ -248,7 +248,7 @@
         scope.PdfWordsDialog.open({
             pages: lastPages,
             title: lastFileName,
-            onChange: applyTextFixesToSource
+            onChange: applyTrainingToSource
         });
     }
 
@@ -268,7 +268,8 @@
             hint.textContent =
                 'พบ ' + lastPages.length + ' หน้าที่ OCR อ่าน — ' +
                 'กด "ตรวจคำบน PDF" แล้วคลิกคำที่อ่านผิดบนหน้าเพื่อแก้ ' +
-                '(ไม่ต้องพิมพ์คำที่อ่านผิดเอง) — ระบบจะแทนให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป';
+                '(จะเห็นผลในข้อความด้านบนทันที) — ใช้ปุ่ม "จัดกลุ่มคำ" กับ ' +
+                '"ลบคำ" สำหรับคำที่ถูกตัดข้ามบรรทัดหรือคำที่ OCR เก็บเกิน';
         } else {
             hint.textContent =
                 'OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — ' +
@@ -277,18 +278,29 @@
         }
     }
 
-    // แทนคำในข้อความต้นทางที่แสดงอยู่ (ถ้ามี)
-    function applyTextFixesToSource() {
+    // ใช้รายการที่ฝึกไว้กับข้อความต้นทางที่แสดงอยู่ (ถ้ามี)
+    // ลำดับเดียวกับตอนอ่านไฟล์: ตัดคำที่ OCR เก็บเกิน → รวมกลุ่มคำ → แทนคำที่แก้
+    // เพื่อให้ผลที่เห็นในกล่องตรงกับข้อความที่เอาไปจับ regex
+    function applyTrainingToSource() {
         const textarea = el('dataSourceText');
 
         if (!textarea || textarea.value === '') return;
 
-        const applied = scope.DataExtract.applyTextFixes(textarea.value);
+        const dropped = scope.DataExtract.removeDropWords(textarea.value);
+        const grouped = scope.DataExtract.applyWordGroupMerges(dropped.text);
+        const fixed = scope.DataExtract.applyTextFixes(grouped.text);
 
-        if (!applied.changed) return;
+        if (!dropped.changed && !grouped.changed && !fixed.changed) return;
 
-        textarea.value = applied.text;
-        setSourceStatus('แก้คำในข้อความตามรายการที่บันทึกไว้แล้ว');
+        textarea.value = fixed.text;
+
+        const parts = [];
+
+        if (dropped.applied > 0) parts.push('ตัดคำที่ไม่ใช้ ' + dropped.applied);
+        if (grouped.applied > 0) parts.push('รวมกลุ่มคำ ' + grouped.applied);
+        if (fixed.changed) parts.push('แทนคำที่แก้');
+
+        setSourceStatus('ใช้รายการที่ฝึกไว้: ' + parts.join(' · '));
         hideResults();
     }
 
@@ -487,6 +499,12 @@
                     : '') +
                 (result && result.joined
                     ? ' · รวม ' + result.joined + ' บรรทัดที่ถูกตัด'
+                    : '') +
+                (result && result.dropped
+                    ? ' · ตัดคำที่ไม่ใช้ ' + result.dropped + ' คำ'
+                    : '') +
+                (result && result.grouped
+                    ? ' · รวมกลุ่มคำ ' + result.grouped + ' จุด'
                     : '') +
                 (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '') +
                 (pages.length > 0 ? ' · ตรวจคำบน PDF ได้' : '')
