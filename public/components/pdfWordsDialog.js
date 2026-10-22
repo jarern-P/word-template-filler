@@ -41,6 +41,8 @@
         '                title="เลือกหลายคำเพื่อรวมเป็นคำเดียว (เช่น คำที่ถูกตัดข้ามบรรทัด)">จัดกลุ่มคำ</button>',
         '        <button id="wordsDropModeBtn" type="button" class="plain"',
         '                title="คำที่ OCR เก็บเกิน (เช่น สระ/วรรณยุกต์หลงมา) — คลิกเพื่อตัดคำนั้นออกจากข้อความ">ลบคำ</button>',
+        '        <button id="wordsOrderModeBtn" type="button" class="plain"',
+        '                title="ฝึกตาราง/หลายคอลัมน์ที่อ่านคำปนกัน — คลิกคำตามลำดับการอ่านที่ถูกต้อง">ลำดับการอ่าน</button>',
         '        <span class="words-toolbar-gap"></span>',
         '        <button id="wordsZoomOutBtn" type="button" class="plain" title="ย่อ" aria-label="ย่อ">&minus;</button>',
         '        <button id="wordsZoomInBtn" type="button" class="plain" title="ขยาย" aria-label="ขยาย">+</button>',
@@ -78,6 +80,17 @@
         '        </div>',
         '        <p id="wordsGroupHint" class="hint words-editor-hint"></p>',
         '    </form>',
+        '    <form id="wordsOrderEditor" class="words-editor words-order-editor" hidden>',
+        '        <div class="words-editor-row">',
+        '            <span class="words-editor-label">ลำดับที่คลิก</span>',
+        '            <div id="wordsOrderChips" class="words-group-chips"></div>',
+        '        </div>',
+        '        <div class="words-editor-row">',
+        '            <button id="wordsOrderSaveBtn" type="submit">บันทึกลำดับการอ่าน</button>',
+        '            <button id="wordsOrderClearBtn" type="button" class="plain">ล้างที่เลือก</button>',
+        '        </div>',
+        '        <p id="wordsOrderHint" class="hint words-editor-hint"></p>',
+        '    </form>',
         '    <p class="preview-foot">คลิกคำบนหน้ากระดาษเพื่อแก้ — คำที่แก้แล้วจะขึ้นสีเขียว ' +
             'และถูกแทนให้อัตโนมัติเมื่ออ่านไฟล์ครั้งถัดไป (เก็บไว้ในเครื่องนี้)</p>',
         '</div>'
@@ -94,8 +107,9 @@
         selected: null,   // คำที่กำลังแก้
         focus: null,      // คำที่ต้องไฮไลต์เมื่อเปิด (จากหน้าฝึก OCR)
         onChange: null,
-        mode: 'fix',      // 'fix' = แก้คำ, 'group' = รวมกลุ่ม, 'drop' = ตัดคำที่ OCR เก็บเกิน
-        picks: []         // ลำดับคำที่เลือกในโหมดจัดกลุ่ม (ดัชนีใน page.words)
+        mode: 'fix',      // 'fix' | 'group' | 'drop' | 'order'
+        picks: [],        // คำที่เลือกในโหมดจัดกลุ่ม (ดัชนีใน page.words)
+        order: []         // คำที่คลิกตามลำดับการอ่าน (ดัชนีใน page.words)
     };
 
     function el(id) {
@@ -158,6 +172,17 @@
             setMode(state.mode === 'drop' ? 'fix' : 'drop');
         });
 
+        el('wordsOrderModeBtn').addEventListener('click', function () {
+            setMode(state.mode === 'order' ? 'fix' : 'order');
+        });
+
+        el('wordsOrderEditor').addEventListener('submit', function (event) {
+            event.preventDefault();
+            saveOrder();
+        });
+
+        el('wordsOrderClearBtn').addEventListener('click', clearOrder);
+
         el('wordsGroupEditor').addEventListener('submit', function (event) {
             event.preventDefault();
             saveGroup();
@@ -181,6 +206,11 @@
 
             if (state.mode === 'drop') {
                 toggleDrop(index);
+                return;
+            }
+
+            if (state.mode === 'order') {
+                toggleOrder(index);
                 return;
             }
 
@@ -219,9 +249,11 @@
         state.zoom = 0;
 
         // เปิดใหม่ทุกครั้งให้เริ่มที่โหมดที่ขอ (ค่าเริ่มต้น = โหมดแก้คำ)
-        state.mode =
-            data.mode === 'group' || data.mode === 'drop' ? data.mode : 'fix';
+        state.mode = ['group', 'drop', 'order'].indexOf(data.mode) !== -1
+            ? data.mode
+            : 'fix';
         state.picks = [];
+        state.order = [];
 
         // เปิดครั้งใหม่ให้กลับไปขนาดพอดีหน้าต่าง (ไม่ค้างซูมจากครั้งก่อน)
         setZoom(0, true);
@@ -232,6 +264,7 @@
 
         syncModeButton();
         hideGroupEditor();
+        hideOrderEditor();
 
         overlay.classList.add('open');
         showPage(startIndex);
@@ -258,6 +291,7 @@
         state.index = index;
         state.selected = null;
         state.picks = [];
+        state.order = [];
 
         const page = state.pages[index];
         const width = Number(page.width) || 1;
@@ -284,6 +318,7 @@
 
         hideEditor();
         hideGroupEditor();
+        hideOrderEditor();
         updateMeta();
     }
 
@@ -298,6 +333,13 @@
             state.picks = [index];
             markPicks();
             renderGroupEditor();
+            scrollToWord(index);
+            flashWord(index);
+            return;
+        }
+
+        // โหมดอื่น (ลบคำ/ลำดับการอ่าน) แค่เลื่อนไปหา โดยไม่เปิดแผงแก้คำ
+        if (state.mode !== 'fix') {
             scrollToWord(index);
             flashWord(index);
             return;
@@ -516,25 +558,263 @@
     // ──────────────────────────────────────────────────────────────
 
     function setMode(mode) {
-        state.mode = mode === 'group' || mode === 'drop' ? mode : 'fix';
+        state.mode = ['group', 'drop', 'order'].indexOf(mode) !== -1
+            ? mode
+            : 'fix';
 
         syncModeButton();
         clearPicks();
+        clearOrder();
+
+        if (state.mode === 'order') renderOrderEditor();
     }
 
     function syncModeButton() {
-        const groupButton = el('wordsGroupModeBtn');
-        const dropButton = el('wordsDropModeBtn');
-        const grouping = state.mode === 'group';
-        const dropping = state.mode === 'drop';
+        const buttons = [
+            { node: el('wordsGroupModeBtn'), mode: 'group', label: 'จัดกลุ่มคำ' },
+            { node: el('wordsDropModeBtn'), mode: 'drop', label: 'ลบคำ' },
+            { node: el('wordsOrderModeBtn'), mode: 'order', label: 'ลำดับการอ่าน' }
+        ];
 
-        groupButton.classList.toggle('active', grouping);
-        groupButton.textContent = grouping ? 'เสร็จสิ้น' : 'จัดกลุ่มคำ';
+        buttons.forEach(function (item) {
+            const active = state.mode === item.mode;
 
-        dropButton.classList.toggle('active', dropping);
-        dropButton.textContent = dropping ? 'เสร็จสิ้น' : 'ลบคำ';
+            item.node.classList.toggle('active', active);
+            item.node.textContent = active ? 'เสร็จสิ้น' : item.label;
+        });
 
-        if (grouping || dropping) hideEditor();
+        if (state.mode !== 'fix') hideEditor();
+    }
+
+    // ──────────────────────────────────────────────
+    // โหมดลำดับการอ่าน (ฝึกคอลัมน์/ตารางที่อ่านคำปนกัน)
+    // ──────────────────────────────────────────────
+
+    function toggleOrder(index) {
+        const page = state.pages[state.index];
+        const word = page && page.words[index];
+
+        if (!word) return;
+
+        const at = state.order.indexOf(index);
+
+        if (at === -1) {
+            state.order.push(index);
+        } else {
+            state.order.splice(at, 1);
+        }
+
+        markOrder();
+        renderOrderEditor();
+    }
+
+    function markOrder() {
+        const layer = el('wordsLayer');
+        const page = state.pages[state.index];
+
+        if (!layer) return;
+
+        layer.querySelectorAll('[data-word-index]').forEach(function (box) {
+            const index = Number(box.dataset.wordIndex);
+            const at = state.order.indexOf(index);
+            const word = page && page.words[index];
+
+            box.classList.toggle('ordered', at !== -1);
+
+            if (at !== -1) {
+                box.dataset.order = String(at + 1);
+                box.title = (at + 1) + '. ' +
+                    String((word && word.text) || '').trim();
+            } else {
+                delete box.dataset.order;
+
+                if (word) box.title = String(word.text) + ' — คลิกเพื่อแก้';
+            }
+        });
+    }
+
+    function orderedWords() {
+        const page = state.pages[state.index];
+        const words = page && Array.isArray(page.words) ? page.words : [];
+
+        return state.order
+            .map(function (index, position) {
+                return {
+                    word: words[index],
+                    position: position
+                };
+            })
+            .filter(function (entry) {
+                return Boolean(entry.word);
+            });
+    }
+
+    // แปลงคำที่คลิกตามลำดับ เป็น "ช่วงคอลัมน์" ตามแนว x
+    //   - คำที่อยู่ชิดกันในแนว x = คอลัมน์เดียวกัน
+    //   - ลำดับคอลัมน์ = ลำดับที่ผู้ใช้คลิกคำแรกของคอลัมน์นั้น
+    function bandsFromOrder(entries, pageWidth) {
+        if (entries.length < 2 || !(pageWidth > 0)) return [];
+
+        const gapLimit = Math.max(8, pageWidth * 0.02);
+        const sorted = entries.slice().sort(function (a, b) {
+            return (Number(a.word.x) || 0) - (Number(b.word.x) || 0);
+        });
+
+        const clusters = [];
+
+        sorted.forEach(function (entry) {
+            const left = Number(entry.word.x) || 0;
+            const right = left + (Number(entry.word.width) || 0);
+            const last = clusters[clusters.length - 1];
+
+            if (last && left - last.right <= gapLimit) {
+                last.right = Math.max(last.right, right);
+                last.first = Math.min(last.first, entry.position);
+                return;
+            }
+
+            clusters.push({
+                left: left,
+                right: right,
+                first: entry.position
+            });
+        });
+
+        if (clusters.length < 2) return [];
+
+        // ขอบเขตคอลัมน์ = กึ่งกลางช่องว่างระหว่างคอลัมน์ที่อยู่ติดกัน
+        const byX = clusters.map(function (cluster, index) {
+            const previous = clusters[index - 1];
+            const next = clusters[index + 1];
+
+            return {
+                from: previous ? (previous.right + cluster.left) / 2 : 0,
+                to: next ? (cluster.right + next.left) / 2 : pageWidth,
+                first: cluster.first
+            };
+        });
+
+        return byX
+            .sort(function (a, b) {
+                return a.first - b.first;
+            })
+            .map(function (band) {
+                return {
+                    from: Math.max(0, Math.min(1, band.from / pageWidth)),
+                    to: Math.max(0, Math.min(1, band.to / pageWidth))
+                };
+            })
+            .filter(function (band) {
+                return band.to > band.from;
+            });
+    }
+
+    function renderOrderEditor() {
+        const editor = el('wordsOrderEditor');
+
+        if (!editor) return;
+
+        if (state.mode !== 'order' || state.order.length === 0) {
+            hideOrderEditor();
+
+            // ยังไม่คลิกคำ = แสดงคำแนะนำไว้ในแถบเครื่องมือ
+            if (state.mode === 'order') {
+                el('wordsMeta').textContent =
+                    'โหมดลำดับการอ่าน: คลิกคำบนหน้ากระดาษตามลำดับที่ควรอ่าน ' +
+                    '(บนลงล่าง ทีละคอลัมน์) — คอลัมน์จะถูกเรียนรู้จากตำแหน่งที่คลิก';
+            }
+
+            return;
+        }
+
+        editor.hidden = false;
+
+        const chips = el('wordsOrderChips');
+        chips.textContent = '';
+
+        orderedWords().forEach(function (entry) {
+            const chip = document.createElement('span');
+            chip.className = 'words-group-chip';
+            chip.textContent = (entry.position + 1) + '. ' +
+                String((entry.word && entry.word.text) || '').trim();
+
+            chips.appendChild(chip);
+        });
+
+        const page = state.pages[state.index];
+        const bands = bandsFromOrder(
+            orderedWords(),
+            Number(page && page.width) || 0
+        );
+
+        setOrderHint(
+            bands.length >= 2
+                ? 'จะบันทึกเป็น ' + bands.length + ' คอลัมน์ — ใช้กับไฟล์ที่มีหน้าสัดส่วนใกล้เคียงกัน'
+                : 'คลิกคำจากอย่างน้อย 2 คอลัมน์ (เช่น ทีละคอลัมน์จากซ้ายไปขวา)'
+        );
+
+        el('wordsOrderSaveBtn').disabled = bands.length < 2;
+    }
+
+    function setOrderHint(text) {
+        const hint = el('wordsOrderHint');
+
+        if (!hint) return;
+
+        hint.textContent = text || '';
+        hint.classList.remove('error', 'ok');
+    }
+
+    function hideOrderEditor() {
+        const editor = el('wordsOrderEditor');
+
+        if (!editor) return;
+
+        editor.hidden = true;
+        setOrderHint('');
+    }
+
+    function clearOrder() {
+        state.order = [];
+        markOrder();
+        hideOrderEditor();
+    }
+
+    async function saveOrder() {
+        const page = state.pages[state.index];
+        const width = Number(page && page.width) || 0;
+        const height = Number(page && page.height) || 0;
+        const bands = bandsFromOrder(orderedWords(), width);
+
+        if (bands.length < 2) {
+            setOrderHint('คลิกคำจากอย่างน้อย 2 คอลัมน์ก่อนบันทึก');
+            return;
+        }
+
+        try {
+            const saved = await scope.DataExtract.savePageLayoutAsync(
+                bands,
+                width > 0 ? height / width : 0
+            );
+
+            if (!saved) {
+                setOrderHint('บันทึกลำดับการอ่านไม่สำเร็จ');
+                return;
+            }
+
+        } catch (error) {
+            setOrderHint(
+                (error && error.message) || 'บันทึกลำดับการอ่านไม่สำเร็จ'
+            );
+            return;
+        }
+
+        el('wordsOrderHint').textContent =
+            'บันทึกแล้ว: ' + bands.length + ' คอลัมน์ — ' +
+            'ใช้เมื่ออ่านไฟล์ครั้งถัดไป (หน้าแนวเดียวกันสัดส่วนใกล้กัน)';
+        el('wordsOrderHint').classList.add('ok');
+
+        notifyChange();
     }
 
     // ตัด/คืนคำที่ OCR เก็บเกิน (เช่น สระหลงมาหรือวรรณยุกต์แยกเป็นคำ)

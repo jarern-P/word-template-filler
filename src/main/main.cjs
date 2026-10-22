@@ -1785,6 +1785,109 @@ ipcMain.handle(
 
 
 // ============================================================
+// DB OCR Layouts (ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้)
+// ============================================================
+
+ipcMain.handle(
+    "db:ocr-layout-list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-layout-list",
+                {}
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-layout-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-layout-save",
+                payload
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "db:ocr-layout-delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-layout-delete",
+                { id }
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 
@@ -1983,6 +2086,11 @@ ipcMain.handle(
                     {
                         // เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ปิดได้จากหน้าจอ)
                         joinLines: !payload || payload.joinLines !== false,
+                        // ลำดับการอ่าน/คอลัมน์ที่ผู้ใช้ฝึกไว้ (ใช้กับหน้า OCR)
+                        layouts:
+                            payload && Array.isArray(payload.layouts)
+                                ? payload.layouts
+                                : [],
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {

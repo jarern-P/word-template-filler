@@ -110,6 +110,24 @@
         '        <p id="ocrDropStatus" class="db-status"></p>',
         '        <ul id="ocrDropList" class="saved-list"></ul>',
         '    </section>',
+
+        '    <section class="saved-templates">',
+        '        <h2>ลำดับการอ่าน (คอลัมน์)</h2>',
+
+        '        <p class="hint">',
+        '            ใช้กับตาราง/เอกสารหลายคอลัมน์ที่ OCR อ่านคำของแต่ละคอลัมน์ปนกัน —',
+        '            เปิดภาพ PDF แล้วคลิกคำตามลำดับการอ่านที่ถูกต้อง (บนลงล่าง ทีละคอลัมน์)',
+        '            ระบบจะจำช่วงคอลัมน์ไว้ใช้กับไฟล์ที่หน้าสัดส่วนใกล้กัน',
+        '        </p>',
+
+        '        <div class="form-actions">',
+        '            <button id="ocrLayoutAddBtn" type="button">ฝึกลำดับการอ่านจาก PDF</button>',
+        '            <span id="ocrLayoutHint" class="hint"></span>',
+        '        </div>',
+
+        '        <p id="ocrLayoutStatus" class="db-status"></p>',
+        '        <ul id="ocrLayoutList" class="saved-list"></ul>',
+        '    </section>',
         '</div>'
     ].join('\n');
 
@@ -117,6 +135,7 @@
         fixes: [],
         groups: [],      // กลุ่มคำที่ถูกตัดข้ามบรรทัด (จากตาราง ocr_word_groups)
         drops: [],       // คำที่ OCR เก็บเกิน — ตัดออกตอนอ่านไฟล์ (ocr_drop_words)
+        layouts: [],     // ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ (ocr_page_layouts)
         pages: [],       // หน้า OCR ล่าสุด (อยู่ในหน่วยความจำจนปิดแอป)
         fileName: '',
         queue: [],
@@ -158,6 +177,7 @@
         try {
             await scope.DataExtract.refreshWordGroups();
             await scope.DataExtract.refreshDropWords();
+            await scope.DataExtract.refreshPageLayouts();
         } catch (error) {
             console.error(error);
         }
@@ -165,11 +185,13 @@
         state.fixes = scope.DataExtract.loadTextFixes();
         state.groups = scope.DataExtract.loadWordGroups();
         state.drops = scope.DataExtract.loadDropWords();
+        state.layouts = scope.DataExtract.loadPageLayouts();
 
         renderStats();
         renderFixes();
         renderGroups();
         renderDrops();
+        renderLayouts();
     }
 
     function renderStats() {
@@ -450,6 +472,126 @@
             focusWord: item
                 ? { text: item.text, x: item.x, y: item.y }
                 : null,
+            onChange: function () {
+                reloadFixes().then(function () {
+                    rebuildQueue();
+                });
+            }
+        });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ลำดับการอ่าน (คอลัมน์)
+    // ──────────────────────────────────────────────────────────────
+
+    function layoutBandLabel(layout) {
+        return layout.bands
+            .map(function (band) {
+                return Math.round(band.from * 100) + '–' +
+                    Math.round(band.to * 100) + '%';
+            })
+            .join(' · ');
+    }
+
+    function renderLayouts() {
+        const list = el('ocrLayoutList');
+
+        if (!list) return;
+
+        list.innerHTML = '';
+
+        if (state.layouts.length === 0) {
+            const empty = document.createElement('li');
+            empty.className = 'empty';
+            empty.textContent =
+                'ยังไม่มีลำดับการอ่าน — อัปโหลด PDF แล้วกด "ฝึกลำดับการอ่านจาก PDF" เพื่อคลิกคำตามลำดับที่ควรอ่าน';
+
+            list.appendChild(empty);
+            return;
+        }
+
+        state.layouts.forEach(function (layout) {
+            const item = document.createElement('li');
+            item.className = 'saved-item';
+
+            const info = document.createElement('div');
+            info.className = 'info';
+
+            const pair = document.createElement('strong');
+            pair.className = 'ocr-fix-pair';
+            pair.textContent = layout.bands.length + ' คอลัมน์';
+
+            const meta = document.createElement('span');
+            meta.className = 'meta';
+            meta.textContent =
+                'ช่วง ' + layoutBandLabel(layout) +
+                ' · สัดส่วนหน้า ' + layout.aspect.toFixed(2);
+
+            info.appendChild(pair);
+            info.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'actions';
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'danger';
+            remove.textContent = 'ลบ';
+            remove.dataset.ocrLayoutDelete = String(layout.id);
+
+            actions.appendChild(remove);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            list.appendChild(item);
+        });
+    }
+
+    async function removeLayout(id) {
+        const layout = state.layouts.find(function (item) {
+            return String(item.id) === String(id);
+        });
+
+        const confirmed = await scope.AppDialog.confirm(
+            'ลบลำดับการอ่าน' +
+                (layout ? ' (' + layout.bands.length + ' คอลัมน์)' : '') +
+                ' ออกจากคลัง?\nการอ่านไฟล์ครั้งถัดไปจะไม่จัดคอลัมน์ตามรายการนี้อีก',
+            { danger: true }
+        );
+
+        if (!confirmed) return;
+
+        try {
+            await scope.DataExtract.deletePageLayoutAsync(id);
+            await reloadFixes();
+            setStatus('ocrLayoutStatus', 'ลบลำดับการอ่านแล้ว', 'ok');
+        } catch (error) {
+            setStatus(
+                'ocrLayoutStatus',
+                (error && error.message) || 'ลบไม่สำเร็จ',
+                'error'
+            );
+        }
+    }
+
+    // เปิดภาพ PDF ในโหมดลำดับการอ่าน
+    function openOrderOnPdf() {
+        if (!scope.PdfWordsDialog) return;
+
+        if (state.pages.length === 0) {
+            setStatus(
+                'ocrLayoutStatus',
+                'อัปโหลด PDF ด้านบนก่อน แล้วจึงฝึกลำดับการอ่านจากภาพได้',
+                'warn'
+            );
+            return;
+        }
+
+        scope.PdfWordsDialog.open({
+            pages: state.pages,
+            title: state.fileName,
+            pageIndex: 0,
+            mode: 'order',
             onChange: function () {
                 reloadFixes().then(function () {
                     rebuildQueue();
@@ -947,6 +1089,9 @@
             const groupHint = el('ocrGroupHint');
             if (groupHint) groupHint.textContent = 'ใช้ภาพจาก ' + file.name;
 
+            const layoutHint = el('ocrLayoutHint');
+            if (layoutHint) layoutHint.textContent = 'ใช้ภาพจาก ' + file.name;
+
             if (pages.length === 0) {
                 state.pages = [];
                 state.queue = [];
@@ -1352,6 +1497,16 @@
             }
         });
 
+        // ── ลำดับการอ่าน (คอลัมน์) ──
+
+        el('ocrLayoutAddBtn').addEventListener('click', openOrderOnPdf);
+
+        el('ocrLayoutList').addEventListener('click', function (event) {
+            const remove = event.target.closest('[data-ocr-layout-delete]');
+
+            if (remove) removeLayout(remove.dataset.ocrLayoutDelete);
+        });
+
         // ── คำที่ OCR เก็บเกิน ──
 
         el('ocrDropList').addEventListener('click', function (event) {
@@ -1410,6 +1565,13 @@
             const groupHint = el('ocrGroupHint');
             if (groupHint) {
                 groupHint.textContent = state.fileName
+                    ? 'ใช้ภาพจาก ' + state.fileName
+                    : '';
+            }
+
+            const layoutHint = el('ocrLayoutHint');
+            if (layoutHint) {
+                layoutHint.textContent = state.fileName
                     ? 'ใช้ภาพจาก ' + state.fileName
                     : '';
             }

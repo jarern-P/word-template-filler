@@ -113,6 +113,16 @@ contextBridge.exposeInMainWorld(
         dbOcrDropDelete: (word) =>
             ipcRenderer.invoke("db:ocr-drop-delete", word),
 
+        // ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ (ใช้กับหน้า OCR ที่มีหลายคอลัมน์)
+        dbOcrLayoutList: () =>
+            ipcRenderer.invoke("db:ocr-layout-list"),
+
+        dbOcrLayoutSave: (payload) =>
+            ipcRenderer.invoke("db:ocr-layout-save", payload),
+
+        dbOcrLayoutDelete: (id) =>
+            ipcRenderer.invoke("db:ocr-layout-delete", id),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),

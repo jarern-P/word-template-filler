@@ -417,6 +417,36 @@
 
         },
 
+        // ── ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ ──
+
+        // คืน [{ id, bands: [{ from, to }], aspect }]
+        ocrLayoutList: function () {
+
+            return dbRequest(
+                'dbOcrLayoutList'
+            );
+
+        },
+
+        // payload = { bands: [{ from, to }], aspect }
+        ocrLayoutSave: function (payload) {
+
+            return dbRequest(
+                'dbOcrLayoutSave',
+                payload
+            );
+
+        },
+
+        ocrLayoutDelete: function (id) {
+
+            return dbRequest(
+                'dbOcrLayoutDelete',
+                id
+            );
+
+        },
+
         // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
 
         // payload = { templateId, templateName, values, modes, retentionDays }

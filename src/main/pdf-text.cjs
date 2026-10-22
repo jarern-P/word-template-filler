@@ -207,6 +207,164 @@ function pageLines(items) {
         });
 }
 
+// ──────────────────────────────────────────────────────────────
+// ลำดับการอ่านตามคอลัมน์ที่ฝึกไว้
+// ──────────────────────────────────────────────────────────────
+
+// สัดส่วนหน้า (สูง/กว้าง) ต่างกันได้ไม่เกินนี้ = ถือว่าเป็นรูปแบบเดียวกัน
+const MAX_LAYOUT_ASPECT_DIFF = 0.06;
+
+// หารูปแบบที่ใกล้ที่สุด (ต้องเป็นแนวเดียวกันด้วย — แนวนอน/แนวตั้ง)
+function findPageLayout(layouts, width, height) {
+    if (!Array.isArray(layouts) || layouts.length === 0) return null;
+    if (!(width > 0) || !(height > 0)) return null;
+
+    const aspect = height / width;
+
+    let best = null;
+    let bestDiff = Infinity;
+
+    layouts.forEach(function (layout) {
+        const bands = Array.isArray(layout && layout.bands) ? layout.bands : [];
+        const stored = Number(layout && layout.aspect);
+
+        if (bands.length < 2) return;
+        if (!isFinite(stored) || stored <= 0) return;
+        if ((stored > 1) !== (aspect > 1)) return;
+
+        const diff = Math.abs(stored - aspect) / stored;
+
+        if (diff > MAX_LAYOUT_ASPECT_DIFF) return;
+        if (diff >= bestDiff) return;
+
+        best = { bands: bands, aspect: stored };
+        bestDiff = diff;
+    });
+
+    return best;
+}
+
+// เรียงคำของหน้า OCR เข้าคอลัมน์ตามช่วง x ที่ฝึกไว้ แล้วอ่านทีละคอลัมน์
+// (คำตอบแทนการอ่านทีละบรรทัดที่คำของหลายคอลัมน์ปนกัน — เช่นตาราง)
+function linesFromLayout(words, width, height, bands) {
+    const columns = bands.map(function () {
+        return [];
+    });
+
+    (words || []).forEach(function (word) {
+        const text = word && typeof word.text === "string"
+            ? word.text.trim()
+            : "";
+
+        if (text === "") return;
+
+        const center =
+            ((Number(word.x) || 0) + (Number(word.width) || 0) / 2) / width;
+
+        let index = -1;
+
+        for (let i = 0; i < bands.length; i++) {
+            if (center >= bands[i].from && center < bands[i].to) {
+                index = i;
+                break;
+            }
+        }
+
+        // เลยนอกช่วง (ขอบกระดาษ) = ใช้คอลัมน์ที่ใกล้ที่สุด
+        if (index === -1) {
+            let bestDistance = Infinity;
+
+            bands.forEach(function (band, bandIndex) {
+                const distance = center < band.from
+                    ? band.from - center
+                    : center - band.to;
+
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    index = bandIndex;
+                }
+            });
+        }
+
+        if (index >= 0) columns[index].push(word);
+    });
+
+    const lines = [];
+
+    columns.forEach(function (list) {
+        if (list.length === 0) return;
+
+        list.sort(function (a, b) {
+            return (Number(a.y) || 0) - (Number(b.y) || 0) ||
+                (Number(a.x) || 0) - (Number(b.x) || 0);
+        });
+
+        const heights = list
+            .map(function (word) {
+                return Number(word.height) || 0;
+            })
+            .filter(function (value) {
+                return value > 0;
+            })
+            .sort(function (a, b) {
+                return a - b;
+            });
+
+        const medianHeight = heights.length > 0
+            ? heights[Math.floor(heights.length / 2)]
+            : 10;
+
+        // ความสูงของคำในบรรทัดเดียวกันอาจต่างกัน (สระบน/วรรณยุกต์)
+        const tolerance = Math.max(2, medianHeight * 0.5);
+
+        let current = null;
+
+        list.forEach(function (word) {
+            const y = Number(word.y) || 0;
+            const x = Number(word.x) || 0;
+            const wordWidth = Number(word.width) || 0;
+            const wordHeight = Number(word.height) || 0;
+
+            if (!current || Math.abs(y - current.y) > tolerance) {
+                current = {
+                    y: y,
+                    words: [],
+                    left: x,
+                    right: x + wordWidth,
+                    top: y,
+                    bottom: y + wordHeight
+                };
+                lines.push(current);
+            }
+
+            current.words.push(word);
+            current.left = Math.min(current.left, x);
+            current.right = Math.max(current.right, x + wordWidth);
+            current.top = Math.min(current.top, y);
+            current.bottom = Math.max(current.bottom, y + wordHeight);
+        });
+    });
+
+    return lines
+        .map(function (line) {
+            return {
+                text: line.words
+                    .map(function (word) {
+                        return String(word.text).trim();
+                    })
+                    .join(" "),
+                left: line.left,
+                right: line.right,
+                top: line.top,
+                bottom: line.bottom,
+                hadSpaceAfter: false
+            };
+        })
+        .filter(function (line) {
+            return line.text.trim() !== "";
+        });
+}
+
 /**
  * อ่านข้อความทุกหน้าของ PDF (หน้าไหนไม่มีชั้นข้อความจะ OCR ให้)
  *
@@ -214,6 +372,8 @@ function pageLines(items) {
  * @param {Object} [options]
  *   ocr        = false เพื่อปิดการ OCR (อ่านเฉพาะชั้นข้อความ)
  *   joinLines  = false เพื่อไม่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ค่าเริ่มต้น = เย็บ)
+ *   layouts    = ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ [{ bands: [{from,to}], aspect }]
+ *                — หน้าทีมีสัดส่วนใกล้เคียงจะถูกอ่านทีละคอลัมน์ตามที่ฝึก
  *   scale      = ความละเอียดที่ใช้ OCR (ตัวคูณจาก 72 DPI, ค่าเริ่มต้น ~200 DPI)
  *   langPath/workerPath = ทับค่าที่ใช้อยู่ (สำหรับทดสอบ)
  *   onProgress = ฟังก์ชันรับความคืบหน้า { page, pageCount, status, progress }
@@ -311,6 +471,8 @@ async function extractPdfText(data, options) {
 
                 // บรรทัดจาก OCR (มีพิกัดเป็นหน่วย pixel ของภาพตัวอย่าง)
                 let ocrLines = [];
+                // หน้านี้ถูกจัดลำดับใหม่ตามคอลัมน์ที่ฝึกไว้หรือไม่
+                let layoutApplied = false;
 
                 if (useOcr && needsOcr) {
                     try {
@@ -324,6 +486,36 @@ async function extractPdfText(data, options) {
                                 : String(ocr.text).split("\n").map(function (text) {
                                     return { text: text };
                                 });
+
+                            // มีรูปแบบที่ฝึกไว้และหน้าใกล้เคียง = อ่านทีละคอลัมน์
+                            const layout = findPageLayout(
+                                opts.layouts,
+                                ocr.width,
+                                ocr.height
+                            );
+
+                            if (layout && Array.isArray(ocr.words) && ocr.words.length > 0) {
+                                const rebuilt = linesFromLayout(
+                                    ocr.words,
+                                    ocr.width,
+                                    ocr.height,
+                                    layout.bands
+                                );
+
+                                if (rebuilt.length > 0) {
+                                    // บรรทัดที่จับกล่องไม่ได้ (ไม่มีคำ) ต่อท้ายไว้ ไม่ให้ข้อความหาย
+                                    const orphans = ocrLines
+                                        .filter(function (line) {
+                                            return !isFinite(Number(line.left));
+                                        })
+                                        .map(function (line) {
+                                            return { text: line.text };
+                                        });
+
+                                    ocrLines = rebuilt.concat(orphans);
+                                    layoutApplied = true;
+                                }
+                            }
                         }
 
                         // เก็บภาพ+ตำแหน่งคำไว้ให้หน้าจอตรวจคำ (เฉพาะเมื่อมีคำให้ตรวจ)
@@ -359,20 +551,24 @@ async function extractPdfText(data, options) {
                 const sources = [];
 
                 if (quality.usable && textLayerLines.length > 0) {
-                    sources.push(textLayerLines);
+                    sources.push({ lines: textLayerLines, join: joinLines });
                 }
 
                 if (ocrLines.length > 0) {
-                    sources.push(ocrLines);
+                    // หน้านี้จัดลำดับตามคอลัมน์แล้ว = ไม่ต้องเย็บบรรทัด (คนละคอลัมน์)
+                    sources.push({
+                        lines: ocrLines,
+                        join: joinLines && !layoutApplied
+                    });
                 }
 
                 const pageParts = [];
 
-                sources.forEach(function (sourceLines) {
-                    const result = joinLines
-                        ? joinWrappedLines(sourceLines)
+                sources.forEach(function (source) {
+                    const result = source.join
+                        ? joinWrappedLines(source.lines)
                         : {
-                            lines: sourceLines.map(function (line) {
+                            lines: source.lines.map(function (line) {
                                 return line.text;
                             }),
                             joined: 0

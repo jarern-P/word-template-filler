@@ -661,6 +661,145 @@
         };
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ (แก้ตารางหลายคอลัมน์ที่อ่านคำปนกัน)
+    // ──────────────────────────────────────────────────────────────
+
+    let pageLayoutCache = null;
+    let pageLayoutRefreshPromise = null;
+
+    function dbLayoutsAvailable() {
+        return Boolean(
+            window.electronAPI &&
+            scope.Db &&
+            typeof scope.Db.ocrLayoutList === 'function'
+        );
+    }
+
+    function normalizeBands(bands) {
+        if (!Array.isArray(bands)) return [];
+
+        return bands
+            .map(function (band) {
+                const from = Number(band && band.from);
+                const to = Number(band && band.to);
+
+                if (!isFinite(from) || !isFinite(to)) return null;
+                if (from < 0 || to > 1 || to <= from) return null;
+
+                return { from: from, to: to };
+            })
+            .filter(Boolean);
+    }
+
+    function rowToPageLayout(row) {
+        const bands = normalizeBands(row && row.bands);
+        const aspect = Number(row && row.aspect);
+
+        if (bands.length < 2) return null;
+        if (!isFinite(aspect) || aspect <= 0) return null;
+
+        return {
+            id: row.id,
+            bands: bands,
+            aspect: aspect
+        };
+    }
+
+    function loadPageLayouts() {
+        if (!pageLayoutCache) pageLayoutCache = [];
+
+        return pageLayoutCache;
+    }
+
+    function refreshPageLayouts() {
+        if (pageLayoutRefreshPromise) return pageLayoutRefreshPromise;
+
+        pageLayoutRefreshPromise = Promise.resolve()
+            .then(function () {
+                if (!dbLayoutsAvailable()) {
+                    pageLayoutCache = [];
+                    return;
+                }
+
+                return scope.Db.ocrLayoutList()
+                    .then(function (rows) {
+                        pageLayoutCache = (Array.isArray(rows) ? rows : [])
+                            .map(rowToPageLayout)
+                            .filter(Boolean);
+                    })
+                    .catch(function (error) {
+                        console.error(
+                            'อ่านลำดับการอ่านจากฐานข้อมูลไม่สำเร็จ:',
+                            error
+                        );
+
+                        pageLayoutCache = pageLayoutCache || [];
+                    });
+            })
+            .then(function () {
+                return loadPageLayouts();
+            })
+            .finally(function () {
+                pageLayoutRefreshPromise = null;
+            });
+
+        return pageLayoutRefreshPromise;
+    }
+
+    // เพิ่ม/แก้ลำดับการอ่าน — คืน true เมื่อบันทึกสำเร็จ
+    async function savePageLayoutAsync(bands, aspect) {
+        const list = normalizeBands(bands);
+        const value = Number(aspect);
+
+        if (list.length < 2) return false;
+        if (!isFinite(value) || value <= 0) return false;
+
+        if (!dbLayoutsAvailable()) {
+            throw new Error('บันทึกลำดับการอ่านได้เฉพาะในแอป (Electron)');
+        }
+
+        const saved = await scope.Db.ocrLayoutSave({
+            bands: list,
+            aspect: value
+        });
+
+        const key = JSON.stringify(list);
+        const layouts = loadPageLayouts();
+        const existing = layouts.find(function (layout) {
+            return JSON.stringify(layout.bands) === key &&
+                Math.abs(layout.aspect - value) <= 0.01;
+        });
+
+        if (existing) {
+            existing.aspect = value;
+        } else {
+            layouts.push({
+                id: saved && saved.id ? saved.id : 0,
+                bands: list,
+                aspect: value
+            });
+        }
+
+        return true;
+    }
+
+    async function deletePageLayoutAsync(id) {
+        const key = Number(id);
+
+        if (!isFinite(key) || key <= 0) return false;
+
+        if (dbLayoutsAvailable()) {
+            await scope.Db.ocrLayoutDelete(key);
+        }
+
+        pageLayoutCache = loadPageLayouts().filter(function (layout) {
+            return Number(layout.id) !== key;
+        });
+
+        return true;
+    }
+
     // อักขระที่ต้องหลบก่อนเอาไปสร้าง RegExp (คีย์ค้นหามาจากผู้ใช้)
     // รวม backslash (charCode 92) ด้วย เผื่อผู้ใช้พิมพ์ backslash มาในคำ
     const BACKSLASH = String.fromCharCode(92);
@@ -821,7 +960,9 @@
 
         const result = await window.electronAPI.extractPdfText({
             data: data,
-            joinLines: opts.joinLines !== false
+            joinLines: opts.joinLines !== false,
+            // ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ — main process ใช้จัดคำบนหน้า OCR
+            layouts: Array.isArray(opts.layouts) ? opts.layouts : []
         });
 
         if (!result || !result.ok) {
@@ -905,7 +1046,13 @@
         let result;
 
         if (name.endsWith('.pdf')) {
-            result = await textFromPdf(await file.arrayBuffer(), options);
+            // ต้องอ่านลำดับการอ่านล่าสุดก่อน — ส่งเข้า main process ตอนอ่านไฟล์
+            await refreshPageLayouts();
+
+            result = await textFromPdf(await file.arrayBuffer(), {
+                joinLines: options && options.joinLines,
+                layouts: loadPageLayouts()
+            });
         } else if (name.endsWith('.docx')) {
             // .docx มีการขึ้นย่อหน้าจริงในไฟล์ — ไม่ต้องเดา/เย็บบรรทัด
             result = {
@@ -1521,6 +1668,10 @@
         applyWordGroupMerges: applyWordGroupMerges,
         refreshDropWords: refreshDropWords,
         loadDropWords: loadDropWords,
+        refreshPageLayouts: refreshPageLayouts,
+        loadPageLayouts: loadPageLayouts,
+        savePageLayoutAsync: savePageLayoutAsync,
+        deletePageLayoutAsync: deletePageLayoutAsync,
         findDropWord: findDropWord,
         saveDropWordAsync: saveDropWordAsync,
         deleteDropWordAsync: deleteDropWordAsync,

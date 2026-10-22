@@ -4641,6 +4641,31 @@ body.table-ratio-dragging .table-ratio-handle {
     text-decoration: line-through;
 }
 
+/* คำที่คลิกตามลำดับการอ่าน (โหมดฝึกลำดับคอลัมน์) */
+.words-word.ordered {
+    background: rgba(124, 92, 214, 0.24);
+    outline: 2px solid #7c5cd6;
+}
+
+.words-word.ordered::after {
+    content: attr(data-order);
+    position: absolute;
+    top: -8px;
+    left: -4px;
+    min-width: 14px;
+    padding: 0 3px;
+    font-size: 10px;
+    line-height: 14px;
+    color: #ffffff;
+    text-align: center;
+    background: #7c5cd6;
+    border-radius: 7px;
+}
+
+.words-order-editor .words-editor-row + .words-editor-row {
+    margin-top: 8px;
+}
+
 .words-word.picked.fixed {
     background: rgba(64, 118, 214, 0.32);
     outline: 2px solid #4076d6;

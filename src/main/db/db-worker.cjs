@@ -150,6 +150,18 @@ const SCHEMA = `
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+
+    -- ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ (แก้ตารางหลายคอลัมน์ที่อ่านคำปนกัน)
+    --   bands  = JSON array ของช่วงคอลัมน์ตามลำดับการอ่าน
+    --            [{ from: 0, to: 0.33 }, { from: 0.33, to: 1 }] (สัดส่วนของความกว้างหน้า)
+    --   aspect = ความสูง / ความกว้างของหน้า — ใช้จับคู่กับไฟล์ที่มีรูปแบบใกล้กัน
+    CREATE TABLE IF NOT EXISTS ocr_page_layouts (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        bands      TEXT NOT NULL,
+        aspect     REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
 `;
 
 
@@ -3156,6 +3168,222 @@ function handleOcrDropDelete(message) {
 
 
 // ============================================================
+// OCR Page Layouts (ลำดับการอ่าน/คอลัมน์)
+// ============================================================
+
+// รับเฉพาะช่วงคอลัมน์ที่ใช้ได้ (0–1 และจากน้อยกว่า "ถึง")
+function layoutBandsOf(value) {
+
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .map(function (band) {
+            const from = Number(band && band.from);
+            const to = Number(band && band.to);
+
+            if (!isFinite(from) || !isFinite(to)) return null;
+            if (from < 0 || to > 1 || to <= from) return null;
+
+            return {
+                from: Math.round(from * 10000) / 10000,
+                to: Math.round(to * 10000) / 10000
+            };
+        })
+        .filter(Boolean);
+}
+
+
+function layoutRowToRecord(row) {
+
+    let bands = [];
+
+    try {
+        bands = layoutBandsOf(JSON.parse(row.bands || "[]"));
+    } catch (error) {
+        bands = [];
+    }
+
+    return {
+        id: row.id,
+        bands: bands,
+        aspect: Number(row.aspect) || 0,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+    };
+}
+
+
+function handleOcrLayoutList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    bands,
+                    aspect,
+                    created_at,
+                    updated_at
+                FROM ocr_page_layouts
+                ORDER BY id ASC
+            `)
+            .all();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows.map(layoutRowToRecord)
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrLayoutSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const bands = layoutBandsOf(message.payload?.bands);
+        const aspect = Number(message.payload?.aspect);
+
+        if (bands.length < 2) {
+            throw new Error("ต้องมีอย่างน้อย 2 คอลัมน์");
+        }
+
+        if (!isFinite(aspect) || aspect <= 0) {
+            throw new Error("ขนาดหน้าไม่ถูกต้อง");
+        }
+
+        const key = JSON.stringify(bands);
+        const now = new Date().toISOString();
+
+        // รูปแบบเดียวกัน (ช่วงคอลัมน์เดิม + สัดส่วนหน้าใกล้กัน) = แก้รายการเดิม
+        const existing =
+            db.prepare(`
+                SELECT
+                    id,
+                    aspect
+                FROM ocr_page_layouts
+                WHERE bands = ?
+            `)
+            .all(key)
+            .find(function (row) {
+                return Math.abs(Number(row.aspect) - aspect) <= 0.01;
+            });
+
+        let resultId;
+
+        if (existing) {
+
+            db.prepare(`
+                UPDATE ocr_page_layouts
+                SET updated_at = ?
+                WHERE id = ?
+            `)
+            .run(now, existing.id);
+
+            resultId = existing.id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO ocr_page_layouts (
+                        bands,
+                        aspect,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?)
+                `)
+                .run(key, aspect, now, now);
+
+            resultId = Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId,
+                created: !existing
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrLayoutDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id = Math.floor(Number(message.payload?.id));
+
+        if (!isFinite(id) || id <= 0) {
+            throw new Error("ไม่พบลำดับการอ่านที่ต้องลบ");
+        }
+
+        const result =
+            db.prepare(`
+                DELETE FROM ocr_page_layouts
+                WHERE id = ?
+            `)
+            .run(id);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // History (ประวัติการกรอก)
 // ============================================================
 
@@ -4628,6 +4856,33 @@ parentPort.on("message", (message) => {
             case "ocr-drop-delete":
 
                 handleOcrDropDelete(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // OCR Page Layouts (ลำดับการอ่าน/คอลัมน์)
+            // ------------------------------------------------
+
+            case "ocr-layout-list":
+
+                handleOcrLayoutList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-layout-save":
+
+                handleOcrLayoutSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-layout-delete":
+
+                handleOcrLayoutDelete(message);
 
                 break;
 
