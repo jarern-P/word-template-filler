@@ -55,6 +55,14 @@
         '            </div>',
         '            <input type="file" id="dataDocxInput" accept=".docx" hidden>',
         '            <input type="file" id="dataPdfInput" accept=".pdf" hidden>',
+        '            <div class="data-source-options">',
+        '                <label class="data-join-toggle" title="ใช้เมื่ออ่านไฟล์ PDF — ' +
+            'ระบบจะเย็บบรรทัดที่ถูกตัดกลางประโยคกลับเป็นบรรทัดเดียว ' +
+            'โดยดูจากตำแหน่งบรรทัดและคำเชื่อม/คำลงท้ายไทย">',
+        '                    <input type="checkbox" id="dataJoinLines">',
+        '                    <span>รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่</span>',
+        '                </label>',
+        '            </div>',
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
@@ -82,6 +90,29 @@
         '    </div>',
         '</div>'
     ].join('\n');
+
+    // สวิตช์ "รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่" — ค่าติดตั้งของเครื่องนี้
+    const JOIN_LINES_KEY = 'wordTemplateFiller:joinLines';
+
+    function loadJoinLinesSetting() {
+        try {
+            const raw = window.localStorage.getItem(JOIN_LINES_KEY);
+
+            return raw === null ? true : raw !== '0';
+        } catch (error) {
+            return true;
+        }
+    }
+
+    function saveJoinLinesSetting(enabled) {
+        try {
+            window.localStorage.setItem(JOIN_LINES_KEY, enabled ? '1' : '0');
+        } catch (error) {
+            // เก็บไม่ได้ก็ยังใช้ค่าที่เลือกกับไฟล์รอบนี้ได้
+        }
+    }
+
+    let joinLinesEnabled = loadJoinLinesSetting();
 
     let overlay = null;
     let settings = null;   // ค่าที่ส่งมาตอน open
@@ -190,6 +221,15 @@
 
         el('dataPdfInput').addEventListener('change', function (event) {
             readFile(event.target);
+        });
+
+        // สวิตช์เย็บบรรทัดที่ถูกตัด (ใช้กับ PDF ที่จะอ่านครั้งถัดไป)
+        const joinToggle = el('dataJoinLines');
+
+        joinToggle.checked = joinLinesEnabled;
+        joinToggle.addEventListener('change', function () {
+            joinLinesEnabled = joinToggle.checked;
+            saveJoinLinesSetting(joinLinesEnabled);
         });
 
         // คำที่แก้เอง — เปิดภาพหน้า PDF เพื่อแก้คำตรงตำแหน่งจริง
@@ -414,7 +454,9 @@
         setWordPreviewPages([], '');
 
         try {
-            const result = await scope.DataExtract.extractFile(file);
+            const result = await scope.DataExtract.extractFile(file, {
+                joinLines: joinLinesEnabled
+            });
 
             // extractFile คืน { text, ocrPages, pages, fixed }
             const text = String(
@@ -442,6 +484,9 @@
                 (ocrPages.length > 0
                     ? ' (OCR ' + ocrPages.length + ' หน้า: ' +
                         ocrPages.join(', ') + ')'
+                    : '') +
+                (result && result.joined
+                    ? ' · รวม ' + result.joined + ' บรรทัดที่ถูกตัด'
                     : '') +
                 (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '') +
                 (pages.length > 0 ? ' · ตรวจคำบน PDF ได้' : '')

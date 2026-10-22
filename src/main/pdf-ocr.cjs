@@ -233,6 +233,9 @@ function groupWords(text, fragments) {
     const textLines = String(text || "").split("\n");
     const words = [];
 
+    // กล่องของแต่ละบรรทัด (คนละชุดกับ words) — ใช้เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่
+    const lineBoxes = [];
+
     // ตำแหน่งในข้อความของบรรทัดล่าสุดที่จับคู่ได้ — กันจับบรรทัดซ้ำเมื่อมีข้อความซ้ำกัน
     let lineCursor = 0;
     let searchFrom = 0;
@@ -286,6 +289,35 @@ function groupWords(text, fragments) {
 
         lineCursor = matched;
         searchFrom = matchedAt + plain.length;
+
+        // กล่องครอบของบรรทัดนี้ — ถ้า tesseract แยกเป็นหลายกลุ่มที่ลงเอยบรรทัด
+        // เดียวกัน ให้ขยายกล่องเดิมแทนการเพิ่มซ้ำ
+        let lineBox = null;
+
+        for (let boxIndex = 0; boxIndex < lineBoxes.length; boxIndex++) {
+            if (lineBoxes[boxIndex].index === matched) {
+                lineBox = lineBoxes[boxIndex];
+                break;
+            }
+        }
+
+        if (!lineBox) {
+            lineBox = {
+                index: matched,
+                left: Infinity,
+                right: -Infinity,
+                top: Infinity,
+                bottom: -Infinity
+            };
+            lineBoxes.push(lineBox);
+        }
+
+        parts.forEach(function (part) {
+            lineBox.left = Math.min(lineBox.left, part.left);
+            lineBox.right = Math.max(lineBox.right, part.left + part.width);
+            lineBox.top = Math.min(lineBox.top, part.top);
+            lineBox.bottom = Math.max(lineBox.bottom, part.top + part.height);
+        });
 
         // token ในข้อความ (คั่นด้วยช่องว่าง) + ช่วงตำแหน่งแบบไม่นับช่องว่าง
         const tokens = [];
@@ -381,7 +413,10 @@ function groupWords(text, fragments) {
         });
     });
 
-    return words;
+    return {
+        words: words,
+        lines: lineBoxes
+    };
 }
 
 // แปลงพิกัดจากภาพเต็มเป็นพิกัดบนภาพตัวอย่าง
@@ -503,7 +538,8 @@ function cleanOcrText(text) {
  * OCR หนึ่งหน้า: ข้อความ + ภาพตัวอย่าง + ตำแหน่งของแต่ละคำ
  * @param {Object} page หน้าจาก pdf.js
  * @param {Object} options { langPath, workerPath, logger, scale }
- * @returns {Promise<{text:string, image:string, width:number, height:number, words:Array}>}
+ * @returns {Promise<{text:string, image:string, width:number, height:number, words:Array, lines:Array}>}
+ *   lines = บรรทัดข้อความพร้อมพิกัด (left/right/top/bottom) สำหรับเย็บประโยคที่ถูกตัด
  */
 async function ocrPage(page, options) {
     const canvas = await renderPageCanvas(page, options && options.scale);
@@ -523,16 +559,39 @@ async function ocrPage(page, options) {
     const preview = previewImage(canvas);
     const data = (result && result.data) || {};
     const text = cleanOcrText(data.text);
+    const grouped = groupWords(text, parseTsvWords(data.tsv));
+
+    // กล่องบรรทัดเรียงตาม index ของข้อความ — บรรทัดที่จับคู่กล่องไม่ได้
+    // ยังคงอยู่ในผลลัพธ์ (แค่ไม่มีพิกัด จึงไม่ถูกเย็บ)
+    const boxes = {};
+
+    grouped.lines.forEach(function (lineBox) {
+        boxes[lineBox.index] = lineBox;
+    });
+
+    const lines = text === ""
+        ? []
+        : text.split("\n").map(function (lineText, index) {
+            const lineBox = boxes[index];
+
+            if (!lineBox) return { text: lineText };
+
+            return {
+                text: lineText,
+                left: lineBox.left * preview.ratio,
+                right: lineBox.right * preview.ratio,
+                top: lineBox.top * preview.ratio,
+                bottom: lineBox.bottom * preview.ratio
+            };
+        });
 
     return {
         text: text,
         image: preview.image,
         width: preview.width,
         height: preview.height,
-        words: scaleWords(
-            groupWords(text, parseTsvWords(data.tsv)),
-            preview.ratio
-        )
+        words: scaleWords(grouped.words, preview.ratio),
+        lines: lines
     };
 }
 

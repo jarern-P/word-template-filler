@@ -4216,6 +4216,25 @@ body.table-ratio-dragging .table-ratio-handle {
     gap: 6px;
 }
 
+/* ── สวิตช์รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ใช้กับ PDF) ── */
+.data-source-options {
+    margin: 4px 0 2px;
+}
+
+.data-join-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--ink-faint);
+    cursor: pointer;
+    user-select: none;
+}
+
+.data-join-toggle input {
+    margin: 0;
+}
+
 .data-source-actions button {
     margin-top: 0;
 }

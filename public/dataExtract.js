@@ -217,9 +217,12 @@
     // ข้อความจากไฟล์ .pdf
     // ──────────────────────────────────────────────────────────────
 
-    // คืน { text, ocrPages }
+    // คืน { text, ocrPages, pages, joined }
     //   ocrPages = เลขหน้าที่ไม่มีชั้นข้อความ จึงต้องอ่านด้วย OCR (ไฟล์สแกน)
-    async function textFromPdf(data) {
+    //   joined   = จำนวนจุดที่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่
+    //   options.joinLines = false เพื่อไม่เย็บ
+    async function textFromPdf(data, options) {
+        const opts = options || {};
         if (!window.electronAPI || !window.electronAPI.extractPdfText) {
             throw new Error(
                 'อ่านไฟล์ PDF ได้เฉพาะในแอป (Electron) — ' +
@@ -228,7 +231,8 @@
         }
 
         const result = await window.electronAPI.extractPdfText({
-            data: data
+            data: data,
+            joinLines: opts.joinLines !== false
         });
 
         if (!result || !result.ok) {
@@ -260,7 +264,8 @@
             ocrPages: ocrPages,
             // หน้า OCR พร้อมภาพตัวอย่าง + ตำแหน่งของแต่ละคำ
             // ใช้ในหน้าจอ "ตรวจคำบน PDF" (หน้าเอกสารที่มีชั้นข้อความไม่มีภาพ)
-            pages: Array.isArray(result.pages) ? result.pages : []
+            pages: Array.isArray(result.pages) ? result.pages : [],
+            joined: Number(result.joined) || 0
         };
     }
 
@@ -296,10 +301,12 @@
         return kept.join('\n');
     }
 
-    // คืน { text, ocrPages, pages, fixed }
-    //   pages = หน้า OCR พร้อมภาพ+ตำแหน่งคำ (สำหรับหน้าจอตรวจคำ)
-    //   fixed = มีการแทนคำตามรายการ "คำที่แก้เอง" หรือไม่
-    async function extractFile(file) {
+    // คืน { text, ocrPages, pages, fixed, joined }
+    //   pages  = หน้า OCR พร้อมภาพ+ตำแหน่งคำ (สำหรับหน้าจอตรวจคำ)
+    //   fixed  = มีการแทนคำตามรายการ "คำที่แก้เอง" หรือไม่
+    //   joined = จำนวนจุดที่เย็บบรรทัดที่ถูกตัด (PDF)
+    //   options.joinLines = false เพื่อไม่เย็บ
+    async function extractFile(file, options) {
         const name = String((file && file.name) || '').toLowerCase();
 
         if (!file) {
@@ -309,12 +316,14 @@
         let result;
 
         if (name.endsWith('.pdf')) {
-            result = await textFromPdf(await file.arrayBuffer());
+            result = await textFromPdf(await file.arrayBuffer(), options);
         } else if (name.endsWith('.docx')) {
+            // .docx มีการขึ้นย่อหน้าจริงในไฟล์ — ไม่ต้องเดา/เย็บบรรทัด
             result = {
                 text: await textFromDocx(await file.arrayBuffer()),
                 ocrPages: [],
-                pages: []
+                pages: [],
+                joined: 0
             };
         } else {
             const error = new Error('รองรับเฉพาะไฟล์ .docx และ .pdf');
@@ -329,7 +338,8 @@
             text: fixed.text,
             ocrPages: result.ocrPages,
             pages: result.pages || [],
-            fixed: fixed.changed
+            fixed: fixed.changed,
+            joined: Number(result.joined) || 0
         };
     }
 

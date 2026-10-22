@@ -1604,6 +1604,8 @@ ipcMain.handle(
                 await extractPdfText(
                     data,
                     {
+                        // เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ปิดได้จากหน้าจอ)
+                        joinLines: !payload || payload.joinLines !== false,
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -1628,7 +1630,9 @@ ipcMain.handle(
                 // (ว่าง = ไม่มีหน้าไหนต้อง OCR)
                 pages: result.pages || [],
                 // เหตุผลที่ OCR ไม่สำเร็จ (ถ้ามี) — ข้อความที่เหลือยังใช้ได้
-                ocrError: result.ocrError
+                ocrError: result.ocrError,
+                // จำนวนจุดที่เย็บบรรทัดที่ถูกตัดเข้าด้วยกัน
+                joined: result.joined || 0
             };
 
         } catch (error) {

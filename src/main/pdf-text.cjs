@@ -19,6 +19,8 @@ const {
 
 const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
 
+const { joinWrappedLines } = require("./line-join.cjs");
+
 // จำนวนตัวอักษร (ไม่นับช่องว่าง) ที่ถือว่า "หน้านี้มีข้อความจริง"
 // ต่ำกว่านี้ = น่าจะเป็นหน้าสแกน (มีแค่หัวกระดาษ/เลขหน้า หรือไม่มีอะไรเลย)
 const MIN_TEXT_CHARS = 20;
@@ -113,6 +115,9 @@ function lineTolerance(item) {
 }
 
 // รวมชิ้นข้อความของหน้าเป็นบรรทัด (เรียงซ้าย → ขวา)
+//
+// คืนพิกัดของแต่ละบรรทัดด้วย (left/right/top/bottom) — line-join.cjs ใช้ตัดสินว่า
+// บรรทัดนี้ถูกตัดขึ้นบรรทัดใหม่เพราะหมดความกว้าง หรือเป็นย่อหน้าใหม่จริง
 function pageLines(items) {
     const lines = [];
 
@@ -136,6 +141,7 @@ function pageLines(items) {
         line.parts.push({
             x: x,
             width: Number(item.width) || 0,
+            height: Number(item.height) || 0,
             text: text
         });
     });
@@ -167,14 +173,37 @@ function pageLines(items) {
                 previousEnd = part.x + part.width;
             });
 
-            return text
+            const raw = text
                 .replace(/\u00a0/g, " ")
                 .replace(/[ \t]+/g, " ")
-                .replace(/[\u200b\u200e\u200f\ufeff]/g, "")
-                .trim();
+                .replace(/[\u200b\u200e\u200f\ufeff]/g, "");
+
+            const left = Math.min.apply(null, line.parts.map(function (part) {
+                return part.x;
+            }));
+
+            const right = Math.max.apply(null, line.parts.map(function (part) {
+                return part.x + part.width;
+            }));
+
+            // ความสูงของบรรทัด = ตัวอักษรที่สูงที่สุด (สระบน/วรรณยุกต์)
+            const height = Math.max.apply(null, line.parts.map(function (part) {
+                return part.height;
+            }));
+
+            return {
+                text: raw.trim(),
+                left: left,
+                right: right,
+                // กลับทิศ y ของ PDF (เพิ่มขึ้น = ลงล่าง) ให้เทียบระยะบรรทัดง่าย
+                top: -line.y,
+                bottom: -line.y + (height || 0),
+                // ต้นฉบับมีช่องว่างท้ายบรรทัดหรือไม่ — ใช้ตอนต่อข้อความ
+                hadSpaceAfter: /\s$/.test(raw)
+            };
         })
-        .filter(function (text) {
-            return text !== "";
+        .filter(function (line) {
+            return line.text !== "";
         });
 }
 
@@ -184,15 +213,18 @@ function pageLines(items) {
  * @param {Uint8Array|Buffer} data เนื้อไฟล์ PDF
  * @param {Object} [options]
  *   ocr        = false เพื่อปิดการ OCR (อ่านเฉพาะชั้นข้อความ)
+ *   joinLines  = false เพื่อไม่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ค่าเริ่มต้น = เย็บ)
  *   scale      = ความละเอียดที่ใช้ OCR (ตัวคูณจาก 72 DPI, ค่าเริ่มต้น ~200 DPI)
  *   langPath/workerPath = ทับค่าที่ใช้อยู่ (สำหรับทดสอบ)
  *   onProgress = ฟังก์ชันรับความคืบหน้า { page, pageCount, status, progress }
- * @returns {Promise<{text:string, ocrPages:number[], ocrError:string|null, pages:Array}>}
+ * @returns {Promise<{text:string, ocrPages:number[], ocrError:string|null, pages:Array, joined:number}>}
  *   pages = หน้าที่ผ่าน OCR พร้อมภาพตัวอย่างและตำแหน่งคำ (สำหรับตรวจคำบน PDF)
+ *   joined = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
  */
 async function extractPdfText(data, options) {
     const opts = options || {};
     const useOcr = opts.ocr !== false;
+    const joinLines = opts.joinLines !== false;
 
     const task = pdfjs.getDocument({
         data: new Uint8Array(data),
@@ -209,6 +241,9 @@ async function extractPdfText(data, options) {
     const ocrPages = [];
     const pages = [];
     let ocrError = null;
+
+    // จำนวนจุดที่เย็บบรรทัด (รายงานให้หน้าจอรู้ว่าทำอะไรไปบ้าง)
+    let joinedCount = 0;
 
     // หน้าปัจจุบัน — ใช้เติมเลขหน้าในรายงานความคืบหน้าตอน OCR
     let currentPage = 0;
@@ -248,14 +283,22 @@ async function extractPdfText(data, options) {
                     });
                 }
 
+                // บรรทัดจากชั้นข้อความ พร้อมพิกัด (ใช้เย็บบรรทัดที่ถูกตัด)
+                let textLayerLines = [];
                 let pageText = "";
 
                 try {
                     const content = await page.getTextContent();
 
-                    pageText = pageLines(content.items || []).join("\n");
+                    textLayerLines = pageLines(content.items || []);
+                    pageText = textLayerLines
+                        .map(function (line) {
+                            return line.text;
+                        })
+                        .join("\n");
                 } catch (error) {
                     // อ่านชั้นข้อความไม่ได้ = ยังเหลือทาง OCR
+                    textLayerLines = [];
                     pageText = "";
                 }
 
@@ -266,6 +309,9 @@ async function extractPdfText(data, options) {
                     quality.length < MIN_TEXT_CHARS ||
                     !quality.usable;
 
+                // บรรทัดจาก OCR (มีพิกัดเป็นหน่วย pixel ของภาพตัวอย่าง)
+                let ocrLines = [];
+
                 if (useOcr && needsOcr) {
                     try {
                         const ocr = await ocrPage(page, ocrOptions);
@@ -273,11 +319,11 @@ async function extractPdfText(data, options) {
                         if (ocr.text !== "") {
                             ocrPages.push(pageNumber);
 
-                            // ข้อความเดิมที่เสีย (รหัส glyph) ไม่มีประโยชน์กับ regex
-                            // ใช้ข้อความจาก OCR แทน — ถ้าข้อความเดิมใช้ได้ ให้เก็บต่อท้าย
-                            pageText = quality.usable
-                                ? [pageText, ocr.text].filter(Boolean).join("\n")
-                                : ocr.text;
+                            ocrLines = Array.isArray(ocr.lines) && ocr.lines.length > 0
+                                ? ocr.lines
+                                : String(ocr.text).split("\n").map(function (text) {
+                                    return { text: text };
+                                });
                         }
 
                         // เก็บภาพ+ตำแหน่งคำไว้ให้หน้าจอตรวจคำ (เฉพาะเมื่อมีคำให้ตรวจ)
@@ -303,10 +349,43 @@ async function extractPdfText(data, options) {
 
                         // ข้อความเดิมเป็นขยะอยู่แล้ว — อย่าส่งต่อให้ regex ไปจับ
                         if (!quality.usable) {
-                            pageText = "";
+                            textLayerLines = [];
                         }
                     }
                 }
+
+                // ข้อความที่ใช้จริงของหน้านี้ — แยกกลุ่มตามแหล่ง เพราะพิกัดของ
+                // ชั้นข้อความ (pt) กับ OCR (px) คนละหน่วย จึงเย็บข้ามกลุ่มไม่ได้
+                const sources = [];
+
+                if (quality.usable && textLayerLines.length > 0) {
+                    sources.push(textLayerLines);
+                }
+
+                if (ocrLines.length > 0) {
+                    sources.push(ocrLines);
+                }
+
+                const pageParts = [];
+
+                sources.forEach(function (sourceLines) {
+                    const result = joinLines
+                        ? joinWrappedLines(sourceLines)
+                        : {
+                            lines: sourceLines.map(function (line) {
+                                return line.text;
+                            }),
+                            joined: 0
+                        };
+
+                    joinedCount += result.joined;
+
+                    const text = result.lines.join("\n");
+
+                    if (text !== "") pageParts.push(text);
+                });
+
+                pageText = pageParts.join("\n");
 
                 if (pageText !== "") lines.push(pageText);
 
@@ -322,7 +401,8 @@ async function extractPdfText(data, options) {
         text: lines.join("\n"),
         ocrPages: ocrPages,
         ocrError: ocrError,
-        pages: pages
+        pages: pages,
+        joined: joinedCount
     };
 }
 
