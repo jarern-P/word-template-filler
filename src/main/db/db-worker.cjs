@@ -162,6 +162,27 @@ const SCHEMA = `
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );
+
+    -- ผังหน้า OCR ที่อ่านไว้ (พิกัดสัดส่วน 0-1) + ข้อความหลังแก้
+    --   page_key = sha1 ของ "ตำแหน่งกล่อง + สัดส่วนหน้า" (ไม่รวมข้อความ)
+    --              หน้าเดิมที่อ่านซ้ำจะอัปเดตแถวเดิม ไม่เพิ่มแถวใหม่
+    --   source   = ai | local (หน้าล่าสุดอ่านด้วยวิธีไหน)
+    --   fixed_count = จำนวนบรรทัดที่ AI แก้ในครั้งล่าสุด
+    CREATE TABLE IF NOT EXISTS ocr_blueprints (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_key    TEXT NOT NULL UNIQUE,
+        aspect      REAL NOT NULL,
+        width       INTEGER NOT NULL DEFAULT 0,
+        height      INTEGER NOT NULL DEFAULT 0,
+        lines       TEXT NOT NULL DEFAULT '[]',
+        source      TEXT NOT NULL DEFAULT 'local',
+        fixed_count INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ocr_blueprints_updated
+        ON ocr_blueprints(updated_at DESC);
 `;
 
 
@@ -520,6 +541,39 @@ function migrateTemplateListLimits() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ source ให้ตาราง ocr_fixes
+// ============================================================
+
+// source = ที่มาของคู่คำ
+//   'user' = ผู้ใช้แก้เอง (รุ่นก่อนไม่มีคอลัมน์นี้ จึงถือว่าเป็น user ทั้งหมด)
+//   'ai'   = AI ช่วยแก้ แล้วระบบจำไว้ใช้ตอน AI ปิด
+function migrateOcrFixSource() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(ocr_fixes)
+        `).all();
+
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "source")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE ocr_fixes
+        ADD COLUMN source TEXT NOT NULL DEFAULT 'user'
+    `);
+
+    console.log(
+        "Migrated ocr_fixes table: added 'source' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -538,6 +592,9 @@ function openDatabase() {
     migrateTemplatePatterns();
 
     db.exec(SCHEMA);
+
+    // คอลัมน์ของตารางที่ SCHEMA สร้างให้ใหม่ไม่มี — ต้องเติมหลัง exec
+    migrateOcrFixSource();
 
     // หลังสร้างตารางแล้ว ค่อยเติมกลุ่มเริ่มต้นจากข้อมูลที่มีอยู่
     seedMasterGroups();
@@ -3384,6 +3441,425 @@ function handleOcrLayoutDelete(message) {
 
 
 // ============================================================
+// OCR: คำที่เรียนรู้จาก AI
+// ============================================================
+
+// เก็บคู่คำที่ AI แก้ให้ (ผิด -> ถูก) เพื่อใช้แทนอัตโนมัติเมื่อ AI ปิด
+//   คู่คำที่ผู้ใช้แก้เอง (source = 'user') ห้ามทับด้วยคำของ AI
+//   ถ้าคำเดิมถูกแก้เป็นคำใหม่ที่ต่างจากของเดิม = ข้าม (ให้ผู้ใช้เป็นหลัก)
+function handleOcrFixLearn(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const fixes =
+            Array.isArray(message.payload?.fixes)
+                ? message.payload.fixes
+                : [];
+
+        const selectExisting =
+            db.prepare(`
+                SELECT
+                    right,
+                    source
+                FROM ocr_fixes
+                WHERE wrong = ?
+            `);
+
+        const insertFix =
+            db.prepare(`
+                INSERT INTO ocr_fixes (
+                    wrong,
+                    right,
+                    hits,
+                    accepted,
+                    rejected,
+                    last_confidence,
+                    source,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, 0, 1, 0, ?, 'ai', ?, ?)
+            `);
+
+        const touchFix =
+            db.prepare(`
+                UPDATE ocr_fixes
+                SET
+                    accepted = accepted + 1,
+                    last_confidence = COALESCE(?, last_confidence),
+                    updated_at = ?
+                WHERE wrong = ?
+            `);
+
+        const now = new Date().toISOString();
+
+        let created = 0;
+        let updated = 0;
+        let skipped = 0;
+
+        const run = db.transaction(() => {
+
+            fixes.forEach(fix => {
+
+                const wrong = String(fix?.wrong || "").trim();
+                const right = String(fix?.right || "").trim();
+
+                if (!wrong || !right || wrong === right) {
+                    skipped += 1;
+                    return;
+                }
+
+                // กันทั้งบรรทัดหลุดมาเป็น "คำ" (ผิดปกติ)
+                if (wrong.length > 120 || right.length > 120) {
+                    skipped += 1;
+                    return;
+                }
+
+                const confidence =
+                    Number(fix?.confidence);
+
+                const lastConfidence =
+                    Number.isFinite(confidence)
+                        ? confidence
+                        : null;
+
+                const existing =
+                    selectExisting.get(wrong);
+
+                if (!existing) {
+
+                    insertFix.run(
+                        wrong,
+                        right,
+                        lastConfidence,
+                        now,
+                        now
+                    );
+
+                    created += 1;
+                    return;
+                }
+
+                // คำเดิมเคยถูกแก้เป็นคำอื่นไว้แล้ว — ไม่ทับ
+                if (existing.right !== right) {
+                    skipped += 1;
+                    return;
+                }
+
+                touchFix.run(
+                    lastConfidence,
+                    now,
+                    wrong
+                );
+
+                updated += 1;
+            });
+        });
+
+        run();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                created: created,
+                updated: updated,
+                skipped: skipped
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
+// OCR: ผังหน้า (blueprint)
+// ============================================================
+
+// จำนวนแถวสูงสุดของผังหน้า — เกินนี้ลบแถวที่เก่าที่สุดทิ้ง
+// (1,000 หน้าคร่าว ๆ ไม่กี่ MB ไม่ทำให้ไฟล์สำรอง .db บวมเกินไป)
+const BLUEPRINT_MAX_ROWS = 1000;
+
+// จำนวนบรรทัดสูงสุดต่อหน้า (กันหน้าที่ยาวผิดปกติ)
+const BLUEPRINT_MAX_LINES = 500;
+
+function handleOcrBlueprintSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const pages =
+            Array.isArray(message.payload?.pages)
+                ? message.payload.pages
+                : [];
+
+        if (pages.length === 0) {
+            send({
+                id: message.id,
+                ok: true,
+                result: { saved: 0 }
+            });
+            return;
+        }
+
+        const upsert =
+            db.prepare(`
+                INSERT INTO ocr_blueprints (
+                    page_key,
+                    aspect,
+                    width,
+                    height,
+                    lines,
+                    source,
+                    fixed_count,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(page_key) DO UPDATE SET
+                    aspect = excluded.aspect,
+                    width = excluded.width,
+                    height = excluded.height,
+                    lines = excluded.lines,
+                    source = excluded.source,
+                    fixed_count = excluded.fixed_count,
+                    updated_at = excluded.updated_at
+            `);
+
+        const now = new Date().toISOString();
+        let saved = 0;
+
+        const run = db.transaction(() => {
+
+            pages.forEach(page => {
+
+                const pageKey = String(page?.pageKey || "").trim();
+                const aspect = Number(page?.aspect);
+                const source =
+                    String(page?.source || "local") === "ai" ? "ai" : "local";
+
+                if (!/^[0-9a-f]{40}$/.test(pageKey)) return;
+                if (!isFinite(aspect) || aspect <= 0) return;
+                if (!Array.isArray(page?.lines) || page.lines.length === 0) return;
+
+                const lines = page.lines
+                    .slice(0, BLUEPRINT_MAX_LINES)
+                    .map(line => ({
+                        t: String(line?.t || "").slice(0, 500),
+                        x: Number(line?.x) || 0,
+                        y: Number(line?.y) || 0,
+                        w: Number(line?.w) || 0,
+                        h: Number(line?.h) || 0
+                    }))
+                    .filter(line => line.t !== "");
+
+                if (lines.length === 0) return;
+
+                upsert.run(
+                    pageKey,
+                    aspect,
+                    Math.round(Number(page?.width) || 0),
+                    Math.round(Number(page?.height) || 0),
+                    JSON.stringify(lines),
+                    source,
+                    Math.max(0, Math.floor(Number(page?.fixedCount) || 0)),
+                    now,
+                    now
+                );
+
+                saved += 1;
+            });
+
+            // กันฐานข้อมูลโตเกิน — เก็บเฉพาะผังหน้าล่าสุด
+            db.prepare(`
+                DELETE FROM ocr_blueprints
+                WHERE id NOT IN (
+                    SELECT
+                        id
+                    FROM ocr_blueprints
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                )
+            `)
+            .run(BLUEPRINT_MAX_ROWS);
+        });
+
+        run();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: { saved: saved }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// จำนวนผังหน้าสูงสุดที่ส่งไปจับคู่ในแต่ละครั้ง
+// (หน้าเอกสารส่วนใหญ่มาจากฟอร์มไม่กี่แบบ — ผังล่าสุดพอ)
+const BLUEPRINT_LIST_LIMIT = 500;
+
+// ผังหน้าล่าสุด (เฉพาะพิกัดกล่อง ไม่ส่งข้อความ — ประหยัดหน่วยความจำ)
+// ใช้ตอนอ่านไฟล์เพื่อจับคู่หน้าใกล้เคียงและจัดลำดับบรรทัดเองโดยไม่ต้องใช้ AI
+function handleOcrBlueprintList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const requested =
+            Math.floor(Number(message.payload?.limit));
+
+        const limit =
+            Number.isFinite(requested) && requested > 0
+                ? Math.min(BLUEPRINT_MAX_ROWS, requested)
+                : BLUEPRINT_LIST_LIMIT;
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    page_key,
+                    aspect,
+                    lines
+                FROM ocr_blueprints
+                ORDER BY updated_at DESC
+                LIMIT ?
+            `)
+            .all(limit);
+
+        const result = [];
+
+        rows.forEach(row => {
+
+            let lines;
+
+            try {
+                lines = JSON.parse(row.lines);
+            } catch (error) {
+                return;
+            }
+
+            if (!Array.isArray(lines)) return;
+
+            const boxes = lines
+                .map(line => ({
+                    x: Number(line?.x) || 0,
+                    y: Number(line?.y) || 0,
+                    w: Number(line?.w) || 0,
+                    h: Number(line?.h) || 0
+                }))
+                .filter(box => box.w > 0 && box.h > 0);
+
+            if (boxes.length === 0) return;
+
+            result.push({
+                pageKey: row.page_key,
+                aspect: Number(row.aspect) || 0,
+                lines: boxes
+            });
+        });
+
+        send({
+            id: message.id,
+            ok: true,
+            result: result
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// สถิติการเรียนรู้ของ OCR — แสดงในหน้า "ตั้งค่า AI (OCR)"
+function handleOcrAiStats(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const row =
+            db.prepare(`
+                SELECT
+                    (SELECT COUNT(*) FROM ocr_blueprints) AS blueprints,
+                    (SELECT COUNT(*) FROM ocr_blueprints WHERE source = 'ai') AS ai_pages,
+                    (SELECT COUNT(*) FROM ocr_blueprints WHERE source = 'local') AS local_pages,
+                    (SELECT COUNT(*) FROM ocr_fixes) AS fixes,
+                    (SELECT COUNT(*) FROM ocr_fixes WHERE source = 'ai') AS learned,
+                    (SELECT COUNT(*) FROM ocr_word_groups) AS word_groups,
+                    (SELECT COUNT(*) FROM ocr_drop_words) AS drop_words,
+                    (SELECT COUNT(*) FROM ocr_page_layouts) AS page_layouts,
+                    (SELECT MAX(updated_at) FROM ocr_blueprints) AS last_updated
+            `)
+            .get();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                blueprints: Number(row?.blueprints) || 0,
+                aiPages: Number(row?.ai_pages) || 0,
+                localPages: Number(row?.local_pages) || 0,
+                fixes: Number(row?.fixes) || 0,
+                learned: Number(row?.learned) || 0,
+                wordGroups: Number(row?.word_groups) || 0,
+                dropWords: Number(row?.drop_words) || 0,
+                pageLayouts: Number(row?.page_layouts) || 0,
+                lastUpdated: row?.last_updated || ""
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // History (ประวัติการกรอก)
 // ============================================================
 
@@ -4883,6 +5359,41 @@ parentPort.on("message", (message) => {
             case "ocr-layout-delete":
 
                 handleOcrLayoutDelete(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // OCR Learning (คำที่ AI แก้ + ผังหน้า + สถิติ)
+            // ------------------------------------------------
+
+            case "ocr-fix-learn":
+
+                handleOcrFixLearn(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-blueprint-save":
+
+                handleOcrBlueprintSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-blueprint-list":
+
+                handleOcrBlueprintList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-ai-stats":
+
+                handleOcrAiStats(message);
 
                 break;
 

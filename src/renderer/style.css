@@ -4430,6 +4430,37 @@ body.table-ratio-dragging .table-ratio-handle {
     font-size: 13px;
 }
 
+/* ── หน้า ตั้งค่า AI (OCR) ── */
+
+/* ช่อง API key + ปุ่มแสดง/ซ่อน — input ต้องไม่กว้างเต็มบรรทัดในแถวนี้ */
+.ocr-ai-key {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.ocr-ai-key input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+
+.ocr-ai-key button {
+    flex: 0 0 auto;
+    min-width: 72px;
+}
+
+/* prompt ของระบบ — ต้องอ่าน/แก้ยาว ๆ จึงสูงกว่าช่องทั่วไป */
+.field textarea.ocr-prompt {
+    min-height: 240px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.ocr-ai .ocr-stats {
+    margin-top: 4px;
+}
+
 .ocr-fix-pair {
     word-break: break-word;
 }

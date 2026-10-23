@@ -10,12 +10,27 @@
 // หน้าไหนไม่มีชั้นข้อความ (ไฟล์ที่เกิดจากการสแกน) จะเรนเดอร์หน้าเป็นรูป
 // แล้ว OCR ด้วย tesseract.js ให้อัตโนมัติ — ดู pdf-ocr.cjs
 const path = require("path");
+const crypto = require("crypto");
 
 // ต้องมาก่อน pdfjs — pdf-ocr เติม DOMMatrix/Path2D ให้ pdf.js ใช้
 const {
     ocrPage,
     createCanvasFactory
 } = require("./pdf-ocr.cjs");
+
+// AI ช่วยแก้ข้อความที่ tesseract อ่านผิด (ปิดได้จากหน้า "ตั้งค่า AI (OCR)")
+// ถ้า AI ปิด/ไม่มี key/เรียกไม่สำเร็จ ข้อความจาก tesseract ยังใช้ได้ตามเดิม
+const {
+    correctLines: correctOcrLines,
+    buildLearnedFixes
+} = require("./ocr-ai.cjs");
+
+// ใช้ผังหน้าที่เคยอ่านไว้ (จับคู่หน้าใกล้เคียง + เรียงลำดับบรรทัด/คอลัมน์ให้)
+const {
+    findBlueprint,
+    orderLinesByBlueprint,
+    MIN_LINES: MIN_BLUEPRINT_LINES
+} = require("./ocr-blueprint.cjs");
 
 const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
 
@@ -101,6 +116,100 @@ function defaultWorkerPath() {
     }
 
     return require.resolve("tesseract.js/src/worker-script/node/index.js");
+}
+
+// ------------------------------------------------------------------
+// AI ช่วยแก้คำ + blueprint ของหน้า (ข้อมูลสำหรับฝึกให้ทำงานได้เองโดยไม่ใช้ AI)
+// ------------------------------------------------------------------
+
+// confidence ต่ำสุดของคำในบรรทัดนั้น (null = ไม่มีคำให้วัด)
+// ใช้ตัดสินว่าคู่คำที่ AI แก้ควรถูกจำไว้ใช้ตอน AI ปิดหรือไม่
+function lineConfidence(line, words) {
+    if (!line || !Array.isArray(words) || words.length === 0) return null;
+
+    const top = Number(line.top);
+    const bottom = Number(line.bottom);
+
+    if (!isFinite(top) || !isFinite(bottom)) return null;
+
+    let lowest = null;
+
+    words.forEach(function (word) {
+        const center =
+            (Number(word.y) || 0) + (Number(word.height) || 0) / 2;
+
+        if (center < top - 2 || center > bottom + 2) return;
+
+        const confidence = Number(word.confidence);
+
+        if (!isFinite(confidence)) return;
+
+        if (lowest === null || confidence < lowest) {
+            lowest = confidence;
+        }
+    });
+
+    return lowest;
+}
+
+function round4(value) {
+    return Math.round(Number(value) * 10000) / 10000;
+}
+
+// เก็บผังหน้าเป็นพิกัดสัดส่วน (0-1) เพื่อจับคู่หน้าที่หน้าตาใกล้กันได้
+// ไม่ขึ้นกับความละเอียดที่ใช้ OCR และไม่ขึ้นกับว่าผู้ใช้สแกนมาที่กี่ DPI
+//
+// pageKey มาจากผัง (ตำแหน่งกล่อง) ไม่ใช่ข้อความ — หน้าเดิมที่อ่านซ้ำ
+// จะอัปเดตแถวเดิมแทนการสร้างแถวใหม่ ข้อความที่ได้จึงถูกเก็บเพิ่มเรื่อย ๆ
+function buildPageBlueprint(page, width, height, lines, source, fixedCount) {
+    if (!(width > 0) || !(height > 0)) return null;
+
+    const boxes = [];
+
+    (lines || []).forEach(function (line) {
+        const text = String((line && line.text) || "").trim();
+
+        if (text === "") return;
+
+        const left = Number(line.left);
+        const right = Number(line.right);
+        const top = Number(line.top);
+        const bottom = Number(line.bottom);
+
+        if (![left, right, top, bottom].every(isFinite)) return;
+
+        boxes.push({
+            t: text,
+            x: round4(left / width),
+            y: round4(top / height),
+            w: round4((right - left) / width),
+            h: round4((bottom - top) / height)
+        });
+    });
+
+    if (boxes.length === 0) return null;
+
+    const aspect = round4(height / width);
+
+    const fingerprint = aspect.toFixed(3) + "|" + boxes
+        .map(function (box) {
+            return [box.x, box.y, box.w, box.h].join(",");
+        })
+        .join(";");
+
+    return {
+        page: page,
+        pageKey: crypto
+            .createHash("sha1")
+            .update(fingerprint)
+            .digest("hex"),
+        aspect: aspect,
+        width: Math.round(width),
+        height: Math.round(height),
+        source: source || "local",
+        fixedCount: Number(fixedCount) || 0,
+        lines: boxes
+    };
 }
 
 // ระยะห่างแนวนอน (หน่วย pt) ที่ถือว่าเป็น "ช่องว่างระหว่างคำ"
@@ -375,11 +484,22 @@ function linesFromLayout(words, width, height, bands) {
  *   layouts    = ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ [{ bands: [{from,to}], aspect }]
  *                — หน้าทีมีสัดส่วนใกล้เคียงจะถูกอ่านทีละคอลัมน์ตามที่ฝึก
  *   scale      = ความละเอียดที่ใช้ OCR (ตัวคูณจาก 72 DPI, ค่าเริ่มต้น ~200 DPI)
+ *   ai         = { enabled, apiKey, model, prompt } ให้ AI ช่วยแก้คำหลัง tesseract
+ *                (ไม่ส่ง/ปิด = ใช้ข้อความ tesseract อย่างเดียว)
+ *   blueprints = ผังหน้าที่เคยอ่านไว้ [{ aspect, lines }] — ใช้จับคู่หน้า
+ *                และเรียงลำดับบรรทัด/คอลัมน์เองโดยไม่ต้องใช้ AI
  *   langPath/workerPath = ทับค่าที่ใช้อยู่ (สำหรับทดสอบ)
  *   onProgress = ฟังก์ชันรับความคืบหน้า { page, pageCount, status, progress }
- * @returns {Promise<{text:string, ocrPages:number[], ocrError:string|null, pages:Array, joined:number}>}
+ *                status = reading | ocr | ai
+ * @returns {Promise<{text:string, ocrPages:number[], ocrError:string|null,
+ *                    pages:Array, joined:number, aiPages:number[], aiError:string|null,
+ *                    aiCorrections:Array, aiUsage:Object|null, blueprints:Array,
+ *                    blueprintPages:number[]}>}
  *   pages = หน้าที่ผ่าน OCR พร้อมภาพตัวอย่างและตำแหน่งคำ (สำหรับตรวจคำบน PDF)
  *   joined = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
+ *   aiCorrections = คู่คำที่ AI แก้ — เก็บลงคลังคำเพื่อใช้ตอน AI ปิด
+ *   blueprints = ผังหน้า (พิกัดสัดส่วน) + ข้อความหลังแก้
+ *   blueprintPages = หน้าที่ใช้ผังเดิมจัดลำดับบรรทัด
  */
 async function extractPdfText(data, options) {
     const opts = options || {};
@@ -400,7 +520,17 @@ async function extractPdfText(data, options) {
     const lines = [];
     const ocrPages = [];
     const pages = [];
+    const blueprints = [];
+    const blueprintPages = [];
+    const aiPages = [];
+    const aiCorrections = [];
+    let aiUsage = null;
+    let aiError = null;
     let ocrError = null;
+
+    // AI จะทำงานเฉพาะเมื่อเปิดไว้และมี key — ไม่งั้นทุกอย่างเหมือนเดิมทุกประการ
+    const aiConfig =
+        opts.ai && opts.ai.enabled && opts.ai.apiKey ? opts.ai : null;
 
     // จำนวนจุดที่เย็บบรรทัด (รายงานให้หน้าจอรู้ว่าทำอะไรไปบ้าง)
     let joinedCount = 0;
@@ -516,6 +646,136 @@ async function extractPdfText(data, options) {
                                     layoutApplied = true;
                                 }
                             }
+
+                            // ── ใช้ผังหน้าที่เคยอ่านไว้ (โดยไม่ต้องใช้ AI) ──
+                            // หน้าแบบเดิม (ฟอร์ม/ตารางหลายคอลัมน์) ถูกอ่านซ้ำทุกวัน
+                            // ถ้าผังเดิมบอกลำดับบรรทัดที่ถูกต้องแล้ว ก็ใช้ลำดับนั้นเลย
+                            // (ถ้ามีผู้ฝึกลำดับคอลัมน์ไว้แล้ว ให้การฝึกของคนมาก่อน)
+                            if (!layoutApplied) {
+                                const blueprintMatch = findBlueprint(
+                                    opts.blueprints,
+                                    ocr.width,
+                                    ocr.height,
+                                    ocrLines
+                                );
+
+                                if (blueprintMatch) {
+                                    const ordered = orderLinesByBlueprint(
+                                        blueprintMatch,
+                                        ocrLines,
+                                        ocr.width,
+                                        ocr.height
+                                    );
+
+                                    // ตรงกันมากพอแล้ว = ใช้ลำดับจากผัง (ถึงแม้ลำดับ
+                                    // บังเอิญเหมือนเดิม ก็นับว่าใช้ผังนี้)
+                                    if (ordered.matched >= MIN_BLUEPRINT_LINES) {
+                                        ocrLines = ordered.lines;
+                                        blueprintPages.push(pageNumber);
+                                    }
+                                }
+                            }
+
+                            // ── AI ช่วยแก้คำที่ tesseract อ่านผิด ──
+                            // ส่งเฉพาะ "ข้อความ" กับภาพ — tesseract ยังเป็นคนหา
+                            // ตำแหน่งคำ/กล่อง จึงตรวจคำบนภาพได้เหมือนเดิม
+                            let aiUsed = false;
+                            let fixedCount = 0;
+
+                            if (aiConfig) {
+                                if (typeof opts.onProgress === "function") {
+                                    opts.onProgress({
+                                        page: pageNumber,
+                                        pageCount: document.numPages,
+                                        status: "ai"
+                                    });
+                                }
+
+                                const ai = await correctOcrLines(aiConfig, {
+                                    image: ocr.image,
+                                    lines: ocrLines.map(function (line, index) {
+                                        return {
+                                            id: index + 1,
+                                            text: String(line.text || "")
+                                        };
+                                    })
+                                });
+
+                                if (ai.ok && Array.isArray(ai.lines)) {
+                                    aiUsed = true;
+
+                                    if (ai.usage) {
+                                        aiUsage = aiUsage || {
+                                            promptTokenCount: 0,
+                                            candidatesTokenCount: 0,
+                                            totalTokenCount: 0
+                                        };
+
+                                        aiUsage.promptTokenCount +=
+                                            Number(ai.usage.promptTokenCount) || 0;
+                                        aiUsage.candidatesTokenCount +=
+                                            Number(ai.usage.candidatesTokenCount) || 0;
+                                        aiUsage.totalTokenCount +=
+                                            Number(ai.usage.totalTokenCount) || 0;
+                                    }
+
+                                    const pairs = [];
+
+                                    ai.lines.forEach(function (corrected) {
+                                        const index =
+                                            Math.floor(Number(corrected.id)) - 1;
+                                        const line = ocrLines[index];
+
+                                        if (!line) return;
+
+                                        const before =
+                                            String(line.text || "").trim();
+                                        const after =
+                                            String(corrected.text || "").trim();
+
+                                        if (after === "" || after === before) {
+                                            return;
+                                        }
+
+                                        pairs.push({
+                                            before: before,
+                                            after: after,
+                                            confidence: lineConfidence(
+                                                line,
+                                                ocr.words
+                                            )
+                                        });
+
+                                        line.text = after;
+                                        fixedCount += 1;
+                                    });
+
+                                    // เก็บคู่คำที่แก้ไว้ใช้แทนอัตโนมัติเมื่อ AI ปิด
+                                    buildLearnedFixes(pairs).forEach(function (fix) {
+                                        aiCorrections.push(fix);
+                                    });
+
+                                    aiPages.push(pageNumber);
+                                } else {
+                                    // AI ใช้ไม่ได้ = ใช้ข้อความ tesseract ต่อ
+                                    // (ไม่ทำให้ทั้งไฟล์อ่านไม่ได้)
+                                    aiError = ai.error ||
+                                        ("AI อ่านหน้า " + pageNumber + " ไม่สำเร็จ");
+                                }
+                            }
+
+                            // ผังหน้า + ข้อความหลังแก้ — เก็บไว้จับคู่หน้าที่ใกล้กัน
+                            // ตอน AI ปิด (และเป็นสถิติว่าอ่านหน้าแบบไหนไปบ้าง)
+                            const blueprint = buildPageBlueprint(
+                                pageNumber,
+                                ocr.width,
+                                ocr.height,
+                                ocrLines,
+                                aiUsed ? "ai" : "local",
+                                fixedCount
+                            );
+
+                            if (blueprint) blueprints.push(blueprint);
                         }
 
                         // เก็บภาพ+ตำแหน่งคำไว้ให้หน้าจอตรวจคำ (เฉพาะเมื่อมีคำให้ตรวจ)
@@ -593,12 +853,32 @@ async function extractPdfText(data, options) {
         await document.destroy();
     }
 
+    // คำเดิมที่ถูกแก้เหมือนกันหลายหน้า/หลายครั้ง — เก็บครั้งเดียว
+    const correctionsByWord = {};
+
+    aiCorrections.forEach(function (fix) {
+        if (!fix || !fix.wrong) return;
+
+        if (!correctionsByWord[fix.wrong]) {
+            correctionsByWord[fix.wrong] = fix;
+        }
+    });
+
     return {
         text: lines.join("\n"),
         ocrPages: ocrPages,
         ocrError: ocrError,
         pages: pages,
-        joined: joinedCount
+        joined: joinedCount,
+        // หน้าที่ใช้ผังที่จำไว้จัดลำดับบรรทัด/คอลัมน์ (ไม่ใช้ AI)
+        blueprintPages: blueprintPages,
+        aiPages: aiPages,
+        aiError: aiError,
+        aiCorrections: Object.keys(correctionsByWord).map(function (key) {
+            return correctionsByWord[key];
+        }),
+        aiUsage: aiUsage,
+        blueprints: blueprints
     };
 }
 

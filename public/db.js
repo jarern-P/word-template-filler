@@ -447,6 +447,18 @@
 
         },
 
+        // ── สถิติการเรียนรู้ OCR (หน้า "ตั้งค่า AI (OCR)") ──
+
+        // คืน { blueprints, aiPages, localPages, fixes, learned,
+        //       wordGroups, dropWords, pageLayouts, lastUpdated }
+        ocrAiStats: function () {
+
+            return dbRequest(
+                'dbOcrAiStats'
+            );
+
+        },
+
         // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
 
         // payload = { templateId, templateName, values, modes, retentionDays }

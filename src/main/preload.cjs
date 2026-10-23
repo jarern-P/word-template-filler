@@ -123,6 +123,25 @@ contextBridge.exposeInMainWorld(
         dbOcrLayoutDelete: (id) =>
             ipcRenderer.invoke("db:ocr-layout-delete", id),
 
+        // ── AI ช่วยแก้ OCR (Gemini) ──
+
+        // ค่าที่ใช้แสดงผล — ไม่มี API key ส่งกลับ (บอกแค่ว่ามีอยู่หรือไม่)
+        ocrAiGetConfig: () =>
+            ipcRenderer.invoke("ocr:ai-get-config"),
+
+        // payload = { enabled, model, prompt, apiKey?, clearKey? }
+        // ไม่ส่ง apiKey = คง key เดิม, clearKey = true = ลบ key
+        ocrAiSaveConfig: (payload) =>
+            ipcRenderer.invoke("ocr:ai-save-config", payload),
+
+        // ลองเรียกโมเดลด้วยคำขอย่อย — คืน { ok, model, message } หรือ { ok:false, error }
+        ocrAiTest: () =>
+            ipcRenderer.invoke("ocr:ai-test"),
+
+        // สถิติการเรียนรู้ (ผังหน้าที่เก็บไว้ / คำที่ AI ช่วยแก้ / คลังอื่น ๆ)
+        dbOcrAiStats: () =>
+            ipcRenderer.invoke("db:ocr-ai-stats"),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),

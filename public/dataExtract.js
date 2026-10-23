@@ -995,7 +995,14 @@
             // หน้า OCR พร้อมภาพตัวอย่าง + ตำแหน่งของแต่ละคำ
             // ใช้ในหน้าจอ "ตรวจคำบน PDF" (หน้าเอกสารที่มีชั้นข้อความไม่มีภาพ)
             pages: Array.isArray(result.pages) ? result.pages : [],
-            joined: Number(result.joined) || 0
+            joined: Number(result.joined) || 0,
+            // หน้าที่ใช้ผังหน้าที่จำไว้จัดลำดับบรรทัด (ทำงานได้โดยไม่ต้องใช้ AI)
+            blueprintPages: Array.isArray(result.blueprintPages)
+                ? result.blueprintPages
+                : [],
+            // AI ช่วยอ่านหน้าไหนไปบ้าง + เหตุผลที่ AI ใช้ไม่ได้ (ถ้ามี)
+            aiPages: Array.isArray(result.aiPages) ? result.aiPages : [],
+            aiError: result.aiError || ''
         };
     }
 
@@ -1059,7 +1066,10 @@
                 text: await textFromDocx(await file.arrayBuffer()),
                 ocrPages: [],
                 pages: [],
-                joined: 0
+                joined: 0,
+                blueprintPages: [],
+                aiPages: [],
+                aiError: ''
             };
         } else {
             const error = new Error('รองรับเฉพาะไฟล์ .docx และ .pdf');
@@ -1093,7 +1103,12 @@
             fixed: fixed.changed,
             grouped: grouped.applied,
             dropped: dropped.applied,
-            joined: Number(result.joined) || 0
+            joined: Number(result.joined) || 0,
+            blueprintPages: Array.isArray(result.blueprintPages)
+                ? result.blueprintPages
+                : [],
+            aiPages: Array.isArray(result.aiPages) ? result.aiPages : [],
+            aiError: result.aiError || ''
         };
     }
 

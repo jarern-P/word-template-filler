@@ -1888,6 +1888,178 @@ ipcMain.handle(
 
 
 // ============================================================
+// AI OCR (Gemini)
+// ============================================================
+//
+// ค่าตั้งของ AI เก็บในไฟล์ data/ocr-ai.json (API key เข้ารหัสด้วย safeStorage)
+// ไม่เก็บในฐานข้อมูล เพื่อไม่ให้ key ติดไปกับไฟล์สำรอง .db ที่ผู้ใช้อาจส่งต่อ
+//   ocr:ai-get-config  -> ค่าที่ใช้แสดงผล (ไม่มี key)
+//   ocr:ai-save-config -> บันทึกค่าที่ผู้ใช้แก้ (key ว่าง = คง key เดิม)
+//   ocr:ai-test        -> ลองเรียกโมเดลด้วยคำขอย่อย
+
+ipcMain.handle(
+    "ocr:ai-get-config",
+    async () => {
+
+        try {
+
+            const ai =
+                require("./ocr-ai.cjs");
+
+            return {
+
+                ok: true,
+
+                config:
+                    ai.getPublicConfig(
+                        getDataPath()
+                    )
+
+            };
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:ai-save-config",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            const ai =
+                require("./ocr-ai.cjs");
+
+            return {
+
+                ok: true,
+
+                config:
+                    ai.saveConfig(
+                        getDataPath(),
+                        payload
+                    )
+
+            };
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:ai-test",
+    async () => {
+
+        try {
+
+            const ai =
+                require("./ocr-ai.cjs");
+
+            const result =
+                await ai.testConnection(
+                    ai.getConfig(getDataPath())
+                );
+
+            if (!result.ok) {
+
+                return {
+                    ok: false,
+                    error: result.error
+                };
+            }
+
+            return {
+
+                ok: true,
+
+                model: result.model,
+
+                message: result.message
+
+            };
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// สถิติการเรียนรู้ (จำนวนผังหน้า/คำที่ AI ช่วยแก้) สำหรับหน้า "ตั้งค่า AI (OCR)"
+ipcMain.handle(
+    "db:ocr-ai-stats",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+            return await dbRequest(
+                "ocr-ai-stats",
+                {}
+            );
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ============================================================
 // File
 // ============================================================
 
@@ -2078,6 +2250,58 @@ ipcMain.handle(
 
             pdfOcrUsed = true;
 
+            // ค่าตั้ง AI (เปิด/ปิด, key, โมเดล, prompt) — อ่านจากไฟล์ทุกครั้ง
+            // ผู้ใช้สลับโหมดแล้วมีผลทันทีโดยไม่ต้องปิดแอป
+            let aiConfig = null;
+
+            try {
+
+                const ai =
+                    require("./ocr-ai.cjs");
+
+                const config =
+                    ai.getConfig(getDataPath());
+
+                if (config.enabled && config.apiKey) {
+                    aiConfig = config;
+                }
+
+            } catch (error) {
+
+                // อ่านค่าตั้งไม่ได้ = ทำงานแบบ local ต่อไป
+                console.error(
+                    "อ่านค่าตั้ง AI OCR ไม่สำเร็จ:",
+                    error
+                );
+            }
+
+            // ผังหน้าที่เคยอ่านไว้ — ใช้จับคู่หน้าใกล้เคียงและเรียงลำดับบรรทัด/คอลัมน์
+            // ให้เองโดยไม่ต้องมี AI (ผู้ใช้ไม่ต้องสอนลำดับการอ่านซ้ำ)
+            let savedBlueprints = [];
+
+            try {
+
+                await dbReady();
+
+                const response =
+                    await dbRequest(
+                        "ocr-blueprint-list",
+                        { limit: 500 }
+                    );
+
+                if (response && Array.isArray(response.result)) {
+                    savedBlueprints = response.result;
+                }
+
+            } catch (error) {
+
+                // อ่านผังไม่ได้ = ใช้ลำดับบรรทัดของ tesseract ตามเดิม
+                console.error(
+                    "อ่านผังหน้า OCR ไม่สำเร็จ:",
+                    error
+                );
+            }
+
             // หน้าไหนไม่มีชั้นข้อความ (ไฟล์สแกน) จะถูก OCR ให้อัตโนมัติ
             // ระหว่างนั้นส่งความคืบหน้ากลับไปให้หน้าจอด้วย
             const result =
@@ -2091,6 +2315,10 @@ ipcMain.handle(
                             payload && Array.isArray(payload.layouts)
                                 ? payload.layouts
                                 : [],
+                        // AI ช่วยแก้คำหลัง tesseract (null = ปิด)
+                        ai: aiConfig,
+                        // ผังหน้าที่จำไว้สำหรับจับคู่หน้าและจัดลำดับบรรทัด
+                        blueprints: savedBlueprints,
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -2106,6 +2334,37 @@ ipcMain.handle(
                 );
 
 
+            // เก็บผลการเรียนรู้ลงฐานข้อมูล — ถ้าฐานข้อมูลมีปัญหา
+            // ต้องไม่ทำให้การอ่านไฟล์ล้มเหลว (ข้อความที่ได้ยังใช้ได้อยู่)
+            try {
+
+                await dbReady();
+
+                if (Array.isArray(result.blueprints) && result.blueprints.length > 0) {
+
+                    await dbRequest(
+                        "ocr-blueprint-save",
+                        { pages: result.blueprints }
+                    );
+                }
+
+                if (Array.isArray(result.aiCorrections) && result.aiCorrections.length > 0) {
+
+                    await dbRequest(
+                        "ocr-fix-learn",
+                        { fixes: result.aiCorrections }
+                    );
+                }
+
+            } catch (error) {
+
+                console.error(
+                    "บันทึกผลการเรียนรู้ OCR ไม่สำเร็จ:",
+                    error
+                );
+            }
+
+
             return {
                 ok: true,
                 text: result.text,
@@ -2117,7 +2376,16 @@ ipcMain.handle(
                 // เหตุผลที่ OCR ไม่สำเร็จ (ถ้ามี) — ข้อความที่เหลือยังใช้ได้
                 ocrError: result.ocrError,
                 // จำนวนจุดที่เย็บบรรทัดที่ถูกตัดเข้าด้วยกัน
-                joined: result.joined || 0
+                joined: result.joined || 0,
+                // หน้าที่ใช้ผังที่จำไว้จัดลำดับบรรทัด (ไม่ใช้ AI)
+                blueprintPages: result.blueprintPages || [],
+                // หน้าที่ AI ช่วยแก้ + เหตุผลที่ AI ใช้ไม่ได้ (ถ้ามี)
+                aiPages: result.aiPages || [],
+                aiError: result.aiError || null,
+                // จำนวนคู่คำที่เรียนรู้เพิ่มในครั้งนี้
+                learned: Array.isArray(result.aiCorrections)
+                    ? result.aiCorrections.length
+                    : 0
             };
 
         } catch (error) {

@@ -205,6 +205,15 @@
                     return;
                 }
 
+                if (progress.status === 'ai') {
+                    setSourceStatus(
+                        'ให้ AI ช่วยตรวจคำ หน้า ' +
+                        progress.page + '/' + progress.pageCount +
+                        '...'
+                    );
+                    return;
+                }
+
                 if (progress.status === 'reading') {
                     setSourceStatus(
                         'กำลังอ่านหน้า ' +
@@ -487,6 +496,19 @@
                     ? result.pages
                     : [];
 
+            const aiPages =
+                (result && Array.isArray(result.aiPages))
+                    ? result.aiPages
+                    : [];
+
+            const aiError =
+                result && result.aiError ? String(result.aiError) : '';
+
+            const blueprintPages =
+                (result && Array.isArray(result.blueprintPages))
+                    ? result.blueprintPages
+                    : [];
+
             const textarea = el('dataSourceText');
 
             textarea.value = text;
@@ -497,6 +519,13 @@
                     ? ' (OCR ' + ocrPages.length + ' หน้า: ' +
                         ocrPages.join(', ') + ')'
                     : '') +
+                (blueprintPages.length > 0
+                    ? ' · ใช้ผังหน้าที่จำไว้ ' + blueprintPages.length + ' หน้า'
+                    : '') +
+                (aiPages.length > 0
+                    ? ' · AI ช่วยแก้ ' + aiPages.length + ' หน้า'
+                    : '') +
+                (aiError ? ' · AI ใช้ไม่ได้: ' + aiError : '') +
                 (result && result.joined
                     ? ' · รวม ' + result.joined + ' บรรทัดที่ถูกตัด'
                     : '') +
@@ -507,7 +536,8 @@
                     ? ' · รวมกลุ่มคำ ' + result.grouped + ' จุด'
                     : '') +
                 (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '') +
-                (pages.length > 0 ? ' · ตรวจคำบน PDF ได้' : '')
+                (pages.length > 0 ? ' · ตรวจคำบน PDF ได้' : ''),
+                aiError ? 'warn' : ''
             );
 
             setWordPreviewPages(pages, file.name);
