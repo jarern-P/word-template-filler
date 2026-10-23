@@ -226,9 +226,6 @@ function getConfig(dataPath) {
         prompt: typeof raw.prompt === "string" && raw.prompt.trim() !== ""
             ? raw.prompt
             : DEFAULT_PROMPT,
-        // เปิดเป็นค่าเริ่มต้น: เอกสารราชการ/form อ่านด้วย regex ง่ายกว่า
-        // เมื่อหัวข้ออยู่หน้าค่า (ปิดได้ในหน้าตั้งค่า)
-        structure: raw.structure !== false,
         apiKeys: keys,
         savedAt: raw.savedAt || ""
     };
@@ -251,7 +248,6 @@ function getPublicConfig(dataPath) {
         enabled: config.enabled,
         model: config.model,
         prompt: config.prompt,
-        structure: config.structure,
         keys: config.apiKeys.map(function (key) {
             return {
                 id: key.id,
@@ -270,7 +266,7 @@ function getPublicConfig(dataPath) {
     };
 }
 
-// patch = { enabled, model, prompt, structure,
+// patch = { enabled, model, prompt,
 //           addKey, removeKeyId, clearKeys, apiKey (ชื่อเดิม), clearKey (ชื่อเดิม) }
 //   addKey       = เพิ่ม key ใหม่ (ซ้ำกับที่มีอยู่ = ไม่เพิ่ม)
 //   removeKeyId  = ลบ key ตาม id
@@ -295,9 +291,6 @@ function saveConfig(dataPath, patch) {
                 ? (typeof raw.prompt === "string" ? raw.prompt : DEFAULT_PROMPT)
                 : body.prompt
         ),
-        structure: body.structure === undefined
-            ? raw.structure !== false
-            : body.structure === true,
         keys: readKeyEntries(raw).map(function (entry) {
             return {
                 id: entry.id,
@@ -805,13 +798,11 @@ async function correctLines(config, input) {
         return { ok: false, error: "ไม่มีภาพหน้าสำหรับส่งให้ AI" };
     }
 
-    // จัดหัวข้อ:ค่าได้เฉพาะเมื่อส่งทั้งหน้าในคำขอเดียว
-    // (หน้าเกิน MAX_LINES_PER_REQUEST จะแบ่งยิง 2 รอบ — ปล่อยเป็นบรรทัดปกติ)
-    const wantStructure =
-        config && config.structure !== false && source.length <= MAX_LINES_PER_REQUEST;
-
+    // ทุกครั้งที่เรียก AI จะแก้คำผิดและจัด "หัวข้อ: ค่า" ให้เองเสมอ
+    // (หน้าเกินเพดานบรรทัดจะยิงหลายรอบ แล้วรวมผลมาจัดเรียงต่อกัน)
     const corrected = [];
     const structured = [];
+    const structuredSeen = new Set();
     let usage = null;
 
     for (
@@ -833,7 +824,8 @@ async function correctLines(config, input) {
                     {
                         text:
                             (config.prompt || DEFAULT_PROMPT) +
-                            (wantStructure ? "\n" + STRUCTURE_INSTRUCTION : "")
+                            "\n" +
+                            STRUCTURE_INSTRUCTION
                     }
                 ]
             },
@@ -848,10 +840,8 @@ async function correctLines(config, input) {
                                 "\n\nแก้คำที่อ่านผิดให้ตรงกับภาพ แล้วตอบเป็น JSON " +
                                 '{"lines":[{"id":<id เดิม>,"text":"<ข้อความที่แก้แล้ว>"}]} ' +
                                 "โดยมีครบทุกลำดับ id" +
-                                (wantStructure
-                                    ? ' และ structured:[{"title":"หัวข้อ","value":"ค่า"}] ' +
-                                      "เฉพาะคู่หัวข้อ:ค่าที่เห็นในภาพ"
-                                    : "")
+                                ' และ structured:[{"title":"หัวข้อ","value":"ค่า"}] ' +
+                                "เฉพาะคู่หัวข้อ:ค่าที่เห็นในภาพ"
                         },
                         imagePart
                     ]
@@ -897,7 +887,7 @@ async function correctLines(config, input) {
             return { ok: false, error: "AI ตอบในรูปแบบที่อ่านไม่ได้" };
         }
 
-        if (wantStructure) {
+        {
             const list = parsed && Array.isArray(parsed.structured) ? parsed.structured : [];
 
             list.forEach(function (item) {
@@ -906,6 +896,12 @@ async function correctLines(config, input) {
 
                 if (title === "" || value === "") return;
 
+                // หลายรอบ/หลาย chunk อาจส่งคู่เดิมซ้ำ — เก็บครั้งเดียว
+                const signature = title + "\u0000" + value;
+
+                if (structuredSeen.has(signature)) return;
+
+                structuredSeen.add(signature);
                 structured.push({ title: title, value: value });
             });
         }
@@ -1075,6 +1071,22 @@ function isSafeLearnedPair(wrong, right, trusted) {
 
     // ตัวเลขสั้นห้ามเรียนเด็ดขาด (ต้นเหตุเอกสารเพี้ยนทั้งฉบับ)
     if (isShortNumber(wrong) || isShortNumber(right)) return false;
+
+    if (right === "") return false;
+
+    // แทนด้วยจุด/เครื่องหมายยาว ๆ = ขยะ ไม่ใช่การแก้คำ
+    // (คู่สั้น ๆ อย่าง "we" -> "(-)" ยังใช้ได้)
+    if (!/[0-9A-Za-z\u0E00-\u0E7F]/.test(right) && right.length >= 6) return false;
+
+    // อักขระเดียวห้ามกลายเป็นคำยาว — เคยทำให้ "ล" ถูกแทนด้วยชื่อหน่วยงาน
+    // ทั้งวลีทุกจุดในเอกสาร (1:1 ยังใช้ได้ เช่น ล <-> ส)
+    const shortSide = Math.min(wrong.length, right.length);
+    const longSide = Math.max(wrong.length, right.length);
+
+    if (shortSide === 1 && longSide > 1) return false;
+
+    // ยาวขึ้น/สั้นลงหลายเท่า = ไม่ใช่การอ่านผิด
+    if (longSide >= shortSide * 3 && longSide - shortSide >= 4) return false;
 
     const wrongNumber = NUMBER_LIKE.test(wrong);
     const rightNumber = NUMBER_LIKE.test(right);

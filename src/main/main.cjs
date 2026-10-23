@@ -2342,6 +2342,39 @@ ipcMain.handle(
                 );
             }
 
+            // หัวข้อที่ AI เคยสอนไว้ (เลขที่ / วันที่ / ชื่อบัญชี ...)
+            // ใช้จัดบรรทัด "หัวข้อ: ค่า" เองได้แม้ AI จะปิดอยู่
+            let savedTitles = [];
+
+            try {
+
+                await dbReady();
+
+                const response =
+                    await dbRequest(
+                        "ocr-title-list",
+                        { limit: 500 }
+                    );
+
+                if (response && Array.isArray(response.result)) {
+                    savedTitles = response.result
+                        .map(function (row) {
+                            return String((row && row.title) || "");
+                        })
+                        .filter(function (title) {
+                            return title !== "";
+                        });
+                }
+
+            } catch (error) {
+
+                // อ่านหัวข้อไม่ได้ = ปล่อยให้ AI จัดให้เหมือนเดิม
+                console.error(
+                    "อ่านหัวข้อที่เรียนรู้ไว้ไม่สำเร็จ:",
+                    error
+                );
+            }
+
             // หน้าไหนไม่มีชั้นข้อความ (ไฟล์สแกน) จะถูก OCR ให้อัตโนมัติ
             // ระหว่างนั้นส่งความคืบหน้ากลับไปให้หน้าจอด้วย
             const result =
@@ -2359,6 +2392,8 @@ ipcMain.handle(
                         ai: aiConfig,
                         // ผังหน้าที่จำไว้สำหรับจับคู่หน้าและจัดลำดับบรรทัด
                         blueprints: savedBlueprints,
+                        // หัวข้อที่ AI เคยสอนไว้ — จัด "หัวข้อ: ค่า" เองเมื่อ AI ปิด
+                        titles: savedTitles,
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -2393,6 +2428,15 @@ ipcMain.handle(
                     await dbRequest(
                         "ocr-fix-learn",
                         { fixes: result.aiCorrections }
+                    );
+                }
+
+                // หัวข้อที่ AI จัดในรอบนี้ — เก็บไว้ให้ระบบจัดบรรทัดเองครั้งหน้า
+                if (Array.isArray(result.aiTitles) && result.aiTitles.length > 0) {
+
+                    await dbRequest(
+                        "ocr-title-save",
+                        { titles: result.aiTitles }
                     );
                 }
 

@@ -130,6 +130,57 @@ function comparableText(text) {
         .toLowerCase();
 }
 
+// จัดบรรทัดที่ขึ้นต้นด้วยหัวข้อที่ระบบเคยเรียนรู้ให้เป็น "หัวข้อ: ค่า"
+// (ทำได้เองตอน AI ปิด/หน้าที่ AI ไม่ได้จัด — บรรทัดอื่นคงไว้เหมือนเดิม)
+function formatKnownTitleLines(lines, titles) {
+    const list = (Array.isArray(titles) ? titles : [])
+        .map(function (title) {
+            return String(title == null ? "" : title)
+                .replace(/\s+/g, " ")
+                .trim();
+        })
+        .filter(function (title) {
+            return title !== "";
+        })
+        // หัวข้อยาวกว่าต้องลองก่อน ("เลขที่ใบสำคัญ" ก่อน "เลขที่")
+        .sort(function (a, b) {
+            return b.length - a.length;
+        });
+
+    if (list.length === 0) return lines;
+
+    return (lines || []).map(function (line) {
+        const text = String((line && line.text) || "").trim();
+
+        if (text === "") return line;
+
+        for (let index = 0; index < list.length; index++) {
+            const title = list[index];
+
+            if (text.slice(0, title.length).toLowerCase() !== title.toLowerCase()) {
+                continue;
+            }
+
+            const rest = text.slice(title.length);
+
+            // มี : อยู่แล้ว = จัดรูปแล้ว ไม่ต้องแก้
+            if (/^\s*[:：]/.test(rest)) return line;
+
+            // ต้องมีช่องว่างคั่น — ไม่งั้นเป็นคำอื่นที่ขึ้นต้นเหมือนหัวข้อ
+            // (เช่น "เลขที่ใบเสร็จ" ไม่ควรกลายเป็น "เลขที่: ใบเสร็จ")
+            if (!/^\s+/.test(rest)) continue;
+
+            const value = rest.trim();
+
+            if (value === "") continue;
+
+            return Object.assign({}, line, { text: title + ": " + value });
+        }
+
+        return line;
+    });
+}
+
 // confidence ต่ำสุดของคำในบรรทัดนั้น (null = ไม่มีคำให้วัด)
 // ใช้ตัดสินว่าคู่คำที่ AI แก้ควรถูกจำไว้ใช้ตอน AI ปิดหรือไม่
 function lineConfidence(line, words) {
@@ -492,11 +543,13 @@ function linesFromLayout(words, width, height, bands) {
  *   layouts    = ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ [{ bands: [{from,to}], aspect }]
  *                — หน้าทีมีสัดส่วนใกล้เคียงจะถูกอ่านทีละคอลัมน์ตามที่ฝึก
  *   scale      = ความละเอียดที่ใช้ OCR (ตัวคูณจาก 72 DPI, ค่าเริ่มต้น ~200 DPI)
- *   ai         = { enabled, apiKeys: [{id, value}], model, prompt, structure }
+ *   ai         = { enabled, apiKeys: [{id, value}], model, prompt }
  *                ให้ AI ช่วยแก้คำหลัง tesseract (สลับ key เองเมื่อโควตาหมด)
  *                (ไม่ส่ง/ปิด = ใช้ข้อความ tesseract อย่างเดียว)
  *   blueprints = ผังหน้าที่เคยอ่านไว้ [{ aspect, lines }] — ใช้จับคู่หน้า
  *                และเรียงลำดับบรรทัด/คอลัมน์เองโดยไม่ต้องใช้ AI
+ *   titles     = หัวข้อที่ AI เคยสอนไว้ [string] — ใช้จัดบรรทัด
+ *                "หัวข้อ: ค่า" เองเมื่อ AI ปิด
  *   langPath/workerPath = ทับค่าที่ใช้อยู่ (สำหรับทดสอบ)
  *   onProgress = ฟังก์ชันรับความคืบหน้า { page, pageCount, status, progress }
  *                status = reading | ocr | ai
@@ -535,6 +588,11 @@ async function extractPdfText(data, options) {
     // หน้าที่ AI จัดเป็นบรรทัด "หัวข้อ: ค่า" แล้ว
     const structuredPages = [];
     const aiCorrections = [];
+    // หัวข้อที่ AI สอนในรอบนี้ — เก็บลงฐานข้อมูลเพื่อจัดบรรทัดเองครั้งหน้า
+    const aiTitles = [];
+
+    // หัวข้อที่ระบบเรียนรู้ไว้แล้ว (จากฐานข้อมูล)
+    const learnedTitles = Array.isArray(opts.titles) ? opts.titles : [];
     let aiUsage = null;
     let aiError = null;
     let ocrError = null;
@@ -798,6 +856,18 @@ async function extractPdfText(data, options) {
                                             structuredText = rows.join("\n");
                                             structuredPages.push(pageNumber);
                                         }
+
+                                        ai.structured.forEach(function (item) {
+                                            const title = String(
+                                                (item && item.title) || ""
+                                            ).replace(/\s+/g, " ").trim();
+
+                                            if (title === "") return;
+                                            if (title.length > 40) return;
+                                            if (aiTitles.indexOf(title) !== -1) return;
+
+                                            aiTitles.push(title);
+                                        });
                                     }
 
                                     aiPages.push(pageNumber);
@@ -855,6 +925,9 @@ async function extractPdfText(data, options) {
                 // ชั้นข้อความ (pt) กับ OCR (px) คนละหน่วย จึงเย็บข้ามกลุ่มไม่ได้
                 const sources = [];
 
+                // หัวข้อที่ใช้จัดบรรทัดของหน้านี้ = ที่เรียนรู้ไว้ + ที่ AI เพิ่งสอน
+                const titlesForPage = learnedTitles.concat(aiTitles);
+
                 if (quality.usable && textLayerLines.length > 0) {
                     sources.push({ lines: textLayerLines, join: joinLines });
                 }
@@ -884,15 +957,23 @@ async function extractPdfText(data, options) {
                         // ไม่เย็บบรรทัดตรงนี้ — กันช่องข้อมูลที่อยู่คนละบรรทัดถูกเชื่อมติดกัน
                         // จน regex แยกค่าไม่ได้
                         sources.push({
-                            lines: leftovers,
+                            lines: formatKnownTitleLines(leftovers, titlesForPage),
                             join: false
                         });
                     }
                 } else if (ocrLines.length > 0) {
+                    const formatted = formatKnownTitleLines(ocrLines, titlesForPage);
+
+                    // มีบรรทัดที่ถูกจัดเป็น "หัวข้อ: ค่า" = ไม่เย็บบรรทัด
+                    // (เย็บแล้วช่องข้อมูลคนละช่องจะติดกัน regex แยกไม่ได้)
+                    const titlesChanged = formatted.some(function (line, index) {
+                        return String(line.text) !== String(ocrLines[index].text);
+                    });
+
                     // หน้านี้จัดลำดับตามคอลัมน์แล้ว = ไม่ต้องเย็บบรรทัด (คนละคอลัมน์)
                     sources.push({
-                        lines: ocrLines,
-                        join: joinLines && !layoutApplied
+                        lines: formatted,
+                        join: joinLines && !layoutApplied && !titlesChanged
                     });
                 }
 
@@ -952,6 +1033,8 @@ async function extractPdfText(data, options) {
         aiCorrections: Object.keys(correctionsByWord).map(function (key) {
             return correctionsByWord[key];
         }),
+        // หัวข้อที่ AI สอนในรอบนี้ — main process เก็บลงฐานข้อมูล
+        aiTitles: aiTitles,
         aiUsage: aiUsage,
         blueprints: blueprints
     };

@@ -125,6 +125,20 @@ const SCHEMA = `
     CREATE INDEX IF NOT EXISTS idx_ocr_fixes_hits
         ON ocr_fixes(hits DESC);
 
+    -- หัวข้อ (ชื่อช่อง) ที่ AI เคยจัดเป็น "หัวข้อ: ค่า" ให้
+    --   ใช้จัดบรรทัดรูปแบบเดียวกันให้เองเมื่อ AI ปิด (ไม่ต้องเรียก AI ซ้ำ)
+    --   hits = จำนวนครั้งที่เห็นหัวข้อนี้ในผลของ AI
+    CREATE TABLE IF NOT EXISTS ocr_titles (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        title      TEXT NOT NULL UNIQUE,
+        hits       INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ocr_titles_hits
+        ON ocr_titles(hits DESC);
+
     -- กลุ่มคำที่ OCR ตัดข้ามบรรทัด (เช่น "เลข" บรรทัดบน + "ที่" บรรทัดล่าง)
     --   tokens = JSON array ของคำที่เลือกเรียงตามลำดับในหน้า
     --   merged = คำที่รวมแล้ว ใช้แทนข้อความที่มีขึ้นบรรทัดใหม่คั่นกลาง
@@ -2870,6 +2884,15 @@ function handleOcrGroupSave(message) {
             throw new Error("กรุณาระบุคำที่รวมแล้ว");
         }
 
+        // คำเดียวตัวเดียว/บรรทัดยาวผิดปกติ = กลุ่มขยะ (เคยทำเอกสารทั้งฉบับเพี้ยน)
+        if (tokens.some(token => token.length < 2)) {
+            throw new Error("กลุ่มคำต้องมีคำละอย่างน้อย 2 ตัวอักษร");
+        }
+
+        if (merged.length > 150) {
+            throw new Error("ข้อความที่รวมแล้วยาวเกินไป");
+        }
+
         const key = JSON.stringify(tokens);
         const now = new Date().toISOString();
 
@@ -3473,6 +3496,24 @@ function isUnsafeLearnedPair(wrong, right) {
     if (LEARN_SHORT_NUMBER.test(compactWrong)) return true;
     if (LEARN_SHORT_NUMBER.test(compactRight)) return true;
 
+    // แทนด้วยจุด/เครื่องหมายยาว ๆ = ขยะ ไม่ใช่การแก้คำ
+    // (คู่สั้น ๆ อย่าง "we" -> "(-)" ยังใช้ได้)
+    if (
+        !/[0-9A-Za-z\u0E00-\u0E7F]/.test(String(right || "")) &&
+        String(right || "").length >= 6
+    ) {
+        return true;
+    }
+
+    // อักขระเดียวห้ามกลายเป็นคำยาว — เคยทำเอกสารทั้งฉบับเพี้ยน
+    const shortSide = Math.min(compactWrong.length, compactRight.length);
+    const longSide = Math.max(compactWrong.length, compactRight.length);
+
+    if (shortSide === 1 && longSide > 1) return true;
+
+    // ยาวขึ้น/สั้นลงหลายเท่า = ไม่ใช่การอ่านผิด
+    if (longSide >= shortSide * 3 && longSide - shortSide >= 4) return true;
+
     const wrongNumber = LEARN_NUMBER_LIKE.test(wrong);
     const rightNumber = LEARN_NUMBER_LIKE.test(right);
 
@@ -3748,6 +3789,131 @@ function handleOcrFixLearn(message) {
 
 
 // ============================================================
+// OCR: หัวข้อที่ AI สอน (จัดบรรทัด "หัวข้อ: ค่า" เองเมื่อ AI ปิด)
+// ============================================================
+
+// หัวข้อคือชื่อช่องสั้น ๆ (เลขที่ / วันที่ / ชื่อบัญชี) — บรรทัดยาวกว่านี้ไม่ใช่หัวข้อ
+const TITLE_MAX_LENGTH = 40;
+
+function normalizeOcrTitle(value) {
+    return String(value == null ? "" : value)
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, TITLE_MAX_LENGTH);
+}
+
+function handleOcrTitleSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const titles =
+            Array.isArray(message.payload?.titles)
+                ? message.payload.titles
+                : [];
+
+        const now = new Date().toISOString();
+
+        const upsert =
+            db.prepare(`
+                INSERT INTO ocr_titles (title, hits, created_at, updated_at)
+                VALUES (?, 1, ?, ?)
+                ON CONFLICT(title) DO UPDATE SET
+                    hits = hits + 1,
+                    updated_at = excluded.updated_at
+            `);
+
+        let saved = 0;
+
+        const run = db.transaction(() => {
+
+            titles.forEach(item => {
+
+                const title = normalizeOcrTitle(item);
+
+                if (title === "") return;
+
+                upsert.run(title, now, now);
+                saved += 1;
+            });
+        });
+
+        run();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: { saved: saved }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+function handleOcrTitleList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const limit = Math.max(
+            1,
+            Math.min(
+                2000,
+                Math.floor(
+                    Number(message.payload?.limit) || 500
+                )
+            )
+        );
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    title,
+                    hits,
+                    updated_at
+                FROM ocr_titles
+                ORDER BY hits DESC, title ASC
+                LIMIT ?
+            `)
+            .all(limit);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
+// ============================================================
 // OCR: ผังหน้า (blueprint)
 // ============================================================
 
@@ -3988,6 +4154,7 @@ function handleOcrAiStats(message) {
                     (SELECT COUNT(*) FROM ocr_word_groups) AS word_groups,
                     (SELECT COUNT(*) FROM ocr_drop_words) AS drop_words,
                     (SELECT COUNT(*) FROM ocr_page_layouts) AS page_layouts,
+                    (SELECT COUNT(*) FROM ocr_titles) AS titles,
                     (SELECT MAX(updated_at) FROM ocr_blueprints) AS last_updated
             `)
             .get();
@@ -4004,6 +4171,7 @@ function handleOcrAiStats(message) {
                 wordGroups: Number(row?.word_groups) || 0,
                 dropWords: Number(row?.drop_words) || 0,
                 pageLayouts: Number(row?.page_layouts) || 0,
+                titles: Number(row?.titles) || 0,
                 lastUpdated: row?.last_updated || ""
             }
         });
@@ -5432,6 +5600,24 @@ parentPort.on("message", (message) => {
             case "ocr-fix-stat":
 
                 handleOcrFixStat(message);
+
+                break;
+
+            // ------------------------------------------------
+            // หัวข้อ "หัวข้อ: ค่า" ที่ AI สอนไว้
+            // ------------------------------------------------
+
+            case "ocr-title-save":
+
+                handleOcrTitleSave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-title-list":
+
+                handleOcrTitleList(message);
 
                 break;
 

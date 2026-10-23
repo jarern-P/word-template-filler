@@ -42,16 +42,11 @@
         '            ซึ่งทำงานได้เต็มที่โดยไม่ต้องมีเน็ตหรือเสียงบค่า API',
         '        </p>',
 
-        '        <label class="switch-toggle" for="ocrAiStructure">',
-        '            <input type="checkbox" id="ocrAiStructure">',
-        '            <span class="switch-box" aria-hidden="true"></span>',
-        '            <span class="switch-text">จัดข้อความเป็น "หัวข้อ: ค่า"</span>',
-        '        </label>',
-
         '        <p class="hint">',
-        '            เปิด = AI เรียบเรียงแต่ละหน้าเป็นบรรทัด "หัวข้อ: ค่า"',
-        '            เช่น เลขที่: ... วันที่: ... ทำให้ regex จับค่าง่ายขึ้น',
-        '            · ปิด = ใช้ข้อความบรรทัดเดิมจาก tesseract',
+        '            ทุกครั้งที่ AI ทำงาน จะแก้คำผิดและเรียบเรียงแต่ละหน้าเป็นบรรทัด',
+        '            "หัวข้อ: ค่า" (เช่น เลขที่: ... วันที่: ...) ให้เองอัตโนมัติ',
+        '            พร้อมเก็บคำที่แก้ลงคลังคำในเครื่อง — บรรทัดที่ AI ไม่ได้จัด',
+        '            จะยังคงอยู่ครบในข้อความของหน้า',
         '        </p>',
         '    </section>',
 
@@ -131,6 +126,18 @@
         '            ผังหน้าและคำที่แก้ถูกเก็บในฐานข้อมูลของแอป',
         '            — ไม่ได้ส่งข้อมูลขึ้นคลาวด์ นอกจากภาพหน้าและข้อความที่ส่งให้ AI ตอนเปิดใช้งาน',
         '        </p>',
+
+        '        <div class="ocr-fix-head">',
+        '            <h3>คำที่บันทึกในฐานข้อมูล</h3>',
+        '            <span class="hint" id="ocrAiFixCount"></span>',
+        '        </div>',
+
+        '        <p class="hint">',
+        '            ทุกครั้งที่ AI แก้คำ ระบบจะบันทึกคู่นั้นลงฐานข้อมูลให้เอง',
+        '            แล้วนำไปแทนให้อัตโนมัติเมื่อ AI ปิด/ไม่มีเน็ต (คำที่คุณแก้เองจะไม่ถูกทับ)',
+        '        </p>',
+
+        '        <div class="ocr-fix-list" id="ocrAiFixList"></div>',
         '    </section>',
 
         '</div>'
@@ -276,12 +283,10 @@
         if (!config) return;
 
         const enabled = el('ocrAiEnabled');
-        const structure = el('ocrAiStructure');
         const model = el('ocrAiModel');
         const prompt = el('ocrAiPrompt');
 
         if (enabled) enabled.checked = config.enabled === true;
-        if (structure) structure.checked = config.structure !== false;
 
         if (model) {
             model.value = config.model || state.defaultModel;
@@ -352,11 +357,8 @@
         const model = el('ocrAiModel');
         const key = el('ocrAiKey');
 
-        const structure = el('ocrAiStructure');
-
         const payload = {
             enabled: !!(enabled && enabled.checked),
-            structure: !!(structure && structure.checked),
             model: model ? String(model.value || '').trim() : '',
             prompt: currentPrompt()
         };
@@ -520,6 +522,7 @@
             [stats.aiPages, 'หน้าที่ AI ช่วยอ่าน'],
             [stats.localPages, 'หน้าที่อ่านในเครื่อง'],
             [stats.learned, 'คำที่เรียนรู้จาก AI'],
+            [stats.titles, 'หัวข้อที่ AI สอน'],
             [stats.fixes, 'คำในคลังทั้งหมด']
         ];
 
@@ -559,6 +562,104 @@
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // คำที่บันทึกลงฐานข้อมูล (AI เรียนรู้เอง + คำที่ผู้ใช้แก้)
+    // ──────────────────────────────────────────────────────────────
+
+    function renderFixes(rows) {
+        const host = el('ocrAiFixList');
+        const count = el('ocrAiFixCount');
+
+        if (!host) return;
+
+        const all = Array.isArray(rows) ? rows : [];
+        const list = all.slice(0, 100);
+
+        if (count) {
+            count.textContent = all.length === 0
+                ? 'ยังไม่มีคำที่บันทึก'
+                : (all.length > list.length
+                    ? 'แสดง ' + list.length + ' จาก ' + all.length + ' คำ'
+                    : all.length + ' คำ');
+        }
+
+        host.innerHTML = '';
+
+        list.forEach(function (row) {
+            const item = document.createElement('div');
+            item.className = 'ocr-fix-row';
+
+            const badge = document.createElement('span');
+            badge.className = 'ocr-fix-source ' +
+                (row.source === 'ai' ? 'ai' : 'user');
+            badge.textContent = row.source === 'ai' ? 'AI' : 'คุณ';
+            item.appendChild(badge);
+
+            const pair = document.createElement('code');
+            pair.className = 'ocr-fix-pair';
+            pair.textContent = String(row.wrong || '') +
+                ' → ' + String(row.right || '');
+            item.appendChild(pair);
+
+            const hits = document.createElement('span');
+            hits.className = 'hint';
+            hits.textContent = Number(row.hits) > 0
+                ? 'ใช้ ' + Number(row.hits) + ' ครั้ง'
+                : '';
+            item.appendChild(hits);
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'plain';
+            remove.textContent = 'ลบ';
+            remove.dataset.wrong = String(row.wrong || '');
+            item.appendChild(remove);
+
+            host.appendChild(item);
+        });
+    }
+
+    async function loadFixes() {
+        if (!scope.Db || typeof scope.Db.ocrFixList !== 'function') return;
+
+        try {
+            renderFixes(await scope.Db.ocrFixList());
+        } catch (error) {
+            const count = el('ocrAiFixCount');
+
+            if (count) {
+                count.textContent =
+                    (error && error.message) || 'อ่านรายการคำไม่สำเร็จ';
+            }
+        }
+    }
+
+    async function removeFix(wrong) {
+        const word = String(wrong || '').trim();
+
+        if (word === '') return;
+        if (!scope.Db || typeof scope.Db.ocrFixDelete !== 'function') return;
+
+        const confirmed = await scope.AppDialog.confirm(
+            'ลบคำ "' + word + '" ออกจากฐานข้อมูล?\n' +
+            'คำนี้จะไม่ถูกแทนให้อัตโนมัติอีก (AI จะเรียนใหม่ได้เมื่อเจออีก)',
+            { danger: true }
+        );
+
+        if (!confirmed) return;
+
+        try {
+            await scope.Db.ocrFixDelete(word);
+            loadStats();
+        } catch (error) {
+            setStatus(
+                'ocrAiConnectionStatus',
+                (error && error.message) || 'ลบคำไม่สำเร็จ',
+                'error'
+            );
+        }
+    }
+
     async function loadStats() {
         if (!scope.Db || typeof scope.Db.ocrAiStats !== 'function') return;
 
@@ -570,6 +671,7 @@
             const stats = await scope.Db.ocrAiStats();
 
             renderStats(stats || {});
+            loadFixes();
         } catch (error) {
             const hint = el('ocrAiStatsHint');
 
@@ -617,25 +719,24 @@
             });
         }
 
-        const structure = el('ocrAiStructure');
-
-        if (structure) {
-            structure.addEventListener('change', function () {
-                setStatus(
-                    'ocrAiConnectionStatus',
-                    (structure.checked ? 'เปิด' : 'ปิด') +
-                        'จัดหัวข้อ:ค่า — กด "บันทึก" เพื่อให้มีผล',
-                    'warn'
-                );
-            });
-        }
-
         const addKeyBtn = el('ocrAiAddKeyBtn');
 
         if (addKeyBtn) {
             addKeyBtn.addEventListener('click', function () {
                 if (state.busy) return;
                 addKey();
+            });
+        }
+
+        const fixList = el('ocrAiFixList');
+
+        if (fixList) {
+            fixList.addEventListener('click', function (event) {
+                const button = event.target.closest('button[data-wrong]');
+
+                if (!button) return;
+
+                removeFix(button.dataset.wrong);
             });
         }
 

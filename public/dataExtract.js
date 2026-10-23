@@ -360,13 +360,24 @@
         });
     }
 
+    // กลุ่มคำที่ใช้ได้: อย่างน้อย 2 คำ คำละ >= 2 ตัวอักษร และคำที่รวมไม่ยาวผิดปกติ
+    // (เคยมีกลุ่ม "ล" + บรรทัดขยะ ทำให้ข้อความทั้งหน้าเพี้ยน)
+    function isUsableWordGroup(group) {
+        if (!group || !Array.isArray(group.tokens)) return false;
+        if (group.tokens.length < 2) return false;
+        if (String(group.merged == null ? '' : group.merged) === '') return false;
+
+        return !group.tokens.some(function (token) {
+            return String(token).length < 2;
+        }) && String(group.merged).length <= 150;
+    }
+
     // เพิ่ม/แก้กลุ่มคำ — คืน true เมื่อบันทึกสำเร็จ
     async function saveWordGroupAsync(tokens, merged) {
         const list = normalizeGroupTokens(tokens);
         const text = String(merged == null ? '' : merged).trim();
 
-        if (list.length < 2) return false;
-        if (text === '') return false;
+        if (!isUsableWordGroup({ tokens: list, merged: text })) return false;
 
         await persistWordGroup(list, text);
 
@@ -460,7 +471,7 @@
         let result = source;
 
         groups.forEach(function (group) {
-            if (group.tokens.length < 2 || group.merged === '') return;
+            if (!isUsableWordGroup(group)) return;
 
             const pattern = new RegExp(
                 group.tokens
@@ -828,12 +839,33 @@
     // ตัวเลขสั้น (<= 4 หลัก) ที่ AI เคยเรียนผิด (เช่น 1 -> จาก)
     // ห้ามใช้แทนคำตรงตัว เพราะจะไปเปลี่ยนเลขที่/วันที่ทุกจุดในเอกสาร
     const FIX_SHORT_NUMBER = /^\d{1,4}$/;
+    // ต้องมีตัวอักษรหรือตัวเลขจริง — ค่าที่มีแต่จุด/เครื่องหมายไม่ใช่การแก้คำ
+    const FIX_CONTENT = /[0-9A-Za-z\u0E00-\u0E7F]/;
 
     function isDangerousFix(fix) {
-        const compact = String(fix && fix.from == null ? '' : fix.from)
-            .replace(/[\s,.\-\/]/g, '');
+        const from = String(fix && fix.from == null ? '' : fix.from);
+        const to = String(fix && fix.to == null ? '' : fix.to);
+        const compact = from.replace(/[\s,.\-\/]/g, '');
 
-        return FIX_SHORT_NUMBER.test(compact);
+        // ตัวเลขสั้น (เช่น "1") — เอกสารทั้งฉบับเพี้ยนได้
+        if (FIX_SHORT_NUMBER.test(compact)) return true;
+
+        if (from === '' || to === '') return true;
+
+        // แทนด้วยจุด/เครื่องหมายยาว ๆ = ขยะ (คู่สั้น ๆ อย่าง 'we' -> '(-)' ยังใช้ได้)
+        if (!FIX_CONTENT.test(to) && to.length >= 6) return true;
+
+        const shortSide = Math.min(from.length, to.length);
+        const longSide = Math.max(from.length, to.length);
+
+        // อักขระเดียวกลายเป็นคำยาว (เคยเจอ "ล" -> ชื่อหน่วยงานทั้งวลี)
+        // 1:1 ยังใช้ได้ เช่น ล <-> ส (tesseract อ่านสระ/พยัญชนะสลับ)
+        if (shortSide === 1 && longSide > 1) return true;
+
+        // ยาวขึ้น/สั้นลงหลายเท่า = ไม่ใช่การอ่านผิด
+        if (longSide >= shortSide * 3 && longSide - shortSide >= 4) return true;
+
+        return false;
     }
 
     function applyTextFixes(text, options) {

@@ -4515,6 +4515,68 @@ body.table-ratio-dragging .table-ratio-handle {
     word-break: break-word;
 }
 
+/* รายการคำที่บันทึกในฐานข้อมูล (AI เรียนรู้เอง / ผู้ใช้แก้) */
+.ocr-fix-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.ocr-fix-head h3 {
+    margin: 0;
+}
+
+.ocr-fix-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+.ocr-fix-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border: 1px solid var(--line, #d8dde6);
+    border-radius: 8px;
+    background: var(--surface-soft, #f7f9fc);
+    font-size: 13px;
+}
+
+.ocr-fix-row code {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.ocr-fix-row button {
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 3px 10px;
+}
+
+.ocr-fix-source {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.ocr-fix-source.ai {
+    background: #e8f0fe;
+    color: #1a4fa0;
+}
+
+.ocr-fix-source.user {
+    background: #e6f4ea;
+    color: #1f7a4d;
+}
+
 /* ── สวิตช์รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ใช้กับ PDF) ── */
 .data-source-options {
     margin: 4px 0 2px;
