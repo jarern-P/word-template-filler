@@ -189,6 +189,9 @@ const SCHEMA = `
         width       INTEGER NOT NULL DEFAULT 0,
         height      INTEGER NOT NULL DEFAULT 0,
         lines       TEXT NOT NULL DEFAULT '[]',
+        -- ช่องข้อมูลที่ AI สอนตำแหน่งไว้ [{ title, titleBox, valueBox }]
+        -- ใช้ประกอบ "หัวข้อ: ค่า" เองเมื่ออ่านหน้าเดิมซ้ำโดยไม่ใช้ AI
+        fields      TEXT NOT NULL DEFAULT '[]',
         source      TEXT NOT NULL DEFAULT 'local',
         fixed_count INTEGER NOT NULL DEFAULT 0,
         created_at  TEXT NOT NULL,
@@ -588,6 +591,38 @@ function migrateOcrFixSource() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ fields ให้ตาราง ocr_blueprints
+// ============================================================
+
+// fields = ช่องข้อมูลที่ AI สอนตำแหน่งไว้ (หัวข้อ + กล่องของค่า)
+//   รุ่นก่อนไม่มีคอลัมน์นี้ = ยังไม่ได้สอนตำแหน่ง
+function migrateOcrBlueprintFields() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(ocr_blueprints)
+        `).all();
+
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "fields")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE ocr_blueprints
+        ADD COLUMN fields TEXT NOT NULL DEFAULT '[]'
+    `);
+
+    console.log(
+        "Migrated ocr_blueprints table: added 'fields' column"
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -609,6 +644,7 @@ function openDatabase() {
 
     // คอลัมน์ของตารางที่ SCHEMA สร้างให้ใหม่ไม่มี — ต้องเติมหลัง exec
     migrateOcrFixSource();
+    migrateOcrBlueprintFields();
 
     // หลังสร้างตารางแล้ว ค่อยเติมกลุ่มเริ่มต้นจากข้อมูลที่มีอยู่
     seedMasterGroups();
@@ -3924,6 +3960,9 @@ const BLUEPRINT_MAX_ROWS = 1000;
 // จำนวนบรรทัดสูงสุดต่อหน้า (กันหน้าที่ยาวผิดปกติ)
 const BLUEPRINT_MAX_LINES = 500;
 
+// จำนวนช่องข้อมูลสูงสุดที่ AI สอนตำแหน่งไว้ต่อหน้า
+const BLUEPRINT_MAX_FIELDS = 40;
+
 function handleOcrBlueprintSave(message) {
 
     try {
@@ -3954,17 +3993,19 @@ function handleOcrBlueprintSave(message) {
                     width,
                     height,
                     lines,
+                    fields,
                     source,
                     fixed_count,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(page_key) DO UPDATE SET
                     aspect = excluded.aspect,
                     width = excluded.width,
                     height = excluded.height,
                     lines = excluded.lines,
+                    fields = excluded.fields,
                     source = excluded.source,
                     fixed_count = excluded.fixed_count,
                     updated_at = excluded.updated_at
@@ -3999,12 +4040,23 @@ function handleOcrBlueprintSave(message) {
 
                 if (lines.length === 0) return;
 
+                // ช่องข้อมูลที่ AI สอนตำแหน่ง — ตรวจรูปแบบก่อนบันทึก
+                const fields = (Array.isArray(page?.fields) ? page.fields : [])
+                    .slice(0, BLUEPRINT_MAX_FIELDS)
+                    .map(field => ({
+                        title: String(field?.title || "").trim().slice(0, 80),
+                        titleBox: field?.titleBox || null,
+                        valueBox: field?.valueBox || null
+                    }))
+                    .filter(field => field.title !== "" && field.valueBox);
+
                 upsert.run(
                     pageKey,
                     aspect,
                     Math.round(Number(page?.width) || 0),
                     Math.round(Number(page?.height) || 0),
                     JSON.stringify(lines),
+                    JSON.stringify(fields),
                     source,
                     Math.max(0, Math.floor(Number(page?.fixedCount) || 0)),
                     now,
@@ -4076,7 +4128,8 @@ function handleOcrBlueprintList(message) {
                 SELECT
                     page_key,
                     aspect,
-                    lines
+                    lines,
+                    fields
                 FROM ocr_blueprints
                 ORDER BY updated_at DESC
                 LIMIT ?
@@ -4108,10 +4161,30 @@ function handleOcrBlueprintList(message) {
 
             if (boxes.length === 0) return;
 
+            let fields = [];
+
+            try {
+                const parsed = JSON.parse(row.fields || "[]");
+
+                if (Array.isArray(parsed)) {
+                    fields = parsed
+                        .map(field => ({
+                            title: String(field?.title || "").trim(),
+                            titleBox: field?.titleBox || null,
+                            valueBox: field?.valueBox || null
+                        }))
+                        .filter(field => field.title !== "" && field.valueBox)
+                        .slice(0, BLUEPRINT_MAX_FIELDS);
+                }
+            } catch (error) {
+                fields = [];
+            }
+
             result.push({
                 pageKey: row.page_key,
                 aspect: Number(row.aspect) || 0,
-                lines: boxes
+                lines: boxes,
+                fields: fields
             });
         });
 

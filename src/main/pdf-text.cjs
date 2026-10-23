@@ -181,6 +181,243 @@ function formatKnownTitleLines(lines, titles) {
     });
 }
 
+// ------------------------------------------------------------------
+// "สอนตำแหน่งช่อง" — AI บอกว่าหัวข้อไหนมีค่าอยู่ตรงไหนของหน้า
+// เก็บเป็นกล่องสัดส่วน ใช้ประกอบ "หัวข้อ: ค่า" เองได้เมื่ออ่านหน้าเดิมซ้ำ
+// ------------------------------------------------------------------
+
+function compactText(value) {
+    return String(value == null ? "" : value)
+        .replace(/[\s\u00A0]+/g, "")
+        .toLowerCase();
+}
+
+function proportionalLineBox(line, width, height) {
+    if (!(width > 0) || !(height > 0)) return null;
+
+    const left = Number(line && line.left);
+    const right = Number(line && line.right);
+    const top = Number(line && line.top);
+    const bottom = Number(line && line.bottom);
+
+    if (![left, right, top, bottom].every(isFinite)) return null;
+
+    const box = {
+        x: round4(left / width),
+        y: round4(top / height),
+        w: round4((right - left) / width),
+        h: round4((bottom - top) / height)
+    };
+
+    if (!(box.w > 0) || !(box.h > 0)) return null;
+
+    return box;
+}
+
+function unionWordBox(words, width, height) {
+    if (!Array.isArray(words) || words.length === 0) return null;
+    if (!(width > 0) || !(height > 0)) return null;
+
+    let left = Infinity;
+    let right = -Infinity;
+    let top = Infinity;
+    let bottom = -Infinity;
+
+    words.forEach(function (word) {
+        const x = Number(word && word.x);
+        const y = Number(word && word.y);
+        const w = Number(word && word.width);
+        const h = Number(word && word.height);
+
+        if (![x, y, w, h].every(isFinite)) return;
+
+        left = Math.min(left, x);
+        right = Math.max(right, x + w);
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y + h);
+    });
+
+    if (!isFinite(left) || !isFinite(right)) return null;
+
+    const box = {
+        x: round4(left / width),
+        y: round4(top / height),
+        w: round4((right - left) / width),
+        h: round4((bottom - top) / height)
+    };
+
+    if (!(box.w > 0) || !(box.h > 0)) return null;
+
+    return box;
+}
+
+// หาลำดับคำที่ประกอบกันเป็นข้อความของค่า (เทียบแบบไม่สนช่องว่าง)
+function findValueWords(words, value) {
+    const target = compactText(value);
+
+    if (target === "") return null;
+
+    const list = (Array.isArray(words) ? words : [])
+        .filter(function (word) {
+            return compactText(word && word.text) !== "";
+        })
+        .slice()
+        .sort(function (a, b) {
+            const ay = Number(a.y) || 0;
+            const by = Number(b.y) || 0;
+
+            // คำในบรรทัดเดียวกันต้องเรียงซ้าย → ขวา
+            if (Math.abs(ay - by) > 4) return ay - by;
+
+            return (Number(a.x) || 0) - (Number(b.x) || 0);
+        });
+
+    for (let start = 0; start < list.length; start++) {
+        let text = "";
+
+        // ค่ายาวได้ไม่เกิน 12 คำ — กันการจับคู่ยาวผิด
+        for (let offset = 0; offset < 12 && start + offset < list.length; offset++) {
+            text += compactText(list[start + offset].text);
+
+            if (text === target) {
+                return list.slice(start, start + offset + 1);
+            }
+
+            if (text.length >= target.length) break;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * AI สอนตำแหน่งช่อง: จำว่าหัวข้ออยู่กล่องไหน และค่าของมันอยู่กล่องไหน
+ *
+ * @param {Array} structured [{ title, value }] จาก AI
+ * @param {Array} words คำพร้อมกล่องจาก tesseract (px)
+ * @param {Array} lines บรรทัดของหน้า (px)
+ * @param {number} width
+ * @param {number} height
+ * @returns {Array} [{ title, titleBox, valueBox }] (พิกัดสัดส่วน 0-1)
+ */
+function learnFieldPositions(structured, words, lines, width, height) {
+    const fields = [];
+
+    if (!Array.isArray(structured) || structured.length === 0) return fields;
+
+    const lineItems = (Array.isArray(lines) ? lines : [])
+        .map(function (line) {
+            return { key: compactText(line && line.text), line: line };
+        })
+        .filter(function (item) {
+            return item.key !== "";
+        });
+
+    structured.forEach(function (item) {
+        if (fields.length >= 40) return;
+
+        const title = String((item && item.title) || "").trim();
+        const value = String((item && item.value) || "").trim();
+
+        if (title === "" || value === "") return;
+
+        // หัวข้อเดิมสอนไปแล้ว = ไม่เพิ่มซ้ำ
+        if (fields.some(function (field) { return field.title === title; })) return;
+
+        const valueWords = findValueWords(words, value);
+
+        if (!valueWords) return;
+
+        const valueBox = unionWordBox(valueWords, width, height);
+
+        if (!valueBox) return;
+
+        const titleKey = compactText(title);
+        const titleLine = lineItems.find(function (lineItem) {
+            return lineItem.key.indexOf(titleKey) !== -1;
+        });
+
+        const titleBox = titleLine
+            ? proportionalLineBox(titleLine.line, width, height)
+            : null;
+
+        fields.push({
+            title: title,
+            titleBox: titleBox,
+            valueBox: valueBox
+        });
+    });
+
+    return fields;
+}
+
+/**
+ * อ่านค่าของแต่ละช่องจากตำแหน่งที่ AI สอนไว้ (ใช้เมื่ออ่านหน้าเดิมซ้ำ)
+ *
+ * @returns {Array<string>} บรรทัด "หัวข้อ: ค่า" (ว่าง = หน้านี้ไม่ตรงกับที่สอน)
+ */
+function applyTaughtFields(fields, words, width, height) {
+    const rows = [];
+
+    if (!Array.isArray(fields) || fields.length === 0) return rows;
+    if (!(width > 0) || !(height > 0)) return rows;
+
+    const items = (Array.isArray(words) ? words : [])
+        .map(function (word) {
+            const x = Number(word && word.x);
+            const y = Number(word && word.y);
+            const w = Number(word && word.width);
+            const h = Number(word && word.height);
+            const text = String((word && word.text) || "").trim();
+
+            if (![x, y, w, h].every(isFinite)) return null;
+            if (text === "") return null;
+
+            return {
+                text: text,
+                cx: (x + w / 2) / width,
+                cy: (y + h / 2) / height
+            };
+        })
+        .filter(Boolean);
+
+    if (items.length === 0) return rows;
+
+    // เผื่อระยะคลาดเล็กน้อย (สแกนเอียง/ความละเอียดต่างกัน)
+    const slackX = 0.006;
+    const slackY = 0.012;
+
+    fields.forEach(function (field) {
+        const box = field && field.valueBox;
+
+        if (!box) return;
+
+        const picked = items.filter(function (item) {
+            return item.cx >= box.x - slackX &&
+                item.cx <= box.x + box.w + slackX &&
+                item.cy >= box.y - slackY &&
+                item.cy <= box.y + box.h + slackY;
+        });
+
+        if (picked.length === 0) return;
+
+        picked.sort(function (a, b) {
+            return a.cy - b.cy || a.cx - b.cx;
+        });
+
+        const value = picked
+            .map(function (item) { return item.text; })
+            .join(" ")
+            .trim();
+
+        if (value === "" || value.length > 120) return;
+
+        rows.push(field.title + ": " + value);
+    });
+
+    return rows;
+}
+
 // confidence ต่ำสุดของคำในบรรทัดนั้น (null = ไม่มีคำให้วัด)
 // ใช้ตัดสินว่าคู่คำที่ AI แก้ควรถูกจำไว้ใช้ตอน AI ปิดหรือไม่
 function lineConfidence(line, words) {
@@ -679,6 +916,8 @@ async function extractPdfText(data, options) {
                 let layoutApplied = false;
                 // ข้อความ "หัวข้อ: ค่า" ที่ AI จัดให้ของหน้านี้ (null = ใช้บรรทัดปกติ)
                 let structuredText = null;
+                // "หัวข้อ: ค่า" ที่ประกอบเองได้จากตำแหน่งที่ AI เคยสอนไว้
+                let taughtText = null;
 
                 if (useOcr && needsOcr) {
                     try {
@@ -748,6 +987,19 @@ async function extractPdfText(data, options) {
                                     if (ordered.matched >= MIN_BLUEPRINT_LINES) {
                                         ocrLines = ordered.lines;
                                         blueprintPages.push(pageNumber);
+
+                                        // หน้าเดิมที่ AI เคยสอนตำแหน่งช่องไว้ =
+                                        // อ่านค่าจากกล่องเดิมแล้วประกอบ "หัวข้อ: ค่า" เอง
+                                        const taughtRows = applyTaughtFields(
+                                            blueprintMatch.blueprint.fields,
+                                            ocr.words,
+                                            ocr.width,
+                                            ocr.height
+                                        );
+
+                                        if (taughtRows.length > 0) {
+                                            taughtText = taughtRows.join("\n");
+                                        }
                                     }
                                 }
                             }
@@ -757,6 +1009,8 @@ async function extractPdfText(data, options) {
                             // ตำแหน่งคำ/กล่อง จึงตรวจคำบนภาพได้เหมือนเดิม
                             let aiUsed = false;
                             let fixedCount = 0;
+                            // ช่องข้อมูลที่ AI สอนตำแหน่งในรอบนี้ (เก็บลงผังหน้า)
+                            let taughtFields = [];
 
                             if (aiConfig) {
                                 if (typeof opts.onProgress === "function") {
@@ -868,6 +1122,16 @@ async function extractPdfText(data, options) {
 
                                             aiTitles.push(title);
                                         });
+
+                                        // จำตำแหน่งของแต่ละช่อง (หัวข้อ + กล่องของค่า)
+                                        // เพื่อให้ครั้งถัดไปอ่านหน้าเดิมได้เองโดยไม่ต้องใช้ AI
+                                        taughtFields = learnFieldPositions(
+                                            ai.structured,
+                                            ocr.words,
+                                            ocrLines,
+                                            ocr.width,
+                                            ocr.height
+                                        );
                                     }
 
                                     aiPages.push(pageNumber);
@@ -890,7 +1154,13 @@ async function extractPdfText(data, options) {
                                 fixedCount
                             );
 
-                            if (blueprint) blueprints.push(blueprint);
+                            if (blueprint) {
+                                if (taughtFields.length > 0) {
+                                    blueprint.fields = taughtFields;
+                                }
+
+                                blueprints.push(blueprint);
+                            }
                         }
 
                         // เก็บภาพ+ตำแหน่งคำไว้ให้หน้าจอตรวจคำ (เฉพาะเมื่อมีคำให้ตรวจ)
@@ -932,18 +1202,23 @@ async function extractPdfText(data, options) {
                     sources.push({ lines: textLayerLines, join: joinLines });
                 }
 
-                if (structuredText !== null) {
-                    // ใช้ข้อความที่ AI จัดหัวข้อแล้วก่อน (regex "หัวข้อ: ค่า" จับง่าย)
+                // คู่ "หัวข้อ: ค่า" ของหน้านี้ — จาก AI ก่อน ถ้าไม่มีใช้ที่สอนไว้
+                const pairsText = structuredText !== null
+                    ? structuredText
+                    : taughtText;
+
+                if (pairsText !== null) {
+                    // ใช้คู่หัวข้อ:ค่าก่อน (regex จับง่าย)
                     sources.push({
-                        lines: structuredText.split("\n").map(function (line) {
+                        lines: pairsText.split("\n").map(function (line) {
                             return { text: line };
                         }),
                         join: false
                     });
 
-                    // AI มักจัดมาไม่ครบทุกช่อง — บรรทัดที่ยังไม่ถูกนำไปใส่
+                    // มักจัดมาไม่ครบทุกช่อง — บรรทัดที่ยังไม่ถูกนำไปใส่
                     // ต้องไม่หายไปจากข้อความของหน้า
-                    const covered = comparableText(structuredText);
+                    const covered = comparableText(pairsText);
 
                     const leftovers = ocrLines.filter(function (line) {
                         const text = String((line && line.text) || "").trim();
