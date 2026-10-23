@@ -509,6 +509,11 @@
                     ? result.blueprintPages
                     : [];
 
+            const structuredPages =
+                (result && Array.isArray(result.structuredPages))
+                    ? result.structuredPages
+                    : [];
+
             const textarea = el('dataSourceText');
 
             textarea.value = text;
@@ -524,6 +529,9 @@
                     : '') +
                 (aiPages.length > 0
                     ? ' · AI ช่วยแก้ ' + aiPages.length + ' หน้า'
+                    : '') +
+                (structuredPages.length > 0
+                    ? ' · จัดหัวข้อ:ค่า ' + structuredPages.length + ' หน้า'
                     : '') +
                 (aiError ? ' · AI ใช้ไม่ได้: ' + aiError : '') +
                 (result && result.joined

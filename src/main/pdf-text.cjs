@@ -122,6 +122,14 @@ function defaultWorkerPath() {
 // AI ช่วยแก้คำ + blueprint ของหน้า (ข้อมูลสำหรับฝึกให้ทำงานได้เองโดยไม่ใช้ AI)
 // ------------------------------------------------------------------
 
+// ข้อความที่เทียบกันได้ (ตัดช่องว่าง/วรรคตอนออก) — ใช้ดูว่าบรรทัดนั้น
+// ถูก AI นำไปใส่ในก้อน "หัวข้อ: ค่า" แล้วหรือยัง
+function comparableText(text) {
+    return String(text == null ? "" : text)
+        .replace(/[\s:：;•·,]+/g, "")
+        .toLowerCase();
+}
+
 // confidence ต่ำสุดของคำในบรรทัดนั้น (null = ไม่มีคำให้วัด)
 // ใช้ตัดสินว่าคู่คำที่ AI แก้ควรถูกจำไว้ใช้ตอน AI ปิดหรือไม่
 function lineConfidence(line, words) {
@@ -484,7 +492,8 @@ function linesFromLayout(words, width, height, bands) {
  *   layouts    = ลำดับการอ่าน/คอลัมน์ที่ฝึกไว้ [{ bands: [{from,to}], aspect }]
  *                — หน้าทีมีสัดส่วนใกล้เคียงจะถูกอ่านทีละคอลัมน์ตามที่ฝึก
  *   scale      = ความละเอียดที่ใช้ OCR (ตัวคูณจาก 72 DPI, ค่าเริ่มต้น ~200 DPI)
- *   ai         = { enabled, apiKey, model, prompt } ให้ AI ช่วยแก้คำหลัง tesseract
+ *   ai         = { enabled, apiKeys: [{id, value}], model, prompt, structure }
+ *                ให้ AI ช่วยแก้คำหลัง tesseract (สลับ key เองเมื่อโควตาหมด)
  *                (ไม่ส่ง/ปิด = ใช้ข้อความ tesseract อย่างเดียว)
  *   blueprints = ผังหน้าที่เคยอ่านไว้ [{ aspect, lines }] — ใช้จับคู่หน้า
  *                และเรียงลำดับบรรทัด/คอลัมน์เองโดยไม่ต้องใช้ AI
@@ -523,6 +532,8 @@ async function extractPdfText(data, options) {
     const blueprints = [];
     const blueprintPages = [];
     const aiPages = [];
+    // หน้าที่ AI จัดเป็นบรรทัด "หัวข้อ: ค่า" แล้ว
+    const structuredPages = [];
     const aiCorrections = [];
     let aiUsage = null;
     let aiError = null;
@@ -530,7 +541,12 @@ async function extractPdfText(data, options) {
 
     // AI จะทำงานเฉพาะเมื่อเปิดไว้และมี key — ไม่งั้นทุกอย่างเหมือนเดิมทุกประการ
     const aiConfig =
-        opts.ai && opts.ai.enabled && opts.ai.apiKey ? opts.ai : null;
+        opts.ai &&
+        opts.ai.enabled &&
+        Array.isArray(opts.ai.apiKeys) &&
+        opts.ai.apiKeys.length > 0
+            ? opts.ai
+            : null;
 
     // จำนวนจุดที่เย็บบรรทัด (รายงานให้หน้าจอรู้ว่าทำอะไรไปบ้าง)
     let joinedCount = 0;
@@ -603,6 +619,8 @@ async function extractPdfText(data, options) {
                 let ocrLines = [];
                 // หน้านี้ถูกจัดลำดับใหม่ตามคอลัมน์ที่ฝึกไว้หรือไม่
                 let layoutApplied = false;
+                // ข้อความ "หัวข้อ: ค่า" ที่ AI จัดให้ของหน้านี้ (null = ใช้บรรทัดปกติ)
+                let structuredText = null;
 
                 if (useOcr && needsOcr) {
                     try {
@@ -755,6 +773,33 @@ async function extractPdfText(data, options) {
                                         aiCorrections.push(fix);
                                     });
 
+                                    // AI จัด "หัวข้อ: ค่า" มาให้ = ใช้เป็นข้อความของหน้า
+                                    // (ผังหน้ายังสร้างจากบรรทัดจริงของ tesseract ด้านล่าง)
+                                    if (
+                                        Array.isArray(ai.structured) &&
+                                        ai.structured.length > 0
+                                    ) {
+                                        const rows = [];
+
+                                        ai.structured.forEach(function (item) {
+                                            const title = String(
+                                                (item && item.title) || ""
+                                            ).trim();
+                                            const value = String(
+                                                (item && item.value) || ""
+                                            ).trim();
+
+                                            if (title === "" || value === "") return;
+
+                                            rows.push(title + ": " + value);
+                                        });
+
+                                        if (rows.length > 0) {
+                                            structuredText = rows.join("\n");
+                                            structuredPages.push(pageNumber);
+                                        }
+                                    }
+
                                     aiPages.push(pageNumber);
                                 } else {
                                     // AI ใช้ไม่ได้ = ใช้ข้อความ tesseract ต่อ
@@ -814,7 +859,36 @@ async function extractPdfText(data, options) {
                     sources.push({ lines: textLayerLines, join: joinLines });
                 }
 
-                if (ocrLines.length > 0) {
+                if (structuredText !== null) {
+                    // ใช้ข้อความที่ AI จัดหัวข้อแล้วก่อน (regex "หัวข้อ: ค่า" จับง่าย)
+                    sources.push({
+                        lines: structuredText.split("\n").map(function (line) {
+                            return { text: line };
+                        }),
+                        join: false
+                    });
+
+                    // AI มักจัดมาไม่ครบทุกช่อง — บรรทัดที่ยังไม่ถูกนำไปใส่
+                    // ต้องไม่หายไปจากข้อความของหน้า
+                    const covered = comparableText(structuredText);
+
+                    const leftovers = ocrLines.filter(function (line) {
+                        const text = String((line && line.text) || "").trim();
+
+                        if (text === "") return false;
+
+                        return covered.indexOf(comparableText(text)) === -1;
+                    });
+
+                    if (leftovers.length > 0) {
+                        // ไม่เย็บบรรทัดตรงนี้ — กันช่องข้อมูลที่อยู่คนละบรรทัดถูกเชื่อมติดกัน
+                        // จน regex แยกค่าไม่ได้
+                        sources.push({
+                            lines: leftovers,
+                            join: false
+                        });
+                    }
+                } else if (ocrLines.length > 0) {
                     // หน้านี้จัดลำดับตามคอลัมน์แล้ว = ไม่ต้องเย็บบรรทัด (คนละคอลัมน์)
                     sources.push({
                         lines: ocrLines,
@@ -873,6 +947,7 @@ async function extractPdfText(data, options) {
         // หน้าที่ใช้ผังที่จำไว้จัดลำดับบรรทัด/คอลัมน์ (ไม่ใช้ AI)
         blueprintPages: blueprintPages,
         aiPages: aiPages,
+        structuredPages: structuredPages,
         aiError: aiError,
         aiCorrections: Object.keys(correctionsByWord).map(function (key) {
             return correctionsByWord[key];

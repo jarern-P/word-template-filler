@@ -2514,6 +2514,7 @@ function handleOcrFixList(message) {
                     accepted,
                     rejected,
                     last_confidence,
+                    source,
                     created_at,
                     updated_at
                 FROM ocr_fixes
@@ -3447,6 +3448,124 @@ function handleOcrLayoutDelete(message) {
 // เก็บคู่คำที่ AI แก้ให้ (ผิด -> ถูก) เพื่อใช้แทนอัตโนมัติเมื่อ AI ปิด
 //   คู่คำที่ผู้ใช้แก้เอง (source = 'user') ห้ามทับด้วยคำของ AI
 //   ถ้าคำเดิมถูกแก้เป็นคำใหม่ที่ต่างจากของเดิม = ข้าม (ให้ผู้ใช้เป็นหลัก)
+// คู่คำที่ "ห้าม" เรียนรู้จาก AI
+// ตัวเลขสั้น (<= 4 หลัก) เคยทำให้เลข 1 ในเอกสารทั้งฉบับกลายเป็นคำ
+const LEARN_SHORT_NUMBER = /^\d{1,4}$/;
+const LEARN_NUMBER_LIKE = /^[\d\s,.\-\/:]+$/;
+
+function learnDigitDistance(a, b) {
+    if (a.length !== b.length) return 99;
+
+    let diff = 0;
+
+    for (let index = 0; index < a.length; index++) {
+        if (a[index] !== b[index]) diff += 1;
+        if (diff > 1) return diff;
+    }
+
+    return diff;
+}
+
+function isUnsafeLearnedPair(wrong, right) {
+    const compactWrong = String(wrong || "").replace(/[\s,.\-\/]/g, "");
+    const compactRight = String(right || "").replace(/[\s,.\-\/]/g, "");
+
+    if (LEARN_SHORT_NUMBER.test(compactWrong)) return true;
+    if (LEARN_SHORT_NUMBER.test(compactRight)) return true;
+
+    const wrongNumber = LEARN_NUMBER_LIKE.test(wrong);
+    const rightNumber = LEARN_NUMBER_LIKE.test(right);
+
+    if (wrongNumber || rightNumber) {
+        if (!wrongNumber || !rightNumber) return true;
+
+        const a = wrong.replace(/\D/g, "");
+        const b = right.replace(/\D/g, "");
+
+        // ตัวเลขต้องยาวพอและแก้ได้แค่หลักเดียว
+        if (a.length < 5 || a.length !== b.length) return true;
+        if (a === b) return true;
+        if (learnDigitDistance(a, b) > 1) return true;
+
+        return false;
+    }
+
+    return false;
+}
+
+// ลบคู่คำที่ AI เรียนไว้แล้วไม่ปลอดภัย + คู่ย้อนกลับ (A->B กับ B->A)
+// เรียกตอนเปิดแอป — ไม่แตะคำที่ผู้ใช้แก้เอง (source != 'ai')
+function handleOcrFixPrune(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    wrong,
+                    right
+                FROM ocr_fixes
+                WHERE source = 'ai'
+            `)
+            .all();
+
+        const byWrong = {};
+
+        rows.forEach(row => {
+            byWrong[row.wrong] = row;
+        });
+
+        const remove = [];
+
+        rows.forEach(row => {
+            const reverse = byWrong[row.right];
+
+            if (isUnsafeLearnedPair(row.wrong, row.right)) {
+                remove.push(row.id);
+                return;
+            }
+
+            if (reverse && reverse.right === row.wrong) {
+                remove.push(row.id);
+            }
+        });
+
+        const deleteFix =
+            db.prepare(`DELETE FROM ocr_fixes WHERE id = ?`);
+
+        const run = db.transaction(() => {
+            remove.forEach(id => deleteFix.run(id));
+        });
+
+        run();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                removed: remove.length,
+                ids: remove
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+    }
+}
+
+
 function handleOcrFixLearn(message) {
 
     try {
@@ -3495,37 +3614,80 @@ function handleOcrFixLearn(message) {
                 WHERE wrong = ?
             `);
 
+        // คู่ย้อนกลับที่เคยจำไว้ (B->A) — ถ้ามีอยู่แล้วให้ข้ามคู่ใหม่ ไม่ลบทิ้ง
+        const selectReverse =
+            db.prepare(`
+                SELECT id
+                FROM ocr_fixes
+                WHERE source = 'ai' AND wrong = ? AND right = ?
+                LIMIT 1
+            `);
+
         const now = new Date().toISOString();
 
         let created = 0;
         let updated = 0;
         let skipped = 0;
 
+        // คัดคู่ที่ใช้ไม่ได้ทิ้งก่อน แล้วจึงตรวจคู่ย้อนกลับ
+        const candidates = [];
+
+        fixes.forEach(fix => {
+
+            const wrong = String(fix?.wrong || "").trim();
+            const right = String(fix?.right || "").trim();
+
+            if (!wrong || !right || wrong === right) {
+                skipped += 1;
+                return;
+            }
+
+            // กันทั้งบรรทัดหลุดมาเป็น "คำ" (ผิดปกติ)
+            if (wrong.length > 120 || right.length > 120) {
+                skipped += 1;
+                return;
+            }
+
+            // ห้ามจำคำที่เป็นตัวเลขสั้น / ตัวเลขคนละแบบ
+            if (isUnsafeLearnedPair(wrong, right)) {
+                skipped += 1;
+                return;
+            }
+
+            candidates.push({
+                wrong: wrong,
+                right: right,
+                confidence: Number(fix?.confidence)
+            });
+        });
+
+        const pairKeys = new Set(
+            candidates.map(item => item.wrong + "\u0000" + item.right)
+        );
+
         const run = db.transaction(() => {
 
-            fixes.forEach(fix => {
-
-                const wrong = String(fix?.wrong || "").trim();
-                const right = String(fix?.right || "").trim();
-
-                if (!wrong || !right || wrong === right) {
-                    skipped += 1;
-                    return;
-                }
-
-                // กันทั้งบรรทัดหลุดมาเป็น "คำ" (ผิดปกติ)
-                if (wrong.length > 120 || right.length > 120) {
-                    skipped += 1;
-                    return;
-                }
-
-                const confidence =
-                    Number(fix?.confidence);
+            candidates.forEach(item => {
 
                 const lastConfidence =
-                    Number.isFinite(confidence)
-                        ? confidence
+                    Number.isFinite(item.confidence)
+                        ? item.confidence
                         : null;
+
+                // คู่ย้อนกลับในชุดเดียวกัน (A->B กับ B->A) ไม่มีฝั่งไหนถูก — ข้ามทั้งคู่
+                if (pairKeys.has(item.right + "\u0000" + item.wrong)) {
+                    skipped += 1;
+                    return;
+                }
+
+                // มีคู่ย้อนกลับอยู่ในฐานข้อมูลแล้ว — ไม่จำทับ
+                if (selectReverse.get(item.right, item.wrong)) {
+                    skipped += 1;
+                    return;
+                }
+
+                const wrong = item.wrong;
+                const right = item.right;
 
                 const existing =
                     selectExisting.get(wrong);
@@ -5370,6 +5532,14 @@ parentPort.on("message", (message) => {
             case "ocr-fix-learn":
 
                 handleOcrFixLearn(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "ocr-fix-prune":
+
+                handleOcrFixPrune(message);
 
                 break;
 

@@ -825,6 +825,17 @@
     // ถ้าแทนซ้ำ (อ่านไฟล์ใหม่/แก้ข้อความอีกครั้ง) จะเติมไม้โทเพิ่มอีกตัว
     // จึงไม่แทนเมื่อมีส่วนที่เพิ่มอยู่แล้ว — แทนซ้ำกี่ครั้งผลก็เท่าเดิม
     // options.track = true → นับ hits ให้คำที่ถูกแทนจริง (ใช้ตอนอ่านไฟล์)
+    // ตัวเลขสั้น (<= 4 หลัก) ที่ AI เคยเรียนผิด (เช่น 1 -> จาก)
+    // ห้ามใช้แทนคำตรงตัว เพราะจะไปเปลี่ยนเลขที่/วันที่ทุกจุดในเอกสาร
+    const FIX_SHORT_NUMBER = /^\d{1,4}$/;
+
+    function isDangerousFix(fix) {
+        const compact = String(fix && fix.from == null ? '' : fix.from)
+            .replace(/[\s,.\-\/]/g, '');
+
+        return FIX_SHORT_NUMBER.test(compact);
+    }
+
     function applyTextFixes(text, options) {
         const source = String(text == null ? '' : text);
         const fixes = loadTextFixes().slice().sort(function (a, b) {
@@ -836,6 +847,7 @@
 
         fixes.forEach(function (fix) {
             if (fix.to === fix.from) return;
+            if (isDangerousFix(fix)) return;
 
             const suffix = fix.to.indexOf(fix.from) === 0
                 ? fix.to.slice(fix.from.length)
@@ -1002,6 +1014,10 @@
                 : [],
             // AI ช่วยอ่านหน้าไหนไปบ้าง + เหตุผลที่ AI ใช้ไม่ได้ (ถ้ามี)
             aiPages: Array.isArray(result.aiPages) ? result.aiPages : [],
+            // หน้าที่ AI จัดเป็นบรรทัด "หัวข้อ: ค่า"
+            structuredPages: Array.isArray(result.structuredPages)
+                ? result.structuredPages
+                : [],
             aiError: result.aiError || ''
         };
     }
@@ -1069,6 +1085,7 @@
                 joined: 0,
                 blueprintPages: [],
                 aiPages: [],
+                structuredPages: [],
                 aiError: ''
             };
         } else {
@@ -1108,6 +1125,9 @@
                 ? result.blueprintPages
                 : [],
             aiPages: Array.isArray(result.aiPages) ? result.aiPages : [],
+            structuredPages: Array.isArray(result.structuredPages)
+                ? result.structuredPages
+                : [],
             aiError: result.aiError || ''
         };
     }

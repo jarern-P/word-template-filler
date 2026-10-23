@@ -41,6 +41,18 @@
         '            · ปิด = ใช้ tesseract กับคลังคำที่เรียนรู้ไว้อย่างเดียว',
         '            ซึ่งทำงานได้เต็มที่โดยไม่ต้องมีเน็ตหรือเสียงบค่า API',
         '        </p>',
+
+        '        <label class="switch-toggle" for="ocrAiStructure">',
+        '            <input type="checkbox" id="ocrAiStructure">',
+        '            <span class="switch-box" aria-hidden="true"></span>',
+        '            <span class="switch-text">จัดข้อความเป็น "หัวข้อ: ค่า"</span>',
+        '        </label>',
+
+        '        <p class="hint">',
+        '            เปิด = AI เรียบเรียงแต่ละหน้าเป็นบรรทัด "หัวข้อ: ค่า"',
+        '            เช่น เลขที่: ... วันที่: ... ทำให้ regex จับค่าง่ายขึ้น',
+        '            · ปิด = ใช้ข้อความบรรทัดเดิมจาก tesseract',
+        '        </p>',
         '    </section>',
 
         '    <section class="suggest-settings">',
@@ -62,19 +74,24 @@
         '        </div>',
 
         '        <div class="field">',
-        '            <label for="ocrAiKey">API key</label>',
+        '            <label>API key (ใส่ได้หลายอัน)</label>',
+        '            <div class="ocr-ai-key-list" id="ocrAiKeyList"></div>',
         '            <div class="ocr-ai-key">',
         '                <input type="password" id="ocrAiKey" autocomplete="new-password"',
-        '                       spellcheck="false" placeholder="วาง API key ที่นี่">',
+        '                       spellcheck="false" placeholder="วาง API key ใหม่">',
         '                <button type="button" id="ocrAiKeyToggle" class="plain">แสดง</button>',
+        '                <button type="button" id="ocrAiAddKeyBtn" class="plain">เพิ่ม key</button>',
         '            </div>',
         '            <p class="hint" id="ocrAiKeyState"></p>',
+        '            <p class="hint">',
+        '                ระบบใช้ key แรกที่ใช้ได้ — ถ้า key ถึงโควตาหรือใช้ไม่ได้',
+        '                จะสลับไป key ถัดไปให้อัตโนมัติ แล้ววนกลับมาใช้ key เดิมเมื่อพ้นเวลา',
+        '            </p>',
         '        </div>',
 
         '        <div class="form-actions">',
         '            <button type="button" id="ocrAiSaveBtn">บันทึก</button>',
         '            <button type="button" id="ocrAiTestBtn" class="plain">บันทึกแล้วทดสอบ</button>',
-        '            <button type="button" id="ocrAiClearKeyBtn" class="plain">ลบ key</button>',
         '        </div>',
 
         '        <p id="ocrAiConnectionStatus" class="db-status"></p>',
@@ -122,6 +139,7 @@
     const state = {
         loaded: false,
         hasKey: false,
+        keys: [],
         defaultPrompt: '',
         defaultModel: 'gemini-2.5-flash',
         busy: false
@@ -147,7 +165,7 @@
     function setBusy(busy) {
         state.busy = !!busy;
 
-        ['ocrAiSaveBtn', 'ocrAiTestBtn', 'ocrAiClearKeyBtn',
+        ['ocrAiSaveBtn', 'ocrAiTestBtn', 'ocrAiAddKeyBtn',
             'ocrAiPromptSaveBtn', 'ocrAiPromptResetBtn',
             'ocrAiStatsRefresh'].forEach(function (id) {
             const button = el(id);
@@ -182,16 +200,74 @@
         node.textContent = isDefault ? 'ใช้ prompt เริ่มต้น' : 'กำหนดเอง';
     }
 
-    function updateKeyState(hasKey) {
-        state.hasKey = !!hasKey;
+    function keyStatusText(key) {
+        if (!key) return '';
 
+        if (key.status === 'invalid') return 'ใช้ไม่ได้';
+
+        if (key.status === 'cooldown') {
+            const seconds = Math.max(
+                0,
+                Math.ceil((Number(key.retryAt) - Date.now()) / 1000)
+            );
+
+            return seconds > 0
+                ? 'ถึงโควตา — รออีก ' + seconds + ' วินาที'
+                : 'ถึงโควตา — พร้อมใช้รอบถัดไป';
+        }
+
+        return 'พร้อมใช้';
+    }
+
+    function renderKeys(keys) {
+        state.keys = Array.isArray(keys) ? keys : [];
+        state.hasKey = state.keys.length > 0;
+
+        const host = el('ocrAiKeyList');
+
+        if (host) {
+            host.innerHTML = '';
+
+            state.keys.forEach(function (key) {
+                const row = document.createElement('div');
+                row.className = 'ocr-ai-key-row';
+
+                const hint = document.createElement('code');
+                hint.textContent = key.hint || '(ไม่มีชื่อ)';
+                row.appendChild(hint);
+
+                const status = document.createElement('span');
+                status.className = 'ocr-ai-key-status ' +
+                    (key.status === 'invalid'
+                        ? 'error'
+                        : (key.status === 'cooldown' ? 'warn' : 'ok'));
+                status.textContent = keyStatusText(key);
+                row.appendChild(status);
+
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'plain';
+                remove.dataset.keyId = key.id || '';
+                remove.textContent = 'ลบ';
+                remove.disabled = state.busy;
+                row.appendChild(remove);
+
+                host.appendChild(row);
+            });
+        }
+
+        updateKeyState(state.hasKey);
+    }
+
+    function updateKeyState(hasKey) {
         const node = el('ocrAiKeyState');
 
         if (!node) return;
 
         node.textContent = hasKey
-            ? 'มี key บันทึกไว้แล้ว (เข้ารหัสในเครื่อง) — เว้นช่องว่างไว้เพื่อใช้ key เดิม'
-            : 'ยังไม่มี key — AI จะไม่ทำงานจนกว่าจะใส่ key แล้วบันทึก';
+            ? 'มี key ' + state.keys.length + ' อัน (เข้ารหัสในเครื่อง) — ' +
+                'ระบบจะสลับ key เองเมื่ออันหนึ่งถึงโควตาหรือใช้ไม่ได้'
+            : 'ยังไม่มี key — AI จะไม่ทำงานจนกว่าจะเพิ่ม key';
 
         node.className = 'hint' + (hasKey ? ' ok' : '');
     }
@@ -200,10 +276,12 @@
         if (!config) return;
 
         const enabled = el('ocrAiEnabled');
+        const structure = el('ocrAiStructure');
         const model = el('ocrAiModel');
         const prompt = el('ocrAiPrompt');
 
         if (enabled) enabled.checked = config.enabled === true;
+        if (structure) structure.checked = config.structure !== false;
 
         if (model) {
             model.value = config.model || state.defaultModel;
@@ -217,7 +295,7 @@
         state.defaultModel = config.defaultModel || state.defaultModel;
 
         setPromptMeta(config.isDefaultPrompt === true);
-        updateKeyState(config.hasKey === true);
+        renderKeys(config.keys || []);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -274,18 +352,24 @@
         const model = el('ocrAiModel');
         const key = el('ocrAiKey');
 
+        const structure = el('ocrAiStructure');
+
         const payload = {
             enabled: !!(enabled && enabled.checked),
+            structure: !!(structure && structure.checked),
             model: model ? String(model.value || '').trim() : '',
             prompt: currentPrompt()
         };
 
-        // ช่อง key ว่าง = ใช้ key เดิม (ไม่ส่งไป = ไม่ทับ)
+        // ช่อง key ว่าง = ไม่เพิ่ม key ใหม่
         const typedKey = key ? String(key.value || '').trim() : '';
 
         if (typedKey !== '') {
-            payload.apiKey = typedKey;
+            payload.addKey = typedKey;
         }
+
+        if (opts.addKey) payload.addKey = String(opts.addKey).trim();
+        if (opts.removeKeyId) payload.removeKeyId = opts.removeKeyId;
 
         try {
             const result = await bridge.ocrAiSaveConfig(payload);
@@ -367,21 +451,14 @@
         }
     }
 
-    async function clearKey() {
-        const confirmed = await scope.AppDialog.confirm(
-            'ลบ API key ที่บันทึกไว้?\n' +
-            'AI จะหยุดทำงานจนกว่าจะใส่ key ใหม่ — การอ่านไฟล์ยังใช้ tesseract + คลังคำได้ตามเดิม',
-            { danger: true }
-        );
+    async function addKey() {
+        const key = el('ocrAiKey');
+        const value = key ? String(key.value || '').trim() : '';
 
-        if (!confirmed) return;
-
-        const bridge = api();
-
-        if (!bridge || typeof bridge.ocrAiSaveConfig !== 'function') {
+        if (value === '') {
             setStatus(
                 'ocrAiConnectionStatus',
-                'ลบ key ได้เฉพาะในแอป (Electron)',
+                'วาง API key ก่อนกด "เพิ่ม key"',
                 'warn'
             );
             return;
@@ -389,32 +466,44 @@
 
         setBusy(true);
 
-        try {
-            const result = await bridge.ocrAiSaveConfig({
-                enabled: false,
-                model: el('ocrAiModel') ? el('ocrAiModel').value : '',
-                prompt: currentPrompt(),
-                clearKey: true
-            });
+        const saved = await saveConfig({
+            addKey: value,
+            statusText: 'เพิ่ม key แล้ว'
+        });
 
-            if (!result || !result.ok) {
-                throw new Error(
-                    (result && result.error) || 'ลบ key ไม่สำเร็จ'
-                );
-            }
+        setBusy(false);
 
-            applyConfig(result.config);
-
-            setStatus('ocrAiConnectionStatus', 'ลบ API key แล้ว', 'ok');
-        } catch (error) {
-            setStatus(
-                'ocrAiConnectionStatus',
-                (error && error.message) || 'ลบ key ไม่สำเร็จ',
-                'error'
-            );
-        } finally {
-            setBusy(false);
+        if (saved && key) {
+            key.value = '';
+            loadStats();
         }
+    }
+
+    async function removeKey(keyId) {
+        if (!keyId) return;
+
+        const target = state.keys.find(function (key) {
+            return key.id === keyId;
+        });
+
+        const confirmed = await scope.AppDialog.confirm(
+            'ลบ API key ' + ((target && target.hint) || '') + '?\n' +
+            'key อื่นที่เหลือยังใช้ต่อได้ — ถ้าลบหมด AI จะหยุดทำงาน',
+            { danger: true }
+        );
+
+        if (!confirmed) return;
+
+        setBusy(true);
+
+        const saved = await saveConfig({
+            removeKeyId: keyId,
+            statusText: 'ลบ key แล้ว'
+        });
+
+        setBusy(false);
+
+        if (saved) loadStats();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -516,10 +605,49 @@
 
         if (key) {
             key.addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault();
+                if (event.key !== 'Enter') return;
+
+                event.preventDefault();
+
+                if (String(key.value || '').trim() !== '') {
+                    addKey();
+                } else {
                     saveConfig();
                 }
+            });
+        }
+
+        const structure = el('ocrAiStructure');
+
+        if (structure) {
+            structure.addEventListener('change', function () {
+                setStatus(
+                    'ocrAiConnectionStatus',
+                    (structure.checked ? 'เปิด' : 'ปิด') +
+                        'จัดหัวข้อ:ค่า — กด "บันทึก" เพื่อให้มีผล',
+                    'warn'
+                );
+            });
+        }
+
+        const addKeyBtn = el('ocrAiAddKeyBtn');
+
+        if (addKeyBtn) {
+            addKeyBtn.addEventListener('click', function () {
+                if (state.busy) return;
+                addKey();
+            });
+        }
+
+        const keyList = el('ocrAiKeyList');
+
+        if (keyList) {
+            keyList.addEventListener('click', function (event) {
+                const button = event.target.closest('button[data-key-id]');
+
+                if (!button || state.busy) return;
+
+                removeKey(button.dataset.keyId);
             });
         }
 
@@ -549,15 +677,6 @@
             testBtn.addEventListener('click', function () {
                 if (state.busy) return;
                 testConnection();
-            });
-        }
-
-        const clearBtn = el('ocrAiClearKeyBtn');
-
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function () {
-                if (state.busy) return;
-                clearKey();
             });
         }
 

@@ -4450,6 +4450,56 @@ body.table-ratio-dragging .table-ratio-handle {
     min-width: 72px;
 }
 
+/* รายการ API key ที่บันทึกไว้ — แต่ละแถวมี hint, สถานะ และปุ่มลบ */
+.ocr-ai-key-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.ocr-ai-key-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border: 1px solid var(--line, #d8dde6);
+    border-radius: 8px;
+    background: var(--surface-soft, #f7f9fc);
+}
+
+.ocr-ai-key-row code {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12.5px;
+    word-break: break-all;
+}
+
+.ocr-ai-key-status {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.ocr-ai-key-status.ok {
+    color: #1f7a4d;
+}
+
+.ocr-ai-key-status.warn {
+    color: #a86800;
+}
+
+.ocr-ai-key-status.error {
+    color: #b3261e;
+}
+
+.ocr-ai-key-row button {
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 3px 10px;
+}
+
 /* prompt ของระบบ — ต้องอ่าน/แก้ยาว ๆ จึงสูงกว่าช่องทั่วไป */
 .field textarea.ocr-prompt {
     min-height: 240px;

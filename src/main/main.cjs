@@ -326,6 +326,38 @@ function startDbWorker() {
     return dbReadyPromise;
 }
 
+// ลบคู่คำที่ AI เรียนไว้แล้วไม่ปลอดภัย (เช่น 1 -> จาก) และคู่ย้อนกลับ
+// ทำตอนเปิดแอป — ไม่แตะคำที่ผู้ใช้แก้เอง (worker ตรวจ source = 'ai' ให้)
+async function pruneUnsafeLearnedFixes() {
+
+    try {
+
+        await dbReady();
+
+        const response =
+            await dbRequest("ocr-fix-prune", {});
+
+        const removed =
+            Number(response?.result?.removed) || 0;
+
+        if (removed > 0) {
+            console.log(
+                "ลบคู่คำที่ AI เรียนไว้ไม่ปลอดภัย:",
+                removed
+            );
+        }
+
+    } catch (error) {
+
+        // ล้างไม่ได้ก็ไม่ควรกันแอปเปิด
+        console.error(
+            "ล้างคู่คำที่เรียนรู้ไว้ไม่สำเร็จ:",
+            error
+        );
+    }
+}
+
+
 // ============================================================
 // DB Request Management
 // ============================================================
@@ -2005,7 +2037,11 @@ ipcMain.handle(
 
                 model: result.model,
 
-                message: result.message
+                message: result.message,
+
+                keyHint: result.keyHint || "",
+
+                keyCount: result.keyCount || 0
 
             };
 
@@ -2262,7 +2298,11 @@ ipcMain.handle(
                 const config =
                     ai.getConfig(getDataPath());
 
-                if (config.enabled && config.apiKey) {
+                if (
+                    config.enabled &&
+                    Array.isArray(config.apiKeys) &&
+                    config.apiKeys.length > 0
+                ) {
                     aiConfig = config;
                 }
 
@@ -2382,6 +2422,8 @@ ipcMain.handle(
                 // หน้าที่ AI ช่วยแก้ + เหตุผลที่ AI ใช้ไม่ได้ (ถ้ามี)
                 aiPages: result.aiPages || [],
                 aiError: result.aiError || null,
+                // หน้าที่ถูกจัดเป็นบรรทัด "หัวข้อ: ค่า" (ใช้ตรวจสอบบนหน้าจอ)
+                structuredPages: result.structuredPages || [],
                 // จำนวนคู่คำที่เรียนรู้เพิ่มในครั้งนี้
                 learned: Array.isArray(result.aiCorrections)
                     ? result.aiCorrections.length
@@ -2938,6 +2980,9 @@ app.on(
 app.whenReady().then(() => {
 
     startDbWorker();
+
+    // ไม่ต้องรอผล — หน้าจอเปิดได้ทันที
+    pruneUnsafeLearnedFixes();
 
     createWindow();
 
