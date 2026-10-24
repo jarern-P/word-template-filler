@@ -7,7 +7,7 @@
 // โครงสร้าง (เวอร์ชัน 2):
 //   {
 //     "version": 2,
-//     "provider": "paddle",          // paddle | gemini | iloveapi
+//     "provider": "paddle",          // paddle | paddleVL | gemini | iloveapi
 //     "enabled": true,               // ใช้ OCR เมื่ออัปโหลด PDF
 //     "mode": "auto",                // auto = เฉพาะหน้าที่ไม่มีข้อความ
 //                                    // always = ทุกหน้า
@@ -29,7 +29,7 @@ const path = require('path');
 
 const CONFIG_FILE = 'ocr-config.json';
 
-const PROVIDERS = ['paddle', 'gemini', 'iloveapi'];
+const PROVIDERS = ['paddle', 'paddleVL', 'gemini', 'iloveapi'];
 const MODES = ['auto', 'always'];
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';

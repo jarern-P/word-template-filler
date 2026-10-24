@@ -17,6 +17,9 @@ const ocrConfig =
 const ocrPaddle =
     require("./ocr-paddle.cjs");
 
+const ocrPaddleVl =
+    require("./ocr-paddle-vl.cjs");
+
 
 // ============================================================
 // Locale
@@ -1577,6 +1580,8 @@ ipcMain.handle(
 //   ocr:config-save -> บันทึกค่าตั้ง
 //   ocr:status      -> ตรวจว่าไลบรารี/โมเดลพร้อมใช้หรือยัง
 //   ocr:prepare     -> เริ่ม OCR ล่วงหน้า (ดาวน์โหลดโมเดลครั้งแรก)
+//   ocr:vl-status   -> สถานะ PaddleOCR-VL (engine + โมเดลในเครื่อง)
+//   ocr:vl-prepare  -> ดาวน์โหลด engine/โมเดล PaddleOCR-VL แล้วเริ่มเซิร์ฟเวอร์
 
 ipcMain.handle(
     "ocr:config-get",
@@ -1682,6 +1687,77 @@ ipcMain.handle(
 
             console.error(
                 "ocr:prepare error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:vl-status",
+    async () => {
+
+        try {
+
+            return {
+                ok: true,
+                ...ocrPaddleVl.status(getDataPath())
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:vl-prepare",
+    async (event) => {
+
+        try {
+
+            const result =
+                await ocrPaddleVl.prepare(
+                    getDataPath(),
+                    function (progress) {
+
+                        if (event.sender.isDestroyed()) {
+                            return;
+                        }
+
+                        event.sender.send(
+                            "ocr:vl-progress",
+                            progress
+                        );
+                    }
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr:vl-prepare error:",
                 error
             );
 
@@ -1848,6 +1924,16 @@ ipcMain.handle(
 
             // ── PaddleOCR / Gemini: OCR ทีละหน้าตามที่ตั้งไว้ ──
             let ocrPage = null;
+
+            if (useOcr && settings.provider === "paddleVL") {
+
+                ocrPage = function (page) {
+
+                    return ocrPaddleVl.ocrPage(page, {
+                        dataPath: getDataPath()
+                    });
+                };
+            }
 
             if (useOcr && settings.provider === "gemini") {
 
@@ -2442,6 +2528,39 @@ app.whenReady().then(() => {
     );
 
 });
+
+
+app.on(
+    "will-quit",
+    () => {
+
+        // คืนหน่วยความจำ/ปิดเซิร์ฟเวอร์ OCR ที่แอปเป็นคนเริ่ม
+        ocrPaddleVl.stop();
+
+    }
+);
+
+
+// ปิด llama-server ของ PaddleOCR-VL ก่อนจบโปรเซส
+// (ถ้าไม่ปิด โปรเซสลูกจะค้างกินหน่วยความจำต่อหลังปิดหน้าต่าง)
+app.on(
+    "before-quit",
+    () => {
+
+        try {
+
+            ocrPaddleVl.stop();
+
+        } catch (error) {
+
+            console.error(
+                "ocrPaddleVl.stop error:",
+                error
+            );
+        }
+
+    }
+);
 
 
 app.on(

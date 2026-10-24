@@ -153,6 +153,31 @@ contextBridge.exposeInMainWorld(
         ocrPrepare: () =>
             ipcRenderer.invoke("ocr:prepare"),
 
+        // PaddleOCR-VL (Local AI) — engine llama.cpp + โมเดลในเครื่อง
+        ocrVlStatus: () =>
+            ipcRenderer.invoke("ocr:vl-status"),
+
+        // ดาวน์โหลด engine/โมเดลครั้งแรก (~1.8 GB) แล้วเริ่มเซิร์ฟเวอร์
+        ocrVlPrepare: () =>
+            ipcRenderer.invoke("ocr:vl-prepare"),
+
+        // ความคืบหน้าการดาวน์โหลด PaddleOCR-VL
+        // callback ได้ { stage, label, received, total, percent }
+        onOcrVlProgress: (callback) => {
+            if (typeof callback !== "function") return;
+
+            ipcRenderer.on(
+                "ocr:vl-progress",
+                (event, progress) => callback(progress)
+            );
+        },
+
+        offOcrVlProgress: () => {
+            ipcRenderer.removeAllListeners(
+                "ocr:vl-progress"
+            );
+        },
+
         // ความคืบหน้าระหว่างอ่าน PDF
         // callback ได้ { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare', progress }
         onPdfExtractProgress: (callback) => {

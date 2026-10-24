@@ -1,9 +1,10 @@
 // OCR Config Page - ตั้งค่าว่าจะใช้ OCR จากที่ไหนเมื่ออัปโหลด PDF
 //
 // ผู้ให้บริการที่เลือกได้:
-//   - PaddleOCR (Local AI) ทำงานในเครื่อง ไม่ต้องใช้ API key
-//   - Gemini API           ใช้ API key ของ Google AI Studio
-//   - i love api           ใช้ Public Key ของ iLoveAPI (iLovePDF)
+//   - PaddleOCR (Local AI)    ทำงานในเครื่อง ไม่ต้องใช้ API key
+//   - PaddleOCR-VL (Local AI) โมเดล vision-language ในเครื่อง (llama.cpp)
+//   - Gemini API              ใช้ API key ของ Google AI Studio
+//   - i love api              ใช้ Public Key ของ iLoveAPI (iLovePDF)
 //
 // ค่าตั้งถูกเก็บฝั่ง main process ที่ data/ocr-config.json
 // (ดู src/main/ocr-config.cjs) — API key ถูกเข้ารหัสด้วย safeStorage
@@ -37,6 +38,18 @@
         '                    <small>ทำงานในเครื่องนี้ทั้งหมด — ไม่ต้องใช้ API key ',
         '                        และไม่ต้องต่ออินเทอร์เน็ตหลังโหลดโมเดลครั้งแรกแล้ว',
         '                        (โมเดล PP-OCRv5 ภาษาไทย + อังกฤษ)</small>',
+        '                </span>',
+        '            </label>',
+
+        '            <label class="ocr-provider">',
+        '                <input type="radio" name="ocrProvider" value="paddleVL" id="ocrProviderPaddleVl">',
+        '                <span class="ocr-provider-body">',
+        '                    <span class="ocr-provider-title">',
+        '                        <strong>PaddleOCR-VL 0.9B (Local AI)</strong>',
+        '                        <span class="ocr-badge ok">ในเครื่อง · ฟรี</span>',
+        '                    </span>',
+        '                    <small>โมเดล vision-language รุ่นใหม่ อ่านข้อความ ตาราง และเอกสารซับซ้อน ',
+        '                        ทำงานในเครื่องทั้งหมด — ดาวน์โหลดโมเดลครั้งแรก ~1.8 GB</small>',
         '                </span>',
         '            </label>',
 
@@ -116,6 +129,33 @@
         '            <button id="ocrRefreshBtn" type="button" class="plain">ตรวจสอบสถานะ</button>',
         '            <button id="ocrPrepareBtn" type="button" class="plain">เตรียมโมเดล OCR</button>',
         '        </div>',
+        '    </section>',
+
+        // ── PaddleOCR-VL ──
+        '    <section class="suggest-settings ocr-provider-settings" id="ocrVlSection" hidden>',
+        '        <h2>PaddleOCR-VL 0.9B (Local AI)</h2>',
+
+        '        <p class="hint">',
+        '            ทำงานในเครื่องผ่าน llama.cpp — หลังดาวน์โหลดเสร็จไม่ต้องต่ออินเทอร์เน็ต ',
+        '            และไม่มีข้อมูลส่งออกไปข้างนอก ครั้งแรกต้องดาวน์โหลด engine (~24 MB) ',
+        '            และโมเดล (~1.8 GB) โดยใช้เวลาหลายนาทีต่อหน้าเมื่อทำงานด้วย CPU',
+        '        </p>',
+
+        '        <div class="ocr-status-box">',
+        '            <p class="ocr-status-head" id="ocrVlStatusTitle">กำลังตรวจสอบสถานะ...</p>',
+        '            <p class="hint" id="ocrVlStatusDetail"></p>',
+        '        </div>',
+
+        '        <div class="form-actions page-actions ocr-actions">',
+        '            <button id="ocrVlRefreshBtn" type="button" class="plain">ตรวจสอบสถานะ</button>',
+        '            <button id="ocrVlPrepareBtn" type="button" class="plain">เตรียมโมเดล (~1.8 GB)</button>',
+        '        </div>',
+
+        '        <p class="hint">',
+        '            ดาวน์โหลดจาก GitHub (llama.cpp) และ Hugging Face (PaddleOCR-VL 1.6) ',
+        '            เก็บไว้ในโฟลเดอร์ data ของแอป — ลบได้ภายหลังหากไม่ใช้ ',
+        '            แต่ครั้งถัดไปที่เลือกผู้ให้บริการนี้จะต้องดาวน์โหลดใหม่',
+        '        </p>',
         '    </section>',
 
         // ── Gemini ──
@@ -242,6 +282,7 @@
         const provider = selectedProvider();
 
         el('ocrPaddleSection').hidden = provider !== 'paddle';
+        el('ocrVlSection').hidden = provider !== 'paddleVL';
         el('ocrGeminiSection').hidden = provider !== 'gemini';
         el('ocrIloveSection').hidden = provider !== 'iloveapi';
     }
@@ -398,6 +439,151 @@
 
         renderStatus(result);
         return result;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // สถานะ PaddleOCR-VL (ในเครื่อง)
+    // ──────────────────────────────────────────────────────────────
+
+    function renderVlStatus(result) {
+        const title = el('ocrVlStatusTitle');
+        const detail = el('ocrVlStatusDetail');
+
+        if (!result || result.ok === false) {
+            title.textContent = 'ตรวจสอบสถานะไม่สำเร็จ';
+            title.className = 'ocr-status-head error';
+            detail.textContent = (result && result.error) || 'ไม่ทราบสาเหตุ';
+            return;
+        }
+
+        if (!result.runtimeReady) {
+            title.textContent = 'ยังไม่มี engine สำหรับ OCR';
+            title.className = 'ocr-status-head error';
+            detail.textContent =
+                'ต้องดาวน์โหลด llama.cpp (~24 MB) ก่อน — กด "เตรียมโมเดล"';
+            return;
+        }
+
+        if (!result.modelReady) {
+            title.textContent = 'ยังไม่มีโมเดล PaddleOCR-VL';
+            title.className = 'ocr-status-head error';
+            detail.textContent =
+                'ต้องดาวน์โหลดโมเดล (~1.8 GB) ก่อน — กด "เตรียมโมเดล" ' +
+                (result.modelBytes > 0
+                    ? '(มีแล้ว ' + formatSize(result.modelBytes) + ')'
+                    : '');
+            return;
+        }
+
+        title.textContent = 'พร้อมใช้งาน';
+        title.className = 'ocr-status-head ok';
+
+        detail.textContent = [
+            'ภาษา: ' + (result.language || '-'),
+            'โมเดลในเครื่อง ' + formatSize(result.modelBytes),
+            result.running
+                ? 'เซิร์ฟเวอร์ OCR กำลังทำงาน'
+                : 'เซิร์ฟเวอร์จะเริ่มเมื่อใช้ครั้งแรก',
+            'ที่เก็บ: ' + (result.modelPath || '-')
+        ].join(' · ');
+    }
+
+    async function refreshVlStatus() {
+        const electron = api();
+
+        if (!electron || !electron.ocrVlStatus) {
+            el('ocrVlStatusTitle').textContent = 'เปิดในแอปเพื่อตรวจสอบสถานะ';
+            el('ocrVlStatusTitle').className = 'ocr-status-head error';
+            el('ocrVlStatusDetail').textContent = '';
+            return null;
+        }
+
+        el('ocrVlStatusTitle').textContent = 'กำลังตรวจสอบสถานะ...';
+        el('ocrVlStatusTitle').className = 'ocr-status-head';
+        el('ocrVlStatusDetail').textContent = '';
+
+        let result = null;
+
+        try {
+            result = await electron.ocrVlStatus();
+        } catch (error) {
+            result = {
+                ok: false,
+                error: (error && error.message) || 'ตรวจสอบสถานะไม่สำเร็จ'
+            };
+        }
+
+        renderVlStatus(result);
+        return result;
+    }
+
+    async function prepareVlModels() {
+        const electron = api();
+        const button = el('ocrVlPrepareBtn');
+
+        if (!electron || !electron.ocrVlPrepare) {
+            setStatus('เปิดหน้านี้ในแอปเพื่อเตรียมโมเดล', 'error');
+            return;
+        }
+
+        const onProgress = function (progress) {
+            if (!progress) return;
+
+            const percent = Number(progress.percent) || 0;
+            const hasTotal = Number(progress.total) > 0;
+
+            el('ocrVlStatusTitle').textContent =
+                progress.label || 'กำลังเตรียมโมเดล...';
+            el('ocrVlStatusTitle').className = 'ocr-status-head warn';
+
+            el('ocrVlStatusDetail').textContent = hasTotal
+                ? percent + '% · ' +
+                  formatSize(progress.received) + ' / ' +
+                  formatSize(progress.total)
+                : 'กำลังเตรียมไฟล์ — อาจใช้เวลาสักครู่';
+
+            setStatus(
+                (progress.label || 'กำลังเตรียมโมเดล') +
+                (hasTotal ? ' ' + percent + '%' : '') +
+                '...',
+                'warn'
+            );
+        };
+
+        button.disabled = true;
+        button.textContent = 'กำลังเตรียมโมเดล...';
+
+        if (electron.onOcrVlProgress) {
+            electron.onOcrVlProgress(onProgress);
+        }
+
+        try {
+            const result = await electron.ocrVlPrepare();
+
+            if (!result || result.ok === false) {
+                throw new Error((result && result.error) || 'เตรียมโมเดลไม่สำเร็จ');
+            }
+
+            renderVlStatus(result);
+            setStatus('เตรียมโมเดล PaddleOCR-VL สำเร็จ — พร้อมใช้งาน', 'ok');
+
+        } catch (error) {
+            setStatus(
+                'เตรียมโมเดลไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ'),
+                'error'
+            );
+
+            await refreshVlStatus();
+
+        } finally {
+            if (electron.offOcrVlProgress) {
+                electron.offOcrVlProgress();
+            }
+
+            button.disabled = false;
+            button.textContent = 'เตรียมโมเดล (~1.8 GB)';
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -576,6 +762,8 @@
         el('ocrSaveBtn').addEventListener('click', onSave);
         el('ocrRefreshBtn').addEventListener('click', refreshStatus);
         el('ocrPrepareBtn').addEventListener('click', prepareModels);
+        el('ocrVlRefreshBtn').addEventListener('click', refreshVlStatus);
+        el('ocrVlPrepareBtn').addEventListener('click', prepareVlModels);
         el('ocrGeminiClearBtn').addEventListener('click', function () {
             clearKey('gemini');
         });
@@ -606,6 +794,7 @@
             bind();
             loadConfig();
             refreshStatus();
+            refreshVlStatus();
         }
     };
 

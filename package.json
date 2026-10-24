@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",
+    "adm-zip": "^0.6.1",
     "better-sqlite3": "^13.0.3",
     "onnxruntime-node": "^1.30.0",
     "pdfjs-dist": "^3.11.174",

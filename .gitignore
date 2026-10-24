@@ -1,6 +1,9 @@
 # ค่าตั้งของเครื่อง (OCR / API key) — ไม่ควรติดไปกับ repo
 data/ocr-config.json
 
+# engine llama.cpp + โมเดล PaddleOCR-VL ที่ดาวน์โหลดเอง (~1.8 GB)
+data/ocr/
+
 # Logs
 logs
 *.log
