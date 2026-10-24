@@ -149,12 +149,13 @@
         '        <div class="form-actions page-actions ocr-actions">',
         '            <button id="ocrVlRefreshBtn" type="button" class="plain">ตรวจสอบสถานะ</button>',
         '            <button id="ocrVlPrepareBtn" type="button" class="plain">เตรียมโมเดล (~1.8 GB)</button>',
+        '            <button id="ocrVlRemoveBtn" type="button" class="plain danger" disabled>ถอนการติดตั้ง</button>',
         '        </div>',
 
         '        <p class="hint">',
         '            ดาวน์โหลดจาก GitHub (llama.cpp) และ Hugging Face (PaddleOCR-VL 1.6) ',
-        '            เก็บไว้ในโฟลเดอร์ data ของแอป — ลบได้ภายหลังหากไม่ใช้ ',
-        '            แต่ครั้งถัดไปที่เลือกผู้ให้บริการนี้จะต้องดาวน์โหลดใหม่',
+        '            เก็บไว้ในโฟลเดอร์ data ของแอป — "ถอนการติดตั้ง" จะลบ engine และโมเดล ',
+        '            คืนพื้นที่ทั้งหมด แต่ครั้งถัดไปที่เลือกผู้ให้บริการนี้จะต้องดาวน์โหลดใหม่',
         '        </p>',
         '    </section>',
 
@@ -248,8 +249,11 @@
 
         if (value < 1024) return value + ' B';
         if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+        if (value < 1024 * 1024 * 1024) {
+            return (value / (1024 * 1024)).toFixed(1) + ' MB';
+        }
 
-        return (value / (1024 * 1024)).toFixed(1) + ' MB';
+        return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -448,6 +452,15 @@
     function renderVlStatus(result) {
         const title = el('ocrVlStatusTitle');
         const detail = el('ocrVlStatusDetail');
+        const removeBtn = el('ocrVlRemoveBtn');
+
+        // ปุ่มถอนการติดตั้งใช้ได้เมื่อมีไฟล์อยู่ในเครื่องเท่านั้น
+        if (removeBtn) {
+            removeBtn.disabled =
+                !result ||
+                result.ok === false ||
+                !(result.runtimeReady || result.modelReady);
+        }
 
         if (!result || result.ok === false) {
             title.textContent = 'ตรวจสอบสถานะไม่สำเร็จ';
@@ -553,6 +566,9 @@
         button.disabled = true;
         button.textContent = 'กำลังเตรียมโมเดล...';
 
+        // ห้ามลบไฟล์ระหว่างดาวน์โหลด
+        el('ocrVlRemoveBtn').disabled = true;
+
         if (electron.onOcrVlProgress) {
             electron.onOcrVlProgress(onProgress);
         }
@@ -583,6 +599,70 @@
 
             button.disabled = false;
             button.textContent = 'เตรียมโมเดล (~1.8 GB)';
+        }
+    }
+
+    async function removeVlModels() {
+        const electron = api();
+        const button = el('ocrVlRemoveBtn');
+
+        if (!electron || !electron.ocrVlRemove) {
+            setStatus('เปิดหน้านี้ในแอปเพื่อถอนการติดตั้ง', 'error');
+            return;
+        }
+
+        if (scope.AppDialog && scope.AppDialog.confirm) {
+            const confirmed = await scope.AppDialog.confirm(
+                'ลบ engine llama.cpp และโมเดล PaddleOCR-VL ออกจากเครื่องนี้?\n' +
+                'พื้นที่ที่ใช้อยู่จะถูกคืนกลับทั้งหมด — ' +
+                'ถ้าจะใช้ PaddleOCR-VL อีกครั้ง จะต้องดาวน์โหลดใหม่ (~1.8 GB)',
+                {
+                    title: 'ถอนการติดตั้ง PaddleOCR-VL',
+                    okText: 'ถอนการติดตั้ง',
+                    danger: true
+                }
+            );
+
+            if (!confirmed) return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'กำลังถอนการติดตั้ง...';
+
+        // ห้ามกดเตรียมโมเดลซ้ำระหว่างลบไฟล์
+        el('ocrVlPrepareBtn').disabled = true;
+
+        setStatus('กำลังลบ engine และโมเดล PaddleOCR-VL...', 'warn');
+
+        try {
+            const result = await electron.ocrVlRemove();
+
+            if (!result || result.ok === false) {
+                throw new Error((result && result.error) || 'ถอนการติดตั้งไม่สำเร็จ');
+            }
+
+            renderVlStatus(result);
+
+            setStatus(
+                'ถอนการติดตั้ง PaddleOCR-VL แล้ว' +
+                (result.removedBytes > 0
+                    ? ' — คืนพื้นที่ ' + formatSize(result.removedBytes)
+                    : ''),
+                'ok'
+            );
+
+        } catch (error) {
+            setStatus(
+                'ถอนการติดตั้งไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ'),
+                'error'
+            );
+
+            await refreshVlStatus();
+
+        } finally {
+            el('ocrVlPrepareBtn').disabled = false;
+            button.textContent = 'ถอนการติดตั้ง';
         }
     }
 
@@ -764,6 +844,7 @@
         el('ocrPrepareBtn').addEventListener('click', prepareModels);
         el('ocrVlRefreshBtn').addEventListener('click', refreshVlStatus);
         el('ocrVlPrepareBtn').addEventListener('click', prepareVlModels);
+        el('ocrVlRemoveBtn').addEventListener('click', removeVlModels);
         el('ocrGeminiClearBtn').addEventListener('click', function () {
             clearKey('gemini');
         });

@@ -124,6 +124,37 @@ function fileState(file, expectedSize) {
     }
 }
 
+// ขนาดไฟล์ทั้งหมดในโฟลเดอร์ (ใช้รายงานพื้นที่ที่คืนกลับมา)
+function directoryBytes(dir) {
+    let entries;
+
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    } catch (error) {
+        return 0;
+    }
+
+    let total = 0;
+
+    entries.forEach(function (entry) {
+        const full = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+            total += directoryBytes(full);
+            return;
+        }
+
+        try {
+            total += fs.statSync(full).size;
+        } catch (error) {
+            // ไฟล์ถูกลบไปแล้ว — ไม่นับ
+        }
+    });
+
+    return total;
+}
+
 function runtimeReady(dataPath) {
     const dir = runtimeDir(dataPath);
 
@@ -1029,9 +1060,71 @@ async function ocrPage(page, options) {
     };
 }
 
+// รอให้โปรเซสลูกจบจริงก่อน — บน Windows ไฟล์จะยังถูกล็อกอยู่
+// ถ้าลบทันทีที่สั่ง kill
+function waitForExit(entry, timeoutMs) {
+    if (
+        !entry ||
+        !entry.child ||
+        entry.exited ||
+        entry.child.exitCode !== null ||
+        entry.child.signalCode !== null
+    ) {
+        return Promise.resolve();
+    }
+
+    return new Promise(function (resolve) {
+        const timer = setTimeout(finish, timeoutMs);
+
+        function finish() {
+            clearTimeout(timer);
+            entry.child.removeListener('exit', finish);
+            resolve();
+        }
+
+        entry.child.once('exit', finish);
+    });
+}
+
 function stop() {
     stopEntry(server);
     server = null;
+}
+
+// ถอนการติดตั้ง: หยุดเซิร์ฟเวอร์แล้วลบ engine + โมเดลทั้งหมดในเครื่อง
+// (ครั้งถัดไปที่ใช้ต้องดาวน์โหลดใหม่ ~1.8 GB)
+async function remove(dataPath) {
+    const root = rootDir(dataPath);
+
+    if (server) {
+        const entry = server;
+
+        stopEntry(entry);
+
+        await waitForExit(entry, 10 * 1000);
+    }
+
+    const removedBytes = directoryBytes(root);
+
+    try {
+        fs.rmSync(root, {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 300
+        });
+
+    } catch (error) {
+        throw new Error(
+            'ลบไฟล์ PaddleOCR-VL ไม่สำเร็จ: ' +
+            ((error && error.message) || 'ไม่ทราบสาเหตุ') +
+            ' — ปิดโปรแกรมที่เปิดไฟล์ในโฟลเดอร์ data\\ocr อยู่แล้วลองใหม่'
+        );
+    }
+
+    return Object.assign(status(dataPath), {
+        removedBytes: removedBytes
+    });
 }
 
 module.exports = {
@@ -1039,5 +1132,6 @@ module.exports = {
     status,
     prepare,
     ocrPage,
+    remove,
     stop
 };

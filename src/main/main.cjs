@@ -1582,6 +1582,7 @@ ipcMain.handle(
 //   ocr:prepare     -> เริ่ม OCR ล่วงหน้า (ดาวน์โหลดโมเดลครั้งแรก)
 //   ocr:vl-status   -> สถานะ PaddleOCR-VL (engine + โมเดลในเครื่อง)
 //   ocr:vl-prepare  -> ดาวน์โหลด engine/โมเดล PaddleOCR-VL แล้วเริ่มเซิร์ฟเวอร์
+//   ocr:vl-remove   -> ถอนการติดตั้ง (หยุดเซิร์ฟเวอร์ + ลบ engine/โมเดลในเครื่อง)
 
 ipcMain.handle(
     "ocr:config-get",
@@ -1758,6 +1759,41 @@ ipcMain.handle(
 
             console.error(
                 "ocr:vl-prepare error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:vl-remove",
+    async () => {
+
+        try {
+
+            const result =
+                await ocrPaddleVl.remove(
+                    getDataPath()
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr:vl-remove error:",
                 error
             );
 

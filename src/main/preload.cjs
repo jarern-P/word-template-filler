@@ -161,6 +161,10 @@ contextBridge.exposeInMainWorld(
         ocrVlPrepare: () =>
             ipcRenderer.invoke("ocr:vl-prepare"),
 
+        // ถอนการติดตั้ง — หยุดเซิร์ฟเวอร์แล้วลบ engine/โมเดลออกจากเครื่อง
+        ocrVlRemove: () =>
+            ipcRenderer.invoke("ocr:vl-remove"),
+
         // ความคืบหน้าการดาวน์โหลด PaddleOCR-VL
         // callback ได้ { stage, label, received, total, percent }
         onOcrVlProgress: (callback) => {
