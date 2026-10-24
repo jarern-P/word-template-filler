@@ -4262,6 +4262,166 @@ body.table-ratio-dragging .table-ratio-handle {
     border-radius: var(--radius);
 }
 
+/* ── เครื่องมือหลัง OCR: ตรวจคำผิด / Layout / Reading order ── */
+
+.data-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.data-tools button {
+    margin-top: 0;
+}
+
+.data-tools-hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+}
+
+.data-tool-panel {
+    margin-top: 12px;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.data-tool-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.data-tool-head strong {
+    font-size: 14px;
+}
+
+.data-tool-head .hint {
+    flex: 1;
+    min-width: 150px;
+    margin: 0;
+}
+
+.data-tool-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.data-tool-actions button {
+    margin-top: 0;
+}
+
+.data-tool-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 260px;
+    padding: 10px 12px;
+    overflow-y: auto;
+}
+
+.data-tool-list .hint {
+    margin: 0;
+}
+
+/* ตรวจคำผิด */
+
+.data-spell-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--line-soft);
+}
+
+.data-spell-row:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.data-spell-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.data-spell-word {
+    font-weight: 600;
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
+}
+
+.data-spell-context {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--ink-faint);
+}
+
+.data-spell-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.data-spell-actions button {
+    margin-top: 0;
+}
+
+.data-spell-suggest {
+    color: var(--pink-700);
+    background: var(--surface-alt, var(--line-soft));
+    font-weight: 600;
+}
+
+/* โครงสร้างเอกสาร */
+
+.data-layout-page {
+    margin-top: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-faint);
+}
+
+.data-layout-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.data-layout-index {
+    min-width: 18px;
+    color: var(--ink-faint);
+    text-align: right;
+}
+
+.data-layout-label {
+    min-width: 92px;
+    color: var(--pink-700);
+    font-weight: 600;
+}
+
+.data-layout-text {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .data-result-body {
     display: flex;
     flex-direction: column;

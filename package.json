@@ -21,6 +21,7 @@
     "better-sqlite3": "^13.0.3",
     "onnxruntime-node": "^1.30.0",
     "pdfjs-dist": "^3.11.174",
+    "ppu-doclayout": "^1.0.0",
     "ppu-paddle-ocr": "^6.6.1"
   },
   "devDependencies": {
@@ -50,6 +51,7 @@
       "src/main/db/**",
       "node_modules/onnxruntime-node/**",
       "node_modules/ppu-paddle-ocr/**",
+      "node_modules/ppu-doclayout/**",
       "node_modules/ppu-ocv/**",
       "node_modules/@napi-rs/canvas/**"
     ],

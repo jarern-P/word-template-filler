@@ -135,6 +135,35 @@ contextBridge.exposeInMainWorld(
             ),
 
         // ─────────────────────────────
+        // Document Layout / Reading Order
+        // ─────────────────────────────
+
+        // วิเคราะห์โครงสร้าง PDF (PP-DocLayoutV2 ในเครื่อง)
+        // payload = { data } — คืน { ok, pageCount, pages, text }
+        // pages[].regions[] เรียงตามลำดับการอ่านแล้ว พร้อมข้อความของแต่ละบล็อก
+        analyzePdfLayout: (payload) =>
+            ipcRenderer.invoke(
+                "pdf:layout",
+                payload
+            ),
+
+        // ความคืบหน้า { stage: 'download'|'init'|'layout'|'ocr', page, pageCount, ... }
+        onPdfLayoutProgress: (callback) => {
+            if (typeof callback !== "function") return;
+
+            ipcRenderer.on(
+                "pdf:layout-progress",
+                (event, progress) => callback(progress)
+            );
+        },
+
+        offPdfLayoutProgress: () => {
+            ipcRenderer.removeAllListeners(
+                "pdf:layout-progress"
+            );
+        },
+
+        // ─────────────────────────────
         // OCR
         // ─────────────────────────────
 

@@ -4,6 +4,9 @@ data/ocr-config.json
 # engine llama.cpp + โมเดล PaddleOCR-VL ที่ดาวน์โหลดเอง (~1.8 GB)
 data/ocr/
 
+# โมเดล PP-DocLayoutV2 สำหรับวิเคราะห์โครงสร้างเอกสาร (~213 MB)
+data/layout/
+
 # Logs
 logs
 *.log

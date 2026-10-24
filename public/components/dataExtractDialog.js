@@ -66,6 +66,37 @@
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
+        '            <div class="data-tools">',
+        '                <button id="dataFixWordsBtn" type="button" class="plain" title="ตรวจคำภาษาไทยที่น่าสงสัยด้วยพจนานุกรมในเครื่อง">ตรวจคำผิด</button>',
+        '                <button id="dataLayoutBtn" type="button" class="plain" title="วิเคราะห์บล็อกเอกสาร (หัวเรื่อง/ย่อหน้า/ตาราง/รูป) — ใช้กับ PDF ที่อัปโหลด">วิเคราะห์ Layout</button>',
+        '                <button id="dataOrderBtn" type="button" class="plain" title="จัดข้อความใหม่ตามลำดับการอ่านของเอกสาร — ใช้กับ PDF ที่อัปโหลด">จัดลำดับการอ่าน</button>',
+        '            </div>',
+        '            <p class="hint data-tools-hint">',
+        '                วิเคราะห์ Layout และจัดลำดับการอ่านใช้กับ PDF ที่อัปโหลด — ',
+        '                ครั้งแรกจะดาวน์โหลดโมเดล PP-DocLayoutV2 (~213 MB) และทำงานในเครื่องทั้งหมด',
+        '            </p>',
+        '            <div id="dataSpellPanel" class="data-tool-panel" hidden>',
+        '                <div class="data-tool-head">',
+        '                    <strong>คำที่น่าสงสัย</strong>',
+        '                    <span id="dataSpellMeta" class="hint"></span>',
+        '                    <div class="data-tool-actions">',
+        '                        <button id="dataSpellApplyAll" type="button" class="plain">ใช้คำแนะนำทั้งหมด</button>',
+        '                        <button id="dataSpellClose" type="button" class="plain">ปิด</button>',
+        '                    </div>',
+        '                </div>',
+        '                <div id="dataSpellList" class="data-tool-list"></div>',
+        '            </div>',
+        '            <div id="dataLayoutPanel" class="data-tool-panel" hidden>',
+        '                <div class="data-tool-head">',
+        '                    <strong>โครงสร้างเอกสาร</strong>',
+        '                    <span id="dataLayoutMeta" class="hint"></span>',
+        '                    <div class="data-tool-actions">',
+        '                        <button id="dataLayoutApply" type="button" class="plain">ใช้ข้อความตามลำดับนี้</button>',
+        '                        <button id="dataLayoutClose" type="button" class="plain">ปิด</button>',
+        '                    </div>',
+        '                </div>',
+        '                <div id="dataLayoutList" class="data-tool-list"></div>',
+        '            </div>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -110,6 +141,17 @@
 
     // กำลังอ่านไฟล์อยู่หรือไม่ — ใช้ตัดสินว่าจะแสดงความคืบหน้าหรือไม่
     let readingFile = false;
+
+    // ไฟล์ PDF ล่าสุด (ใช้กับ Layout / Reading Order)
+    let lastPdfFile = null;
+
+    // ผลวิเคราะห์ layout ที่แคชไว้ — ใช้ซ้ำเมื่อไฟล์เดิมและไม่ต้องรันโมเดลซ้ำ
+    let layoutCache = null;
+
+    let layoutBusy = false;
+
+    // รายการคำที่รอแก้ (ใช้กับ "ใช้คำแนะนำทั้งหมด")
+    let spellQueue = [];
 
     function el(id) {
         return document.getElementById(id);
@@ -167,6 +209,52 @@
         el('dataUploadPdfBtn').addEventListener('click', function () {
             el('dataPdfInput').click();
         });
+
+        // ── เครื่องมือหลัง OCR ──
+        el('dataFixWordsBtn').addEventListener('click', runSpellCheck);
+
+        el('dataLayoutBtn').addEventListener('click', function () {
+            runLayoutAnalysis('view');
+        });
+
+        el('dataOrderBtn').addEventListener('click', function () {
+            runLayoutAnalysis('order');
+        });
+
+        el('dataSpellApplyAll').addEventListener('click', applyAllSpellSuggestions);
+
+        el('dataSpellClose').addEventListener('click', function () {
+            el('dataSpellPanel').hidden = true;
+            el('dataSpellList').innerHTML = '';
+            spellQueue = [];
+        });
+
+        el('dataLayoutApply').addEventListener('click', applyLayoutText);
+
+        el('dataLayoutClose').addEventListener('click', function () {
+            el('dataLayoutPanel').hidden = true;
+            el('dataLayoutList').innerHTML = '';
+        });
+
+        el('dataSourceText').addEventListener('input', updateToolsState);
+
+        // ความคืบหน้าระหว่างวิเคราะห์ Layout / ดาวน์โหลดโมเดล
+        if (window.electronAPI && window.electronAPI.onPdfLayoutProgress) {
+            window.electronAPI.onPdfLayoutProgress(function (progress) {
+                if (!layoutBusy || !progress) return;
+
+                let text = progress.label || 'กำลังวิเคราะห์โครงสร้างเอกสาร...';
+
+                if (
+                    progress.stage === 'download' &&
+                    Number(progress.total) > 0
+                ) {
+                    text += ' ' + progress.percent + '%';
+                }
+
+                setSourceStatus(text);
+            });
+        }
 
         // ความคืบหน้าจาก main process ระหว่างอ่าน PDF
         if (window.electronAPI && window.electronAPI.onPdfExtractProgress) {
@@ -399,6 +487,13 @@
 
             textarea.value = text;
 
+            // เก็บไฟล์ PDF ไว้ให้ปุ่ม Layout / Reading Order ใช้ต่อ
+            lastPdfFile = /\.pdf$/i.test(file.name) ? file : null;
+            layoutCache = null;
+
+            hideToolPanels();
+            updateToolsState();
+
             const ocrPages =
                 result && Array.isArray(result.ocrPages)
                     ? result.ocrPages
@@ -435,6 +530,12 @@
         } catch (error) {
             console.error(error);
 
+            lastPdfFile = null;
+            layoutCache = null;
+
+            hideToolPanels();
+            updateToolsState();
+
             setSourceStatus(
                 error && error.expected ? error.message : 'อ่านไฟล์ไม่สำเร็จ',
                 'error'
@@ -449,6 +550,438 @@
         } finally {
             readingFile = false;
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // เครื่องมือหลัง OCR: ตรวจคำผิด / วิเคราะห์ Layout / จัดลำดับการอ่าน
+    // ──────────────────────────────────────────────────────────────
+
+    function hideToolPanels() {
+        el('dataSpellPanel').hidden = true;
+        el('dataSpellList').innerHTML = '';
+        el('dataLayoutPanel').hidden = true;
+        el('dataLayoutList').innerHTML = '';
+
+        spellQueue = [];
+    }
+
+    // เปิด/ปิดปุ่มตามข้อมูลที่มีอยู่ — และปิดระหว่างทำงาน
+    function updateToolsState() {
+        const textarea = el('dataSourceText');
+        const hasText = Boolean(textarea && textarea.value.trim() !== '');
+
+        el('dataFixWordsBtn').disabled = !hasText || layoutBusy;
+        el('dataLayoutBtn').disabled = !lastPdfFile || layoutBusy;
+        el('dataOrderBtn').disabled = !lastPdfFile || layoutBusy;
+    }
+
+    // ── ตรวจคำผิด (พจนานุกรมในเครื่อง + คำที่เพิ่มเอง) ──
+
+    function updateSpellMeta() {
+        const remaining = el('dataSpellList')
+            .querySelectorAll('.data-spell-row').length;
+
+        el('dataSpellMeta').textContent = remaining === 0
+            ? 'ไม่มีคำค้างให้แก้'
+            : 'เหลือ ' + remaining + ' คำ — คลิกคำแนะนำเพื่อแทนที่ทั้งข้อความ';
+    }
+
+    function applySpellCorrection(word, replacement, row) {
+        const textarea = el('dataSourceText');
+
+        textarea.value = scope.OcrTextTools.replaceWord(
+            textarea.value,
+            word,
+            replacement
+        );
+
+        if (row) row.remove();
+
+        hideResults();
+        updateSpellMeta();
+        updateToolsState();
+
+        setSourceStatus('แก้คำแล้ว: ' + word + ' → ' + replacement);
+    }
+
+    function addSpellRow(issue) {
+        const row = document.createElement('div');
+        row.className = 'data-spell-row';
+
+        const head = document.createElement('div');
+        head.className = 'data-spell-head';
+
+        const word = document.createElement('code');
+        word.className = 'data-spell-word';
+        word.textContent = issue.word;
+
+        const count = document.createElement('span');
+        count.className = 'hint';
+        count.textContent = issue.count > 1 ? 'พบ ' + issue.count + ' ครั้ง' : '';
+
+        const context = document.createElement('span');
+        context.className = 'data-spell-context';
+        context.textContent = issue.context;
+        context.title = issue.context;
+
+        head.appendChild(word);
+        head.appendChild(count);
+        head.appendChild(context);
+
+        const actions = document.createElement('div');
+        actions.className = 'data-spell-actions';
+
+        if (issue.suggestions.length === 0) {
+            const none = document.createElement('span');
+            none.className = 'hint';
+            none.textContent = 'ไม่พบคำแนะนำ — ';
+            actions.appendChild(none);
+        }
+
+        issue.suggestions.forEach(function (suggestion) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'plain data-spell-suggest';
+            button.textContent = suggestion;
+            button.title = 'แทนที่ "' + issue.word + '" ด้วย "' + suggestion + '"';
+            button.addEventListener('click', function () {
+                applySpellCorrection(issue.word, suggestion, row);
+            });
+
+            actions.appendChild(button);
+        });
+
+        const manual = document.createElement('button');
+        manual.type = 'button';
+        manual.className = 'plain';
+        manual.textContent = 'แก้เอง';
+        manual.addEventListener('click', async function () {
+            const value = await scope.AppDialog.prompt(
+                'แก้คำ "' + issue.word + '" เป็น:',
+                issue.word
+            );
+
+            if (value === null) return;
+
+            const replacement = String(value).trim();
+
+            if (replacement === '' || replacement === issue.word) return;
+
+            applySpellCorrection(issue.word, replacement, row);
+        });
+
+        const skip = document.createElement('button');
+        skip.type = 'button';
+        skip.className = 'plain';
+        skip.textContent = 'ข้าม';
+        skip.addEventListener('click', function () {
+            row.remove();
+            updateSpellMeta();
+        });
+
+        actions.appendChild(manual);
+        actions.appendChild(skip);
+
+        row.appendChild(head);
+        row.appendChild(actions);
+
+        el('dataSpellList').appendChild(row);
+
+        if (issue.suggestions.length > 0) {
+            spellQueue.push({
+                word: issue.word,
+                replacement: issue.suggestions[0],
+                row: row
+            });
+        }
+    }
+
+    function runSpellCheck() {
+        const textarea = el('dataSourceText');
+        const text = textarea.value;
+
+        el('dataLayoutPanel').hidden = true;
+        el('dataLayoutList').innerHTML = '';
+        el('dataSpellList').innerHTML = '';
+        spellQueue = [];
+
+        if (!scope.OcrTextTools) {
+            setSourceStatus('ไม่พบตัวตรวจคำ — โหลดหน้าใหม่แล้วลองอีกครั้ง', 'error');
+            return;
+        }
+
+        const result = scope.OcrTextTools.check(text);
+
+        if (result.unavailable) {
+            setSourceStatus(
+                'พจนานุกรมยังโหลดไม่เสร็จ — รอสักครู่แล้วลองอีกครั้ง',
+                'error'
+            );
+            return;
+        }
+
+        el('dataSpellPanel').hidden = false;
+
+        if (result.issues.length === 0) {
+            el('dataSpellMeta').textContent =
+                'ตรวจ ' + result.checked + ' คำ — ไม่พบคำที่น่าสงสัย';
+
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'ทุกคำที่ตรวจพบอยู่ในพจนานุกรมหรือคำที่เพิ่มเอง';
+            el('dataSpellList').appendChild(empty);
+
+            setSourceStatus('ตรวจคำผิดแล้ว — ไม่พบคำที่น่าสงสัย');
+            return;
+        }
+
+        result.issues.forEach(addSpellRow);
+
+        updateSpellMeta();
+
+        setSourceStatus(
+            'ตรวจ ' + result.checked + ' คำ — พบ ' +
+            result.issues.length + ' คำที่น่าสงสัย'
+        );
+    }
+
+    function applyAllSpellSuggestions() {
+        const textarea = el('dataSourceText');
+        let applied = 0;
+
+        spellQueue.forEach(function (item) {
+            if (!item.row.isConnected) return;
+
+            textarea.value = scope.OcrTextTools.replaceWord(
+                textarea.value,
+                item.word,
+                item.replacement
+            );
+
+            item.row.remove();
+            applied += 1;
+        });
+
+        spellQueue = [];
+
+        hideResults();
+        updateSpellMeta();
+        updateToolsState();
+
+        setSourceStatus(
+            applied > 0
+                ? 'ใช้คำแนะนำ ' + applied + ' คำแล้ว'
+                : 'ไม่มีคำแนะนำให้ใช้ — เลือกคำเองหรือข้าม'
+        );
+    }
+
+    // ── Layout / Reading order ──
+
+    async function ensureLayoutResult() {
+        if (layoutCache && layoutCache.file === lastPdfFile) {
+            return layoutCache.result;
+        }
+
+        const buffer = await lastPdfFile.arrayBuffer();
+
+        const result = await window.electronAPI.analyzePdfLayout({
+            data: new Uint8Array(buffer)
+        });
+
+        if (!result || result.ok === false) {
+            throw new Error(
+                (result && result.error) || 'วิเคราะห์โครงสร้างเอกสารไม่สำเร็จ'
+            );
+        }
+
+        layoutCache = {
+            file: lastPdfFile,
+            result: result
+        };
+
+        return result;
+    }
+
+    function renderLayoutPanel(result, mode) {
+        const list = el('dataLayoutList');
+        const pages = Array.isArray(result.pages) ? result.pages : [];
+
+        let regionCount = 0;
+
+        list.innerHTML = '';
+
+        pages.forEach(function (page) {
+            const header = document.createElement('div');
+            header.className = 'data-layout-page';
+
+            const regions = Array.isArray(page.regions) ? page.regions : [];
+
+            regionCount += regions.length;
+
+            header.textContent = [
+                'หน้า ' + page.page,
+                page.source === 'ocr' ? 'OCR' : 'ชั้นข้อความ',
+                regions.length + ' บล็อก'
+            ].join(' · ');
+
+            list.appendChild(header);
+
+            if (page.error) {
+                const error = document.createElement('p');
+                error.className = 'hint error';
+                error.textContent = page.error;
+                list.appendChild(error);
+                return;
+            }
+
+            if (page.ocrError) {
+                const warning = document.createElement('p');
+                warning.className = 'hint error';
+                warning.textContent = 'OCR บางบล็อกไม่สำเร็จ: ' + page.ocrError;
+                list.appendChild(warning);
+            }
+
+            regions.forEach(function (region) {
+                const row = document.createElement('div');
+                row.className = 'data-layout-row';
+
+                const index = document.createElement('code');
+                index.className = 'data-layout-index';
+                index.textContent = String(region.index);
+
+                const label = document.createElement('span');
+                label.className = 'data-layout-label';
+                label.textContent = region.labelTh || region.label;
+
+                const score = document.createElement('span');
+                score.className = 'hint';
+                score.textContent = region.score > 0
+                    ? Math.round(region.score * 100) + '%'
+                    : '';
+
+                const text = document.createElement('span');
+                text.className = 'data-layout-text';
+
+                const preview = String(region.text || '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                text.textContent = preview === ''
+                    ? 'ไม่มีข้อความ'
+                    : (preview.length > 120
+                        ? preview.slice(0, 120) + '…'
+                        : preview);
+
+                text.title = String(region.text || '');
+
+                row.appendChild(index);
+                row.appendChild(label);
+                row.appendChild(score);
+                row.appendChild(text);
+                list.appendChild(row);
+            });
+        });
+
+        el('dataLayoutMeta').textContent = pages.length + ' หน้า · ' + regionCount + ' บล็อก' +
+            (mode === 'order' ? ' — เรียงตามลำดับการอ่านแล้ว' : '');
+
+        el('dataLayoutPanel').hidden = false;
+    }
+
+    async function runLayoutAnalysis(mode) {
+        if (!lastPdfFile) {
+            await scope.AppDialog.alert(
+                'ต้องอัปโหลดไฟล์ PDF ก่อนใช้เครื่องมือนี้'
+            );
+            return;
+        }
+
+        if (!window.electronAPI || !window.electronAPI.analyzePdfLayout) {
+            await scope.AppDialog.alert(
+                'เปิดหน้านี้ในแอป (Electron) เพื่อวิเคราะห์โครงสร้างเอกสาร'
+            );
+            return;
+        }
+
+        layoutBusy = true;
+        updateToolsState();
+
+        el('dataSpellPanel').hidden = true;
+        el('dataSpellList').innerHTML = '';
+        spellQueue = [];
+
+        setSourceStatus(
+            mode === 'order'
+                ? 'กำลังวิเคราะห์และจัดลำดับการอ่าน...'
+                : 'กำลังวิเคราะห์โครงสร้างเอกสาร...'
+        );
+
+        try {
+            const result = await ensureLayoutResult();
+
+            renderLayoutPanel(result, mode);
+
+            if (mode === 'order') {
+                const text = String(result.text || '');
+
+                if (text.trim() === '') {
+                    throw new Error(
+                        'ไม่พบข้อความในเอกสาร — ลอง OCR หรืออัปโหลดไฟล์อื่น'
+                    );
+                }
+
+                el('dataSourceText').value = text;
+
+                hideResults();
+
+                setSourceStatus(
+                    'จัดลำดับการอ่านใหม่แล้ว — ' +
+                    result.pageCount + ' หน้า · ' +
+                    text.length + ' ตัวอักษร'
+                );
+
+            } else {
+                const regions = (result.pages || []).reduce(function (total, page) {
+                    return total + (page.regions || []).length;
+                }, 0);
+
+                setSourceStatus(
+                    'วิเคราะห์โครงสร้างแล้ว — ' +
+                    result.pageCount + ' หน้า · ' +
+                    regions + ' บล็อก'
+                );
+            }
+
+        } catch (error) {
+            setSourceStatus(
+                (error && error.message) || 'วิเคราะห์โครงสร้างเอกสารไม่สำเร็จ',
+                'error'
+            );
+
+        } finally {
+            layoutBusy = false;
+            updateToolsState();
+        }
+    }
+
+    function applyLayoutText() {
+        if (!layoutCache || layoutCache.file !== lastPdfFile) return;
+
+        const text = String(layoutCache.result.text || '');
+
+        if (text.trim() === '') {
+            setSourceStatus('ไม่มีข้อความให้ใช้จากผลวิเคราะห์', 'error');
+            return;
+        }
+
+        el('dataSourceText').value = text;
+
+        hideResults();
+        updateToolsState();
+
+        setSourceStatus(
+            'ใช้ข้อความตามลำดับการอ่านแล้ว — ' + text.length + ' ตัวอักษร'
+        );
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -844,6 +1377,14 @@
         el('dataSourceText').value = '';
         setSourceStatus('');
         hideResults();
+
+        // เริ่มกล่องใหม่ — ต้องอัปโหลด PDF ใหม่ก่อนใช้ Layout
+        lastPdfFile = null;
+        layoutCache = null;
+        layoutBusy = false;
+
+        hideToolPanels();
+        updateToolsState();
 
         overlay.classList.add('open');
 

@@ -20,6 +20,9 @@ const ocrPaddle =
 const ocrPaddleVl =
     require("./ocr-paddle-vl.cjs");
 
+const pdfLayout =
+    require("./pdf-layout.cjs");
+
 
 // ============================================================
 // Locale
@@ -1810,6 +1813,70 @@ ipcMain.handle(
 
 
 // ============================================================
+// Document Layout (วิเคราะห์โครงสร้าง + ลำดับการอ่าน)
+// ============================================================
+//
+// pdf:layout -> รับเนื้อไฟล์ PDF คืนบล็อกของแต่ละหน้า (ตามลำดับการอ่าน)
+// พร้อมข้อความของแต่ละบล็อก — หน้าที่ยังมีชั้นข้อความใช้พิกัดจากไฟล์ตรง ๆ
+// หน้าที่เป็นรูปสแกนจะ OCR เฉพาะบล็อกด้วย PP-OCRv5 ในเครื่อง
+// โมเดล PP-DocLayoutV2 (~213 MB) ดาวน์โหลดครั้งแรกที่ใช้
+
+ipcMain.handle(
+    "pdf:layout",
+    async function (event, payload) {
+
+        try {
+
+            const data =
+                payload && payload.data;
+
+            if (!data) {
+                throw new Error("ไม่ได้รับข้อมูลไฟล์");
+            }
+
+            const result =
+                await pdfLayout.analyzePdf(
+                    data,
+                    {
+                        dataPath: getDataPath(),
+                        onProgress: function (progress) {
+                            if (event.sender.isDestroyed()) {
+                                return;
+                            }
+
+                            event.sender.send(
+                                "pdf:layout-progress",
+                                progress
+                            );
+                        }
+                    }
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "pdf:layout error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    "วิเคราะห์โครงสร้างเอกสารไม่สำเร็จ"
+            };
+        }
+
+    }
+);
+
+
+// ============================================================
 // File Text (ดึงข้อความจาก PDF)
 // ============================================================
 //
@@ -2591,6 +2658,18 @@ app.on(
 
             console.error(
                 "ocrPaddleVl.stop error:",
+                error
+            );
+        }
+
+        try {
+
+            pdfLayout.stop();
+
+        } catch (error) {
+
+            console.error(
+                "pdfLayout.stop error:",
                 error
             );
         }
