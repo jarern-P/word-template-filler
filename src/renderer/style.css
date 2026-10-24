@@ -4684,6 +4684,10 @@ body.table-ratio-dragging .table-ratio-handle {
     cursor: not-allowed;
 }
 
+.ocr-provider-settings[hidden] {
+    display: none;
+}
+
 .ocr-status-box {
     margin-top: 16px;
     padding: 14px 16px;

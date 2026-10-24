@@ -2,21 +2,26 @@
 //
 // ทำไมเก็บเป็นไฟล์ ไม่เก็บในฐานข้อมูล:
 //   - ค่าตั้งนี้เป็นของ "เครื่องนี้" ไม่ใช่ข้อมูลของแม่แบบ
-//   - ไฟล์สำรองฐานข้อมูล (.db) จึงไม่พา API key / ค่าตั้ง OCR ติดไปเครื่องอื่น
+//   - ไฟล์สำรองฐานข้อมูล (.db) จึงไม่พา API key ติดไปเครื่องอื่น
 //
-// โครงสร้างปัจจุบัน (เวอร์ชัน 1):
+// โครงสร้าง (เวอร์ชัน 2):
 //   {
-//     "version": 1,
-//     "provider": "paddle",              // ผู้ให้บริการที่ใช้: paddle | gemini | iloveapi
-//     "paddle": {
-//       "enabled": true,                 // เปิด OCR ตอนอัปโหลด PDF
-//       "mode": "auto"                   // auto = เฉพาะหน้าที่ไม่มีชั้นข้อความ
-//                                        // always = ทุกหน้า
+//     "version": 2,
+//     "provider": "paddle",          // paddle | gemini | iloveapi
+//     "enabled": true,               // ใช้ OCR เมื่ออัปโหลด PDF
+//     "mode": "auto",                // auto = เฉพาะหน้าที่ไม่มีข้อความ
+//                                    // always = ทุกหน้า
+//     "gemini": {
+//       "model": "gemini-2.5-flash",
+//       "apiKey": "enc:..."          // เข้ารหัสด้วย safeStorage (DPAPI) เมื่อทำได้
+//     },
+//     "iloveapi": {
+//       "apiKey": "enc:..."
 //     }
 //   }
 //
-// provider อื่นถูกออกแบบไว้ล่วงหน้า แต่ยังไม่เปิดใช้งาน (ดู ocrConfigPage.js)
-// — เพิ่มค่าตั้งของเจ้านั้นในไฟล์นี้ได้โดยไม่กระทบของเดิม
+// API key ไม่ถูกส่งกลับไปฝั่งหน้าจอ — read() คืนเฉพาะ hasKey (มี key เก็บไว้แล้ว)
+// ส่วน readSecrets() ใช้ฝั่ง main ตอนเรียกผู้ให้บริการเท่านั้น
 'use strict';
 
 const fs = require('fs');
@@ -24,83 +29,273 @@ const path = require('path');
 
 const CONFIG_FILE = 'ocr-config.json';
 
-// เรียงตามที่แสดงในหน้า "ตั้งค่า OCR"
 const PROVIDERS = ['paddle', 'gemini', 'iloveapi'];
 const MODES = ['auto', 'always'];
 
-const DEFAULT_CONFIG = {
-    version: 1,
-    provider: 'paddle',
-    paddle: {
-        enabled: true,
-        mode: 'auto'
-    }
-};
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
-function cloneDefault() {
-    return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+// อนุญาตเฉพาะชื่อโมเดลที่ใช้ใน URL ได้ (กันการพิมพ์ผิด/แทรก path)
+const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
+
+function defaultConfig() {
+    return {
+        version: 2,
+        provider: 'paddle',
+        enabled: true,
+        mode: 'auto',
+        gemini: {
+            apiKey: '',
+            model: DEFAULT_MODEL
+        },
+        iloveapi: {
+            apiKey: ''
+        }
+    };
 }
 
 function pick(value, allowed, fallback) {
     return allowed.indexOf(value) === -1 ? fallback : value;
 }
 
-function normalize(input) {
-    const source = input && typeof input === 'object' ? input : {};
-    const paddle = source.paddle && typeof source.paddle === 'object'
-        ? source.paddle
-        : {};
+function sanitizeModel(value) {
+    const model = String(value == null ? '' : value).trim();
 
-    return {
-        version: 1,
-        provider: pick(source.provider, PROVIDERS, DEFAULT_CONFIG.provider),
-        paddle: {
-            // ค่าที่ไม่ใช่ boolean ถือว่ายังไม่ได้ตั้ง → ใช้ค่าเริ่มต้น (เปิด)
-            enabled: typeof paddle.enabled === 'boolean'
-                ? paddle.enabled
-                : DEFAULT_CONFIG.paddle.enabled,
-            mode: pick(paddle.mode, MODES, DEFAULT_CONFIG.paddle.mode)
-        }
-    };
+    return MODEL_PATTERN.test(model) ? model : DEFAULT_MODEL;
 }
+
+// ------------------------------------------------------------------
+// เข้ารหัส/ถอดรหัส API key
+// ------------------------------------------------------------------
+
+function keyCipher() {
+    try {
+        const { safeStorage } = require('electron');
+
+        if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+            return null;
+        }
+
+        return safeStorage;
+
+    } catch (error) {
+        // รันด้วย Node ธรรมดา (เทสต์) ไม่มี safeStorage
+        return null;
+    }
+}
+
+function encryptKey(plain) {
+    const value = String(plain == null ? '' : plain).trim();
+
+    if (value === '') return '';
+
+    const cipher = keyCipher();
+
+    if (cipher) {
+        return 'enc:' + cipher.encryptString(value).toString('base64');
+    }
+
+    return 'plain:' + Buffer.from(value, 'utf8').toString('base64');
+}
+
+function decryptKey(stored) {
+    const value = String(stored == null ? '' : stored);
+
+    if (value === '') return '';
+
+    try {
+        if (value.startsWith('enc:')) {
+            const cipher = keyCipher();
+
+            if (!cipher) return '';
+
+            return cipher.decryptString(
+                Buffer.from(value.slice(4), 'base64')
+            );
+        }
+
+        if (value.startsWith('plain:')) {
+            return Buffer.from(value.slice(6), 'base64').toString('utf8');
+        }
+
+    } catch (error) {
+        return '';
+    }
+
+    return '';
+}
+
+// ------------------------------------------------------------------
+// อ่าน/เขียนไฟล์
+// ------------------------------------------------------------------
 
 function configPath(dataPath) {
     return path.join(dataPath, CONFIG_FILE);
 }
 
-// อ่านค่าตั้ง — ไฟล์ยังไม่มี/เสียหาย = ใช้ค่าเริ่มต้น (ไม่ทำให้แอปเปิดไม่ได้)
-function read(dataPath) {
+function loadRaw(dataPath) {
     try {
-        const raw = fs.readFileSync(configPath(dataPath), 'utf8');
+        const parsed = JSON.parse(
+            fs.readFileSync(configPath(dataPath), 'utf8')
+        );
 
-        return normalize(JSON.parse(raw));
+        return parsed && typeof parsed === 'object' ? parsed : {};
 
     } catch (error) {
-        return cloneDefault();
+        return {};
     }
 }
 
+// แปลงค่าจากไฟล์ (รวมเวอร์ชัน 1 เดิม) เป็นโครงปัจจุบัน
+// ไม่ถอดรหัส key — คงค่าที่เก็บไว้ตามเดิม
+function normalizeRaw(input) {
+    const source = input && typeof input === 'object' ? input : {};
+    const paddle = source.paddle && typeof source.paddle === 'object'
+        ? source.paddle
+        : {};
+    const gemini = source.gemini && typeof source.gemini === 'object'
+        ? source.gemini
+        : {};
+    const iloveapi = source.iloveapi && typeof source.iloveapi === 'object'
+        ? source.iloveapi
+        : {};
+
+    // เวอร์ชัน 1 เก็บ enabled/mode ไว้ใต้ paddle — อ่านเป็นค่าเริ่มต้นให้
+    const enabled = typeof source.enabled === 'boolean'
+        ? source.enabled
+        : (typeof paddle.enabled === 'boolean' ? paddle.enabled : true);
+
+    const mode = pick(
+        source.mode || paddle.mode,
+        MODES,
+        'auto'
+    );
+
+    return {
+        version: 2,
+        provider: pick(source.provider, PROVIDERS, 'paddle'),
+        enabled: enabled,
+        mode: mode,
+        gemini: {
+            apiKey: typeof gemini.apiKey === 'string' ? gemini.apiKey : '',
+            model: sanitizeModel(gemini.model)
+        },
+        iloveapi: {
+            apiKey: typeof iloveapi.apiKey === 'string' ? iloveapi.apiKey : ''
+        }
+    };
+}
+
+// ค่าที่ส่งให้หน้าจอ — ไม่มี key จริง มีแค่ hasKey
+function toPublic(raw) {
+    return {
+        version: 2,
+        provider: raw.provider,
+        enabled: raw.enabled,
+        mode: raw.mode,
+        gemini: {
+            apiKey: '',
+            model: raw.gemini.model,
+            // ถอดรหัสไม่ได้ (เช่น ย้ายไฟล์ข้ามเครื่อง) = ถือว่ายังไม่มี key
+            hasKey: decryptKey(raw.gemini.apiKey) !== ''
+        },
+        iloveapi: {
+            apiKey: '',
+            hasKey: decryptKey(raw.iloveapi.apiKey) !== ''
+        }
+    };
+}
+
+// อ่านสำหรับหน้าจอ
+function read(dataPath) {
+    return toPublic(normalizeRaw(loadRaw(dataPath)));
+}
+
+// อ่านพร้อม key จริง (ใช้ใน main process ตอนเรียกผู้ให้บริการเท่านั้น)
+function readSecrets(dataPath) {
+    const raw = normalizeRaw(loadRaw(dataPath));
+
+    return {
+        version: 2,
+        provider: raw.provider,
+        enabled: raw.enabled,
+        mode: raw.mode,
+        gemini: {
+            apiKey: decryptKey(raw.gemini.apiKey),
+            model: raw.gemini.model
+        },
+        iloveapi: {
+            apiKey: decryptKey(raw.iloveapi.apiKey)
+        }
+    };
+}
+
 // เขียนค่าตั้งแบบ atomic: เขียนไฟล์ชั่วคราวแล้ว rename ทับ
-// (ไฟดับกลางคันจะไม่เหลือไฟล์ค่าตั้งที่เขียนค้างครึ่งเดียว)
+//
+// payload.gemini.apiKey / payload.iloveapi.apiKey:
+//   - มีข้อความ = ตั้ง key ใหม่ (เข้ารหัสก่อนเก็บ)
+//   - ว่าง/ไม่ส่ง = ใช้ key เดิมที่เก็บไว้
+//   - payload.<provider>.clearKey = true = ลบ key เดิม
 function save(dataPath, payload) {
-    const config = normalize(payload);
-    const file = configPath(dataPath);
+    const input = payload && typeof payload === 'object' ? payload : {};
+    const current = normalizeRaw(loadRaw(dataPath));
+
+    const geminiInput = input.gemini && typeof input.gemini === 'object'
+        ? input.gemini
+        : {};
+    const iloveInput = input.iloveapi && typeof input.iloveapi === 'object'
+        ? input.iloveapi
+        : {};
+
+    const geminiKey = geminiInput.clearKey === true
+        ? ''
+        : (String(geminiInput.apiKey || '').trim() !== ''
+            ? encryptKey(geminiInput.apiKey)
+            : current.gemini.apiKey);
+
+    const iloveKey = iloveInput.clearKey === true
+        ? ''
+        : (String(iloveInput.apiKey || '').trim() !== ''
+            ? encryptKey(iloveInput.apiKey)
+            : current.iloveapi.apiKey);
+
+    const saved = {
+        version: 2,
+        provider: pick(input.provider, PROVIDERS, current.provider),
+        enabled: typeof input.enabled === 'boolean'
+            ? input.enabled
+            : current.enabled,
+        mode: pick(input.mode, MODES, current.mode),
+        gemini: {
+            apiKey: geminiKey,
+            model: sanitizeModel(
+                geminiInput.model !== undefined
+                    ? geminiInput.model
+                    : current.gemini.model
+            )
+        },
+        iloveapi: {
+            apiKey: iloveKey
+        }
+    };
 
     fs.mkdirSync(dataPath, { recursive: true });
 
+    const file = configPath(dataPath);
     const temp = file + '.tmp';
 
-    fs.writeFileSync(temp, JSON.stringify(config, null, 2), 'utf8');
+    fs.writeFileSync(temp, JSON.stringify(saved, null, 2), 'utf8');
     fs.renameSync(temp, file);
 
-    return config;
+    return toPublic(saved);
 }
 
 module.exports = {
     CONFIG_FILE,
     PROVIDERS,
     MODES,
+    DEFAULT_MODEL,
     read,
+    readSecrets,
     save,
-    normalize
+    sanitizeModel
 };

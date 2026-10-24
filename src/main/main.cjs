@@ -1728,37 +1728,152 @@ ipcMain.handle(
             const { extractPdfText } =
                 require("./pdf-text.cjs");
 
-            // ค่าตั้ง OCR ของเครื่องนี้ — ใช้เมื่อเลือก PaddleOCR และเปิดไว้
+            // ค่าตั้ง OCR ของเครื่องนี้ (พร้อม API key สำหรับผู้ให้บริการที่เลือก)
             const settings =
-                ocrConfig.read(getDataPath());
+                ocrConfig.readSecrets(getDataPath());
 
             const useOcr =
-                settings.provider === "paddle" &&
-                settings.paddle.enabled === true &&
+                settings.enabled === true &&
                 (!payload || payload.ocr !== false);
+
+            const joinLines =
+                !payload || payload.joinLines !== false;
+
+            const sendProgress = function (progress) {
+
+                if (event.sender.isDestroyed()) {
+                    return;
+                }
+
+                event.sender.send(
+                    "file:extract-pdf-progress",
+                    progress
+                );
+            };
+
+            // ── i love api: OCR ทั้งไฟล์ครั้งเดียว แล้วอ่านชั้นข้อความที่ได้ ──
+            //
+            // API นี้ทำ "PDF ที่สแกน" ให้เป็น "PDF ที่มีชั้นข้อความ"
+            // จึงต้องส่งทั้งไฟล์ (ไม่ใช่ทีละหน้า) แล้วค่อยใช้ pdf.js อ่านผลลัพธ์
+            if (useOcr && settings.provider === "iloveapi") {
+
+                // รอบแรกอ่านชั้นข้อความเดิม เพื่อดูว่ามีหน้าไหนต้อง OCR ไหม
+                const base = await extractPdfText(data, {
+                    joinLines: joinLines,
+                    onProgress: sendProgress
+                });
+
+                const needsOcr =
+                    settings.mode === "always" ||
+                    (base.emptyPages && base.emptyPages.length > 0);
+
+                if (!needsOcr) {
+                    return {
+                        ok: true,
+                        text: base.text,
+                        joined: base.joined || 0,
+                        pageCount: base.pageCount || 0,
+                        ocrPages: [],
+                        ocrError: null,
+                        provider: "iloveapi"
+                    };
+                }
+
+                sendProgress({
+                    page: 0,
+                    pageCount: base.pageCount || 0,
+                    status: "ocr-api"
+                });
+
+                try {
+                    const ocrIloveapi =
+                        require("./ocr-iloveapi.cjs");
+
+                    const ocrPdf =
+                        await ocrIloveapi.ocrPdf(
+                            Buffer.from(data),
+                            {
+                                apiKey: settings.iloveapi.apiKey
+                            }
+                        );
+
+                    const converted =
+                        await extractPdfText(ocrPdf, {
+                            joinLines: joinLines
+                        });
+
+                    if (String(converted.text || "").trim() === "") {
+                        throw new Error(
+                            "i love api ทำ OCR แล้ว แต่ยังอ่านข้อความจากไฟล์ผลลัพธ์ไม่ได้"
+                        );
+                    }
+
+                    const ocrPages = [];
+
+                    for (let index = 1; index <= converted.pageCount; index++) {
+                        ocrPages.push(index);
+                    }
+
+                    return {
+                        ok: true,
+                        text: converted.text,
+                        joined: converted.joined || 0,
+                        pageCount: converted.pageCount || 0,
+                        ocrPages: ocrPages,
+                        ocrError: null,
+                        provider: "iloveapi"
+                    };
+
+                } catch (error) {
+
+                    // OCR ล้มเหลว = ยังคืนข้อความเดิม (ถ้ามี) พร้อมสาเหตุ
+                    console.error(
+                        "file:extract-pdf i love api error:",
+                        error
+                    );
+
+                    return {
+                        ok: true,
+                        text: base.text,
+                        joined: base.joined || 0,
+                        pageCount: base.pageCount || 0,
+                        ocrPages: [],
+                        ocrError:
+                            (error && error.message) ||
+                            "OCR ด้วย i love api ไม่สำเร็จ",
+                        provider: "iloveapi"
+                    };
+                }
+            }
+
+            // ── PaddleOCR / Gemini: OCR ทีละหน้าตามที่ตั้งไว้ ──
+            let ocrPage = null;
+
+            if (useOcr && settings.provider === "gemini") {
+
+                const ocrGemini =
+                    require("./ocr-gemini.cjs");
+
+                ocrPage = function (page) {
+
+                    return ocrGemini.ocrPage(page, {
+                        apiKey: settings.gemini.apiKey,
+                        model: settings.gemini.model
+                    });
+                };
+            }
 
             const result =
                 await extractPdfText(
                     data,
                     {
                         // เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ปิดได้จากหน้าจอ)
-                        joinLines: !payload || payload.joinLines !== false,
+                        joinLines: joinLines,
                         // OCR เฉพาะหน้าที่ไม่มีชั้นข้อความ (หรือทุกหน้าถ้าตั้งไว้)
                         ocr: useOcr,
-                        ocrAll:
-                            useOcr &&
-                            settings.paddle.mode === "always",
-                        onProgress: function (progress) {
-
-                            if (event.sender.isDestroyed()) {
-                                return;
-                            }
-
-                            event.sender.send(
-                                "file:extract-pdf-progress",
-                                progress
-                            );
-                        }
+                        ocrAll: useOcr && settings.mode === "always",
+                        ocrPage: ocrPage,
+                        onProgress: sendProgress
                     }
                 );
 
@@ -1767,10 +1882,12 @@ ipcMain.handle(
                 text: result.text,
                 // จำนวนจุดที่เย็บบรรทัดที่ถูกตัดเข้าด้วยกัน
                 joined: result.joined || 0,
+                pageCount: result.pageCount || 0,
                 // เลขหน้าที่ได้ข้อความจาก OCR
                 ocrPages: result.ocrPages || [],
                 // แจ้งเตือนเมื่อ OCR ล้มเหลว (ข้อความจากชั้นข้อความยังใช้ได้)
-                ocrError: result.ocrError || null
+                ocrError: result.ocrError || null,
+                provider: settings.provider
             };
 
         } catch (error) {

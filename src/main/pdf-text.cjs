@@ -215,18 +215,30 @@ function pageLines(items) {
  *   joinLines  = false เพื่อไม่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ค่าเริ่มต้น = เย็บ)
  *   ocr        = true เพื่อ OCR หน้าที่ไม่มีชั้นข้อความ (ค่าเริ่มต้น = ปิด)
  *   ocrAll     = true เพื่อ OCR ทุกหน้า แม้มีชั้นข้อความอยู่แล้ว
+ *   ocrPage    = ฟังก์ชัน OCR หนึ่งหน้า (ไม่ส่ง = ใช้ PaddleOCR ในเครื่อง)
+ *                รับ page ของ pdf.js คืน { text, lines }
  *   onProgress = ฟังก์ชันรับความคืบหน้า
  *                { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare' }
- * @returns {Promise<{text:string, joined:number, ocrPages:number[], ocrError:string|null}>}
- *   joined   = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
- *   ocrPages = เลขหน้าที่ใช้ข้อความจาก OCR
- *   ocrError = ข้อความแจ้งเมื่อ OCR ล้มเหลว (ไม่ทำให้การอ่าน PDF ทั้งไฟล์ล้มเหลว)
+ * @returns {Promise<{text:string, joined:number, pageCount:number,
+ *                    emptyPages:number[], ocrPages:number[], ocrError:string|null}>}
+ *   joined     = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
+ *   emptyPages = หน้าที่อ่านไม่ได้ทั้งชั้นข้อความและ OCR (ไม่มีข้อความ)
+ *   ocrPages   = เลขหน้าที่ใช้ข้อความจาก OCR
+ *   ocrError   = ข้อความแจ้งเมื่อ OCR ล้มเหลว (ไม่ทำให้การอ่าน PDF ทั้งไฟล์ล้มเหลว)
  */
 async function extractPdfText(data, options) {
     const opts = options || {};
     const joinLines = opts.joinLines !== false;
     const useOcr = opts.ocr === true;
     const ocrAll = opts.ocrAll === true;
+
+    // ผู้ให้บริการ OCR ถูกเลือกที่ main.cjs (PaddleOCR / Gemini / i love api)
+    // — ไม่ส่งมา = ใช้ PaddleOCR ในเครื่อง
+    const ocrPageFn = typeof opts.ocrPage === "function"
+        ? opts.ocrPage
+        : function (page) {
+            return getOcrPaddle().ocrPage(page);
+        };
 
     const task = pdfjs.getDocument({
         data: new Uint8Array(data),
@@ -238,7 +250,9 @@ async function extractPdfText(data, options) {
     });
 
     const document = await task.promise;
+    const pageCount = document.numPages;
     const lines = [];
+    const emptyPages = [];
     const ocrPages = [];
     let ocrError = null;
 
@@ -309,7 +323,7 @@ async function extractPdfText(data, options) {
                         }
 
                         const ocrResult =
-                            await getOcrPaddle().ocrPage(page);
+                            await ocrPageFn(page);
 
                         ocrPrepared = true;
 
@@ -349,6 +363,7 @@ async function extractPdfText(data, options) {
                 }
 
                 if (sourceLines.length === 0) {
+                    emptyPages.push(pageNumber);
                     continue;
                 }
 
@@ -378,6 +393,8 @@ async function extractPdfText(data, options) {
     return {
         text: lines.join("\n"),
         joined: joinedCount,
+        pageCount: pageCount,
+        emptyPages: emptyPages,
         ocrPages: ocrPages,
         ocrError: ocrError
     };

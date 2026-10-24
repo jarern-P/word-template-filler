@@ -189,6 +189,13 @@
                     return;
                 }
 
+                if (progress.status === 'ocr-api') {
+                    setSourceStatus(
+                        'กำลัง OCR ด้วย i love api... (อาจใช้เวลาหลายสิบวินาที)'
+                    );
+                    return;
+                }
+
                 if (progress.status === 'ocr') {
                     setSourceStatus(
                         'กำลัง OCR หน้า ' +

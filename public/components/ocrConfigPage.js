@@ -1,11 +1,13 @@
 // OCR Config Page - ตั้งค่าว่าจะใช้ OCR จากที่ไหนเมื่ออัปโหลด PDF
 //
-// หน้าแรกที่เปิดใช้คือ PaddleOCR (ทำงานในเครื่อง ไม่ต้องใช้ API key)
-// อีกสองตัวเลือก (Gemini API / i love api) ถูกวางโครงไว้ให้เห็นตั้งแต่ตอนนี้
-// แต่ยังปิดไว้จนกว่าจะพัฒนาเสร็จ — ผู้ใช้จะไม่เห็นตัวเลือกที่กดแล้วไม่ทำงาน
+// ผู้ให้บริการที่เลือกได้:
+//   - PaddleOCR (Local AI) ทำงานในเครื่อง ไม่ต้องใช้ API key
+//   - Gemini API           ใช้ API key ของ Google AI Studio
+//   - i love api           ใช้ Public Key ของ iLoveAPI (iLovePDF)
 //
 // ค่าตั้งถูกเก็บฝั่ง main process ที่ data/ocr-config.json
-// (ดู src/main/ocr-config.cjs) ไม่ได้อยู่ในฐานข้อมูล จึงไม่ติดไปกับไฟล์สำรอง .db
+// (ดู src/main/ocr-config.cjs) — API key ถูกเข้ารหัสด้วย safeStorage
+// และไม่ถูกส่งกลับมาที่หน้าจอนี้ (หน้าจอรู้แค่ว่า "มี key เก็บไว้แล้ว")
 (function (scope) {
     'use strict';
 
@@ -26,11 +28,11 @@
         '        <div class="ocr-providers">',
 
         '            <label class="ocr-provider">',
-        '                <input type="radio" name="ocrProvider" value="paddle" id="ocrProviderPaddle" checked>',
+        '                <input type="radio" name="ocrProvider" value="paddle" id="ocrProviderPaddle">',
         '                <span class="ocr-provider-body">',
         '                    <span class="ocr-provider-title">',
         '                        <strong>PaddleOCR (Local AI)</strong>',
-        '                        <span class="ocr-badge ok">พร้อมใช้</span>',
+        '                        <span class="ocr-badge ok">ในเครื่อง · ฟรี</span>',
         '                    </span>',
         '                    <small>ทำงานในเครื่องนี้ทั้งหมด — ไม่ต้องใช้ API key ',
         '                        และไม่ต้องต่ออินเทอร์เน็ตหลังโหลดโมเดลครั้งแรกแล้ว',
@@ -38,37 +40,39 @@
         '                </span>',
         '            </label>',
 
-        '            <label class="ocr-provider is-disabled">',
-        '                <input type="radio" name="ocrProvider" value="gemini" disabled data-keep-disabled="1">',
+        '            <label class="ocr-provider">',
+        '                <input type="radio" name="ocrProvider" value="gemini" id="ocrProviderGemini">',
         '                <span class="ocr-provider-body">',
         '                    <span class="ocr-provider-title">',
         '                        <strong>Gemini API</strong>',
-        '                        <span class="ocr-badge pending">ยังไม่เปิดใช้งาน</span>',
+        '                        <span class="ocr-badge pending">ใช้ API key</span>',
         '                    </span>',
-        '                    <small>ใช้ API key ของ Google Gemini — จะเปิดให้เลือกในเวอร์ชันถัดไป</small>',
+        '                    <small>ส่งภาพแต่ละหน้าให้ Google Gemini อ่าน — ',
+        '                        ต้องต่ออินเทอร์เน็ตและมี API key ของ Google AI Studio</small>',
         '                </span>',
         '            </label>',
 
-        '            <label class="ocr-provider is-disabled">',
-        '                <input type="radio" name="ocrProvider" value="iloveapi" disabled data-keep-disabled="1">',
+        '            <label class="ocr-provider">',
+        '                <input type="radio" name="ocrProvider" value="iloveapi" id="ocrProviderIloveapi">',
         '                <span class="ocr-provider-body">',
         '                    <span class="ocr-provider-title">',
         '                        <strong>i love api</strong>',
-        '                        <span class="ocr-badge pending">ยังไม่เปิดใช้งาน</span>',
+        '                        <span class="ocr-badge pending">ใช้ Public Key</span>',
         '                    </span>',
-        '                    <small>ใช้ API key ของ i love api — จะเปิดให้เลือกในเวอร์ชันถัดไป</small>',
+        '                    <small>ส่ง PDF ทั้งไฟล์ให้ iLoveAPI ทำ OCR แล้วอ่านข้อความที่ได้ — ',
+        '                        ต้องต่ออินเทอร์เน็ตและมี Public Key ของโปรเจกต์</small>',
         '                </span>',
         '            </label>',
 
         '        </div>',
         '    </section>',
 
-        // ── PaddleOCR ──
+        // ── พฤติกรรม ──
         '    <section class="suggest-settings">',
-        '        <h2>PaddleOCR</h2>',
+        '        <h2>การทำงาน</h2>',
 
         '        <label class="switch-toggle">',
-        '            <input type="checkbox" id="ocrPaddleEnabled">',
+        '            <input type="checkbox" id="ocrEnabled">',
         '            <span class="switch-box"></span>',
         '            <span>ใช้ OCR เมื่ออัปโหลด PDF</span>',
         '        </label>',
@@ -77,7 +81,7 @@
         '            <span class="ocr-mode-label">ช่วงที่ให้ OCR</span>',
 
         '            <label class="ocr-choice">',
-        '                <input type="radio" name="ocrPaddleMode" value="auto" id="ocrModeAuto" checked>',
+        '                <input type="radio" name="ocrMode" value="auto" id="ocrModeAuto" checked>',
         '                <span>',
         '                    <strong>เฉพาะหน้าที่เป็นรูปสแกน (แนะนำ)</strong>',
         '                    <small>หน้าที่ยังมีชั้นข้อความอยู่แล้วจะใช้ข้อความเดิม — เร็วกว่าและไม่ผิดเพี้ยน</small>',
@@ -85,13 +89,18 @@
         '            </label>',
 
         '            <label class="ocr-choice">',
-        '                <input type="radio" name="ocrPaddleMode" value="always" id="ocrModeAlways">',
+        '                <input type="radio" name="ocrMode" value="always" id="ocrModeAlways">',
         '                <span>',
         '                    <strong>ทุกหน้า</strong>',
         '                    <small>ใช้ข้อความจาก OCR แทนข้อความในไฟล์ทุกหน้า — ช้ากว่า แต่ช่วยเมื่อชั้นข้อความเป็นขยะ</small>',
         '                </span>',
         '            </label>',
         '        </div>',
+        '    </section>',
+
+        // ── PaddleOCR ──
+        '    <section class="suggest-settings ocr-provider-settings" id="ocrPaddleSection">',
+        '        <h2>PaddleOCR (Local AI)</h2>',
 
         '        <p class="hint">',
         '            ครั้งแรกที่ใช้ ระบบจะดาวน์โหลดโมเดล (~15 MB) มาเก็บไว้ในเครื่อง ',
@@ -109,6 +118,55 @@
         '        </div>',
         '    </section>',
 
+        // ── Gemini ──
+        '    <section class="suggest-settings ocr-provider-settings" id="ocrGeminiSection" hidden>',
+        '        <h2>Gemini API</h2>',
+
+        '        <div class="field">',
+        '            <label for="ocrGeminiKey">API key</label>',
+        '            <input type="password" id="ocrGeminiKey" autocomplete="new-password" spellcheck="false">',
+        '            <p class="hint" id="ocrGeminiKeyHint"></p>',
+        '        </div>',
+
+        '        <div class="field">',
+        '            <label for="ocrGeminiModel">โมเดล</label>',
+        '            <input type="text" id="ocrGeminiModel" autocomplete="off" spellcheck="false"',
+        '                   placeholder="gemini-2.5-flash">',
+        '            <p class="hint">ชื่อโมเดลของ Gemini ที่รองรับการอ่านภาพ (ค่าเริ่มต้น gemini-2.5-flash)</p>',
+        '        </div>',
+
+        '        <div class="form-actions page-actions ocr-actions">',
+        '            <button id="ocrGeminiClearBtn" type="button" class="plain">ลบ API key ที่เก็บไว้</button>',
+        '        </div>',
+
+        '        <p class="hint">',
+        '            ขอ API key ได้ที่ <b>aistudio.google.com/apikey</b> — ',
+        '            คีย์ถูกเก็บไว้ในเครื่องนี้ (เข้ารหัสด้วยระบบของ Windows) และไม่ถูกส่งไปที่อื่น',
+        '            นอกจากคำขอ OCR ที่ส่งถึง Google',
+        '        </p>',
+        '    </section>',
+
+        // ── i love api ──
+        '    <section class="suggest-settings ocr-provider-settings" id="ocrIloveSection" hidden>',
+        '        <h2>i love api</h2>',
+
+        '        <div class="field">',
+        '            <label for="ocrIloveKey">Public Key</label>',
+        '            <input type="password" id="ocrIloveKey" autocomplete="new-password" spellcheck="false">',
+        '            <p class="hint" id="ocrIloveKeyHint"></p>',
+        '        </div>',
+
+        '        <div class="form-actions page-actions ocr-actions">',
+        '            <button id="ocrIloveClearBtn" type="button" class="plain">ลบ API key ที่เก็บไว้</button>',
+        '        </div>',
+
+        '        <p class="hint">',
+        '            ใช้ <b>Public Key</b> ของโปรเจกต์จาก iloveapi.com (ไม่ใช่ Secret Key) — ',
+        '            ระบบจะส่ง PDF ทั้งไฟล์ไปทำ OCR และอ่านข้อความจากไฟล์ผลลัพธ์ ',
+        '            การประมวลผลใช้โควตาตามบัญชีของท่าน (OCR 5 credits ต่อหน้า)',
+        '        </p>',
+        '    </section>',
+
         '    <div class="form-actions page-actions">',
         '        <button id="ocrSaveBtn" type="button">บันทึกการตั้งค่า</button>',
         '    </div>',
@@ -116,6 +174,17 @@
         '    <p id="ocrPageStatus" class="db-status"></p>',
         '</div>'
     ].join('\n');
+
+    const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+
+    // ค่าล่าสุดจาก main process (ใช้ตัดสินว่า "มี key เก็บไว้แล้ว" ไหม)
+    let settings = {
+        provider: 'paddle',
+        enabled: true,
+        mode: 'auto',
+        gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
+        iloveapi: { hasKey: false }
+    };
 
     function el(id) {
         return document.getElementById(id);
@@ -144,39 +213,122 @@
     }
 
     // ──────────────────────────────────────────────────────────────
-    // ค่าที่กรอกอยู่บนหน้าจอ
+    // ผู้ให้บริการที่เลือก / ส่วนตั้งค่าที่แสดง
     // ──────────────────────────────────────────────────────────────
 
-    function currentConfig() {
-        return {
-            provider: 'paddle',
-            paddle: {
-                enabled: el('ocrPaddleEnabled').checked,
-                mode: el('ocrModeAlways').checked ? 'always' : 'auto'
-            }
-        };
+    function selectedProvider() {
+        const checked = document.querySelector(
+            'input[name="ocrProvider"]:checked'
+        );
+
+        return checked ? checked.value : 'paddle';
     }
 
-    function applyConfig(config) {
-        const paddle = (config && config.paddle) || {};
+    function selectProvider(provider) {
+        const radio = document.querySelector(
+            'input[name="ocrProvider"][value="' + provider + '"]'
+        );
 
-        el('ocrPaddleEnabled').checked = paddle.enabled !== false;
-        el('ocrModeAuto').checked = paddle.mode !== 'always';
-        el('ocrModeAlways').checked = paddle.mode === 'always';
+        if (radio) {
+            radio.checked = true;
+        } else {
+            el('ocrProviderPaddle').checked = true;
+        }
 
-        updateModeState();
+        updateProviderSections();
+    }
+
+    function updateProviderSections() {
+        const provider = selectedProvider();
+
+        el('ocrPaddleSection').hidden = provider !== 'paddle';
+        el('ocrGeminiSection').hidden = provider !== 'gemini';
+        el('ocrIloveSection').hidden = provider !== 'iloveapi';
     }
 
     // ปิดช่องเลือกช่วงการทำงานเมื่อ OCR ถูกปิด
     function updateModeState() {
-        const enabled = el('ocrPaddleEnabled').checked;
+        const enabled = el('ocrEnabled').checked;
 
         el('ocrModeAuto').disabled = !enabled;
         el('ocrModeAlways').disabled = !enabled;
     }
 
     // ──────────────────────────────────────────────────────────────
-    // สถานะเครื่อง
+    // ค่าที่กรอกอยู่บนหน้าจอ
+    // ──────────────────────────────────────────────────────────────
+
+    function applyConfig(config) {
+        const value = config || {};
+
+        settings = {
+            provider: value.provider || 'paddle',
+            enabled: value.enabled !== false,
+            mode: value.mode === 'always' ? 'always' : 'auto',
+            gemini: {
+                model: (value.gemini && value.gemini.model) || DEFAULT_GEMINI_MODEL,
+                hasKey: Boolean(value.gemini && value.gemini.hasKey)
+            },
+            iloveapi: {
+                hasKey: Boolean(value.iloveapi && value.iloveapi.hasKey)
+            }
+        };
+
+        selectProvider(settings.provider);
+
+        el('ocrEnabled').checked = settings.enabled;
+        el('ocrModeAuto').checked = settings.mode !== 'always';
+        el('ocrModeAlways').checked = settings.mode === 'always';
+
+        el('ocrGeminiModel').value = settings.gemini.model;
+        el('ocrGeminiKey').value = '';
+        el('ocrIloveKey').value = '';
+
+        updateKeyHints();
+        updateModeState();
+    }
+
+    function updateKeyHints() {
+        const geminiHasKey = settings.gemini.hasKey;
+        const iloveHasKey = settings.iloveapi.hasKey;
+
+        el('ocrGeminiKeyHint').textContent = geminiHasKey
+            ? 'มี API key เก็บไว้แล้ว — เว้นว่างเพื่อใช้ key เดิม'
+            : 'ยังไม่มี API key — ต้องใส่ก่อนใช้ Gemini';
+
+        el('ocrGeminiKey').placeholder = geminiHasKey
+            ? '•••••••• (เว้นว่าง = ใช้ key เดิม)'
+            : 'วาง API key ที่นี่';
+
+        el('ocrIloveKeyHint').textContent = iloveHasKey
+            ? 'มี Public Key เก็บไว้แล้ว — เว้นว่างเพื่อใช้ key เดิม'
+            : 'ยังไม่มี Public Key — ต้องใส่ก่อนใช้ i love api';
+
+        el('ocrIloveKey').placeholder = iloveHasKey
+            ? '•••••••• (เว้นว่าง = ใช้ key เดิม)'
+            : 'วาง Public Key ที่นี่';
+
+        el('ocrGeminiClearBtn').disabled = !geminiHasKey;
+        el('ocrIloveClearBtn').disabled = !iloveHasKey;
+    }
+
+    function currentPayload() {
+        return {
+            provider: selectedProvider(),
+            enabled: el('ocrEnabled').checked,
+            mode: el('ocrModeAlways').checked ? 'always' : 'auto',
+            gemini: {
+                apiKey: el('ocrGeminiKey').value,
+                model: el('ocrGeminiModel').value
+            },
+            iloveapi: {
+                apiKey: el('ocrIloveKey').value
+            }
+        };
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // สถานะ PaddleOCR (ในเครื่อง)
     // ──────────────────────────────────────────────────────────────
 
     function renderStatus(result) {
@@ -191,7 +343,7 @@
         }
 
         if (!result.ready) {
-            title.textContent = 'ยังใช้ OCR ไม่ได้';
+            title.textContent = 'ยังใช้ OCR ในเครื่องไม่ได้';
             title.className = 'ocr-status-head error';
 
             const missing = Object.keys(result.engines || {})
@@ -248,6 +400,10 @@
         return result;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // โหลด / บันทึก
+    // ──────────────────────────────────────────────────────────────
+
     async function loadConfig() {
         const electron = api();
 
@@ -275,31 +431,29 @@
         }
     }
 
-    // ──────────────────────────────────────────────────────────────
-    // ปุ่ม
-    // ──────────────────────────────────────────────────────────────
-
-    async function saveConfig() {
+    async function saveConfig(payload, successMessage) {
         const electron = api();
         const button = el('ocrSaveBtn');
 
         if (!electron || !electron.ocrSaveConfig) {
             setStatus('เปิดหน้านี้ในแอปเพื่อบันทึกค่าตั้ง', 'error');
-            return;
+            return false;
         }
 
         button.disabled = true;
         setStatus('กำลังบันทึก...');
 
         try {
-            const result = await electron.ocrSaveConfig(currentConfig());
+            const result = await electron.ocrSaveConfig(payload);
 
             if (!result || result.ok === false) {
                 throw new Error((result && result.error) || 'บันทึกไม่สำเร็จ');
             }
 
             applyConfig(result.config);
-            setStatus('บันทึกการตั้งค่า OCR แล้ว', 'ok');
+            setStatus(successMessage || 'บันทึกการตั้งค่า OCR แล้ว', 'ok');
+
+            return true;
 
         } catch (error) {
             setStatus(
@@ -308,9 +462,74 @@
                 'error'
             );
 
+            return false;
+
         } finally {
             button.disabled = false;
         }
+    }
+
+    async function onSave() {
+        const provider = selectedProvider();
+        const payload = currentPayload();
+
+        // ตรวจ key ก่อนบันทึก เฉพาะผู้ให้บริการที่ต้องใช้
+        if (provider === 'gemini') {
+            const hasKey =
+                String(payload.gemini.apiKey || '').trim() !== '' ||
+                settings.gemini.hasKey;
+
+            if (!hasKey) {
+                setStatus('กรุณาใส่ API key ของ Gemini ก่อนใช้งาน', 'error');
+                el('ocrGeminiKey').focus();
+                return;
+            }
+        }
+
+        if (provider === 'iloveapi') {
+            const hasKey =
+                String(payload.iloveapi.apiKey || '').trim() !== '' ||
+                settings.iloveapi.hasKey;
+
+            if (!hasKey) {
+                setStatus('กรุณาใส่ Public Key ของ i love api ก่อนใช้งาน', 'error');
+                el('ocrIloveKey').focus();
+                return;
+            }
+        }
+
+        await saveConfig(payload);
+    }
+
+    async function clearKey(provider) {
+        const isGemini = provider === 'gemini';
+
+        if (scope.AppDialog && scope.AppDialog.confirm) {
+            const confirmed = await scope.AppDialog.confirm(
+                isGemini
+                    ? 'ลบ API key ของ Gemini ที่เก็บไว้ในเครื่องนี้?'
+                    : 'ลบ API key ของ i love api ที่เก็บไว้ในเครื่องนี้?'
+            );
+
+            if (!confirmed) return;
+        }
+
+        const payload = currentPayload();
+
+        if (isGemini) {
+            payload.gemini = {
+                apiKey: '',
+                model: el('ocrGeminiModel').value,
+                clearKey: true
+            };
+        } else {
+            payload.iloveapi = {
+                apiKey: '',
+                clearKey: true
+            };
+        }
+
+        await saveConfig(payload, 'ลบ API key แล้ว');
     }
 
     async function prepareModels() {
@@ -354,11 +573,23 @@
     // ──────────────────────────────────────────────────────────────
 
     function bind() {
-        el('ocrSaveBtn').addEventListener('click', saveConfig);
+        el('ocrSaveBtn').addEventListener('click', onSave);
         el('ocrRefreshBtn').addEventListener('click', refreshStatus);
         el('ocrPrepareBtn').addEventListener('click', prepareModels);
+        el('ocrGeminiClearBtn').addEventListener('click', function () {
+            clearKey('gemini');
+        });
+        el('ocrIloveClearBtn').addEventListener('click', function () {
+            clearKey('iloveapi');
+        });
 
-        el('ocrPaddleEnabled').addEventListener('change', updateModeState);
+        el('ocrEnabled').addEventListener('change', updateModeState);
+
+        document
+            .querySelectorAll('input[name="ocrProvider"]')
+            .forEach(function (radio) {
+                radio.addEventListener('change', updateProviderSections);
+            });
     }
 
     const page = {
