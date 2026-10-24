@@ -111,8 +111,10 @@
     // ข้อความจากไฟล์ .pdf
     // ──────────────────────────────────────────────────────────────
 
-    // คืน { text, joined }
-    //   joined = จำนวนจุดที่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่
+    // คืน { text, joined, ocrPages, ocrError }
+    //   joined   = จำนวนจุดที่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่
+    //   ocrPages = เลขหน้าที่ได้ข้อความจาก OCR (หน้าที่เป็นรูปสแกน)
+    //   ocrError = ข้อความแจ้งเมื่อ OCR ล้มเหลว
     //   options.joinLines = false เพื่อไม่เย็บ
     async function textFromPdf(data, options) {
         const opts = options || {};
@@ -139,7 +141,11 @@
 
         return {
             text: normalizeText(result.text || ''),
-            joined: Number(result.joined) || 0
+            joined: Number(result.joined) || 0,
+            ocrPages: Array.isArray(result.ocrPages)
+                ? result.ocrPages
+                : [],
+            ocrError: result.ocrError || null
         };
     }
 
@@ -175,8 +181,9 @@
         return kept.join('\n');
     }
 
-    // คืน { text, joined }
-    //   joined = จำนวนจุดที่เย็บบรรทัดที่ถูกตัด (PDF)
+    // คืน { text, joined, ocrPages, ocrError }
+    //   joined   = จำนวนจุดที่เย็บบรรทัดที่ถูกตัด (PDF)
+    //   ocrPages = เลขหน้าที่ได้ข้อความจาก OCR (PDF ที่เป็นรูปสแกน)
     //   options.joinLines = false เพื่อไม่เย็บ
     async function extractFile(file, options) {
         const name = String((file && file.name) || '').toLowerCase();
@@ -205,7 +212,11 @@
 
         return {
             text: result.text,
-            joined: Number(result.joined) || 0
+            joined: Number(result.joined) || 0,
+            ocrPages: Array.isArray(result.ocrPages)
+                ? result.ocrPages
+                : [],
+            ocrError: result.ocrError || null
         };
     }
 

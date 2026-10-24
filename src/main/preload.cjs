@@ -126,16 +126,35 @@ contextBridge.exposeInMainWorld(
             ),
 
         // ดึงข้อความจากไฟล์ PDF (ใช้กับปุ่ม "ข้อมูล")
-        // payload = { data, joinLines } — คืน { ok, text, joined } หรือ { ok:false, error }
-        // อ่านเฉพาะชั้นข้อความในไฟล์ — หน้าที่เป็นรูป (ไฟล์สแกน) ได้ข้อความว่าง
+        // payload = { data, joinLines } — คืน { ok, text, joined, ocrPages, ocrError }
+        // หน้าที่เป็นรูป (ไฟล์สแกน) ถูก OCR ด้วย PaddleOCR ตามค่าที่ตั้งไว้
         extractPdfText: (payload) =>
             ipcRenderer.invoke(
                 "file:extract-pdf",
                 payload
             ),
 
+        // ─────────────────────────────
+        // OCR
+        // ─────────────────────────────
+
+        // ค่าตั้งผู้ให้บริการ OCR ของเครื่องนี้ (data/ocr-config.json)
+        ocrGetConfig: () =>
+            ipcRenderer.invoke("ocr:config-get"),
+
+        ocrSaveConfig: (payload) =>
+            ipcRenderer.invoke("ocr:config-save", payload),
+
+        // ไลบรารี/โมเดลพร้อมใช้หรือยัง (ไม่โหลดโมเดล)
+        ocrStatus: () =>
+            ipcRenderer.invoke("ocr:status"),
+
+        // เริ่ม OCR ล่วงหน้า — ครั้งแรกจะดาวน์โหลดโมเดล (~15 MB)
+        ocrPrepare: () =>
+            ipcRenderer.invoke("ocr:prepare"),
+
         // ความคืบหน้าระหว่างอ่าน PDF
-        // callback ได้ { page, pageCount, status: 'reading', progress }
+        // callback ได้ { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare', progress }
         onPdfExtractProgress: (callback) => {
             if (typeof callback !== "function") return;
 

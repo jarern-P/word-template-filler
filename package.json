@@ -16,8 +16,11 @@
     "build:exe:ps": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.13",
     "better-sqlite3": "^13.0.3",
-    "pdfjs-dist": "^3.11.174"
+    "onnxruntime-node": "^1.30.0",
+    "pdfjs-dist": "^3.11.174",
+    "ppu-paddle-ocr": "^6.6.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
@@ -43,7 +46,11 @@
     ],
     "asarUnpack": [
       "**/*.node",
-      "src/main/db/**"
+      "src/main/db/**",
+      "node_modules/onnxruntime-node/**",
+      "node_modules/ppu-paddle-ocr/**",
+      "node_modules/ppu-ocv/**",
+      "node_modules/@napi-rs/canvas/**"
     ],
     "win": {
       "target": [

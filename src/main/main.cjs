@@ -11,6 +11,12 @@ const {
     Worker
 } = require("worker_threads");
 
+const ocrConfig =
+    require("./ocr-config.cjs");
+
+const ocrPaddle =
+    require("./ocr-paddle.cjs");
+
 
 // ============================================================
 // Locale
@@ -1563,6 +1569,135 @@ ipcMain.handle(
 
 
 // ============================================================
+// OCR Config (หน้า "ตั้งค่า OCR")
+// ============================================================
+//
+// ค่าตั้งเก็บที่ data/ocr-config.json (ไม่ปนกับฐานข้อมูล — ดู ocr-config.cjs)
+//   ocr:config-get  -> อ่านค่าตั้งปัจจุบัน
+//   ocr:config-save -> บันทึกค่าตั้ง
+//   ocr:status      -> ตรวจว่าไลบรารี/โมเดลพร้อมใช้หรือยัง
+//   ocr:prepare     -> เริ่ม OCR ล่วงหน้า (ดาวน์โหลดโมเดลครั้งแรก)
+
+ipcMain.handle(
+    "ocr:config-get",
+    async () => {
+
+        try {
+
+            return {
+                ok: true,
+                config: ocrConfig.read(getDataPath())
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:config-save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            return {
+                ok: true,
+                config: ocrConfig.save(
+                    getDataPath(),
+                    payload
+                )
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr:config-save error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:status",
+    async () => {
+
+        try {
+
+            return {
+                ok: true,
+                ...ocrPaddle.status()
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr:prepare",
+    async () => {
+
+        try {
+
+            const result =
+                await ocrPaddle.prepare();
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr:prepare error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+// ============================================================
 // File Text (ดึงข้อความจาก PDF)
 // ============================================================
 //
@@ -1570,8 +1705,8 @@ ipcMain.handle(
 // แล้วเอา regex ของแต่ละ field ไปจับค่าจากข้อความที่ได้
 // (ไฟล์ .docx อ่านใน renderer ด้วย JSZip — ดู public/dataExtract.js)
 //
-// อ่านเฉพาะชั้นข้อความที่ฝังอยู่ในไฟล์ — หน้าที่เป็นรูป (ไฟล์สแกน)
-// ไม่มีข้อความให้ดึง หน้านั้นจึงได้ข้อความว่าง
+// อ่านชั้นข้อความที่ฝังอยู่ในไฟล์ก่อน — หน้าที่เป็นรูป (ไฟล์สแกน)
+// จะถูก OCR ด้วย PaddleOCR ในเครื่องให้อัตโนมัติ (ตั้งค่าได้ที่หน้า "ตั้งค่า OCR")
 
 ipcMain.handle(
     "file:extract-pdf",
@@ -1593,12 +1728,26 @@ ipcMain.handle(
             const { extractPdfText } =
                 require("./pdf-text.cjs");
 
+            // ค่าตั้ง OCR ของเครื่องนี้ — ใช้เมื่อเลือก PaddleOCR และเปิดไว้
+            const settings =
+                ocrConfig.read(getDataPath());
+
+            const useOcr =
+                settings.provider === "paddle" &&
+                settings.paddle.enabled === true &&
+                (!payload || payload.ocr !== false);
+
             const result =
                 await extractPdfText(
                     data,
                     {
                         // เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ปิดได้จากหน้าจอ)
                         joinLines: !payload || payload.joinLines !== false,
+                        // OCR เฉพาะหน้าที่ไม่มีชั้นข้อความ (หรือทุกหน้าถ้าตั้งไว้)
+                        ocr: useOcr,
+                        ocrAll:
+                            useOcr &&
+                            settings.paddle.mode === "always",
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -1617,7 +1766,11 @@ ipcMain.handle(
                 ok: true,
                 text: result.text,
                 // จำนวนจุดที่เย็บบรรทัดที่ถูกตัดเข้าด้วยกัน
-                joined: result.joined || 0
+                joined: result.joined || 0,
+                // เลขหน้าที่ได้ข้อความจาก OCR
+                ocrPages: result.ocrPages || [],
+                // แจ้งเตือนเมื่อ OCR ล้มเหลว (ข้อความจากชั้นข้อความยังใช้ได้)
+                ocrError: result.ocrError || null
             };
 
         } catch (error) {

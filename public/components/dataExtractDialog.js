@@ -179,6 +179,22 @@
                         progress.page + '/' + progress.pageCount +
                         '...'
                     );
+                    return;
+                }
+
+                if (progress.status === 'ocr-prepare') {
+                    setSourceStatus(
+                        'กำลังเตรียม OCR (ครั้งแรกอาจใช้เวลาดาวน์โหลดโมเดล)...'
+                    );
+                    return;
+                }
+
+                if (progress.status === 'ocr') {
+                    setSourceStatus(
+                        'กำลัง OCR หน้า ' +
+                        progress.page + '/' + progress.pageCount +
+                        (progress.progress >= 1 ? ' — เสร็จแล้ว' : '...')
+                    );
                 }
             });
         }
@@ -375,15 +391,39 @@
             const textarea = el('dataSourceText');
 
             textarea.value = text;
+
+            const ocrPages =
+                result && Array.isArray(result.ocrPages)
+                    ? result.ocrPages
+                    : [];
+
             setSourceStatus(
                 'อ่านแล้ว: ' + file.name +
                 ' — ' + text.length + ' ตัวอักษร' +
                 (result && result.joined
                     ? ' · รวม ' + result.joined + ' บรรทัดที่ถูกตัด'
-                    : '')
+                    : '') +
+                (ocrPages.length > 0
+                    ? ' · OCR ' + ocrPages.length + ' หน้า'
+                    : '') +
+                (result && result.ocrError && text !== ''
+                    ? ' · OCR บางหน้าไม่สำเร็จ'
+                    : ''),
+                result && result.ocrError
+                    ? (text === '' ? 'error' : 'warn')
+                    : ''
             );
 
             hideResults();
+
+            // OCR อ่านไม่ได้และไม่มีข้อความจากชั้นข้อความ = บอกสาเหตุให้ผู้ใช้รู้
+            // (ไฟล์ที่มีชั้นข้อความยังใช้ต่อได้ จึงไม่ต้องรบกวนด้วยกล่องข้อความ)
+            if (result && result.ocrError && text === '') {
+                await scope.AppDialog.alert(
+                    'อ่านข้อความจาก PDF ไม่ได้\n\n' +
+                    result.ocrError
+                );
+            }
 
         } catch (error) {
             console.error(error);

@@ -1,3 +1,6 @@
+# ค่าตั้งของเครื่อง (OCR / API key) — ไม่ควรติดไปกับ repo
+data/ocr-config.json
+
 # Logs
 logs
 *.log

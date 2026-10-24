@@ -7,11 +7,67 @@
 // ผลลัพธ์: ข้อความบรรทัดละบรรทัด (ตามตำแหน่ง y ของข้อความในหน้า)
 // ใช้ต่อกับ regex ของแต่ละ field ในหน้าตั้งค่าแม่แบบ
 //
-// อ่านเฉพาะ "ชั้นข้อความ" ที่ฝังอยู่ในไฟล์เท่านั้น
-// หน้าที่เป็นรูป (ไฟล์สแกน) ไม่มีข้อความให้ดึง หน้านั้นจึงได้ข้อความว่าง
+// อ่าน "ชั้นข้อความ" ที่ฝังอยู่ในไฟล์เป็นหลัก
+// หน้าที่เป็นรูป (ไฟล์สแกน) ไม่มีข้อความให้ดึง → ใช้ OCR ในเครื่องอ่านให้
+// (เปิด/ปิดได้จากหน้า "ประวัติและการตั้งค่า" → "ตั้งค่า OCR")
+
+// pdf.js จะ polyfill DOMMatrix/Path2D จากโมดูล `canvas` (node-canvas) ซึ่งคอมไพล์
+// ตาม ABI ของ Node ธรรมดา — ใช้ใน Electron ไม่ได้
+// เติมจาก @napi-rs/canvas ให้ก่อน pdf.js โหลด เพื่อไม่ให้ pdf.js ไปเรียก `canvas`
+let napiCanvas = null;
+
+try {
+    napiCanvas = require("@napi-rs/canvas");
+
+    if (!globalThis.DOMMatrix && napiCanvas.DOMMatrix) {
+        globalThis.DOMMatrix = napiCanvas.DOMMatrix;
+    }
+
+    if (!globalThis.Path2D && napiCanvas.Path2D) {
+        globalThis.Path2D = napiCanvas.Path2D;
+    }
+} catch (error) {
+    // ไม่มี canvas = ยังอ่านชั้นข้อความได้ แต่ OCR จะใช้ไม่ได้
+    napiCanvas = null;
+}
+
 const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
 
 const { joinWrappedLines } = require("./line-join.cjs");
+
+let ocrPaddle = null;
+
+function getOcrPaddle() {
+    if (!ocrPaddle) {
+        ocrPaddle = require("./ocr-paddle.cjs");
+    }
+
+    return ocrPaddle;
+}
+
+// pdf.js ใช้ canvasFactory เมื่อต้องวาดภาพ/ลายน้ำระหว่างเรนเดอร์หน้า
+function createCanvasFactory() {
+    if (!napiCanvas) return undefined;
+
+    return {
+        create: function (width, height) {
+            const canvas = napiCanvas.createCanvas(width, height);
+
+            return {
+                canvas: canvas,
+                context: canvas.getContext("2d")
+            };
+        },
+        reset: function (canvasAndContext, width, height) {
+            canvasAndContext.canvas.width = width;
+            canvasAndContext.canvas.height = height;
+        },
+        destroy: function (canvasAndContext) {
+            canvasAndContext.canvas = null;
+            canvasAndContext.context = null;
+        }
+    };
+}
 
 // PDF ที่พิมพ์จากโปรแกรมบางตัว (หรือสแกนแล้วฝังชั้นข้อความไว้)
 // ข้อความที่ได้จะเป็นรหัส glyph ของฟอนต์ Type3 ไม่ใช่ตัวอักษรจริง
@@ -157,24 +213,37 @@ function pageLines(items) {
  * @param {Uint8Array|Buffer} data เนื้อไฟล์ PDF
  * @param {Object} [options]
  *   joinLines  = false เพื่อไม่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ค่าเริ่มต้น = เย็บ)
- *   onProgress = ฟังก์ชันรับความคืบหน้า { page, pageCount, status: 'reading' }
- * @returns {Promise<{text:string, joined:number}>}
- *   joined = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
+ *   ocr        = true เพื่อ OCR หน้าที่ไม่มีชั้นข้อความ (ค่าเริ่มต้น = ปิด)
+ *   ocrAll     = true เพื่อ OCR ทุกหน้า แม้มีชั้นข้อความอยู่แล้ว
+ *   onProgress = ฟังก์ชันรับความคืบหน้า
+ *                { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare' }
+ * @returns {Promise<{text:string, joined:number, ocrPages:number[], ocrError:string|null}>}
+ *   joined   = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
+ *   ocrPages = เลขหน้าที่ใช้ข้อความจาก OCR
+ *   ocrError = ข้อความแจ้งเมื่อ OCR ล้มเหลว (ไม่ทำให้การอ่าน PDF ทั้งไฟล์ล้มเหลว)
  */
 async function extractPdfText(data, options) {
     const opts = options || {};
     const joinLines = opts.joinLines !== false;
+    const useOcr = opts.ocr === true;
+    const ocrAll = opts.ocrAll === true;
 
     const task = pdfjs.getDocument({
         data: new Uint8Array(data),
         // ไม่ต้องเรนเดอร์/โหลดฟอนต์ — ต้องการแค่ข้อความ
         disableFontFace: true,
         isEvalSupported: false,
-        useSystemFonts: true
+        useSystemFonts: true,
+        canvasFactory: createCanvasFactory()
     });
 
     const document = await task.promise;
     const lines = [];
+    const ocrPages = [];
+    let ocrError = null;
+
+    // เริ่ม OCR ครั้งแรก = อาจต้องโหลดโมเดล (แจ้งหน้าจอให้รอ)
+    let ocrPrepared = false;
 
     // จำนวนจุดที่เย็บบรรทัด (รายงานให้หน้าจอรู้ว่าทำอะไรไปบ้าง)
     let joinedCount = 0;
@@ -212,15 +281,81 @@ async function extractPdfText(data, options) {
 
                 const quality = textUsability(pageText);
 
-                // หน้าเปล่า (ไม่มีชั้นข้อความ) หรือข้อความเป็นขยะ = ไม่นำไปใช้
-                if (!quality.usable || textLayerLines.length === 0) {
+                // หน้าเปล่า (ไม่มีชั้นข้อความ) หรือข้อความเป็นขยะ = ต้องใช้ OCR
+                const hasTextLayer =
+                    quality.usable &&
+                    textLayerLines.length > 0;
+
+                let sourceLines = hasTextLayer ? textLayerLines : [];
+
+                if (useOcr && (ocrAll || !hasTextLayer)) {
+
+                    try {
+                        if (!ocrPrepared && typeof opts.onProgress === "function") {
+                            opts.onProgress({
+                                page: pageNumber,
+                                pageCount: document.numPages,
+                                status: "ocr-prepare"
+                            });
+                        }
+
+                        if (typeof opts.onProgress === "function") {
+                            opts.onProgress({
+                                page: pageNumber,
+                                pageCount: document.numPages,
+                                status: "ocr",
+                                progress: 0
+                            });
+                        }
+
+                        const ocrResult =
+                            await getOcrPaddle().ocrPage(page);
+
+                        ocrPrepared = true;
+
+                        if (ocrResult.lines.length > 0) {
+                            // OCR อ่านได้ = ใช้ข้อความนี้ (โหมด always = แทนชั้นข้อความเดิม)
+                            sourceLines = ocrResult.lines;
+                            ocrPages.push(pageNumber);
+                        } else if (!hasTextLayer) {
+                            ocrError =
+                                ocrError ||
+                                "OCR อ่านไม่พบข้อความในหน้า " + pageNumber;
+                        }
+
+                    } catch (error) {
+
+                        // OCR หน้าเดียวล้มเหลว ไม่ควรทำให้การอ่าน PDF ทั้งไฟล์ล้มเหลว
+                        // (หน้าที่มีชั้นข้อความยังใช้ข้อความเดิมได้)
+                        ocrError =
+                            ocrError ||
+                            ((error && error.message) ||
+                                "OCR หน้า " + pageNumber + " ไม่สำเร็จ");
+
+                        console.error(
+                            "OCR page " + pageNumber + " error:",
+                            error
+                        );
+                    }
+
+                    if (typeof opts.onProgress === "function") {
+                        opts.onProgress({
+                            page: pageNumber,
+                            pageCount: document.numPages,
+                            status: "ocr",
+                            progress: 1
+                        });
+                    }
+                }
+
+                if (sourceLines.length === 0) {
                     continue;
                 }
 
                 const result = joinLines
-                    ? joinWrappedLines(textLayerLines)
+                    ? joinWrappedLines(sourceLines)
                     : {
-                        lines: textLayerLines.map(function (line) {
+                        lines: sourceLines.map(function (line) {
                             return line.text;
                         }),
                         joined: 0
@@ -242,7 +377,9 @@ async function extractPdfText(data, options) {
 
     return {
         text: lines.join("\n"),
-        joined: joinedCount
+        joined: joinedCount,
+        ocrPages: ocrPages,
+        ocrError: ocrError
     };
 }
 

@@ -5,6 +5,7 @@
 
     const DEFAULT_PAGE = 'report';
     const CONFIG_PAGE = 'template-config';
+    const OCR_PAGE = 'ocr-config';
     const MASTER_PAGE = 'master-data';
     const WORDS_PAGE = 'word-suggest';
     const HISTORY_PAGE = 'history';
@@ -29,6 +30,7 @@
     const PAGE_COMPONENTS = {
         'report': 'ReportPage',
         'template-config': 'TemplateConfigPage',
+        'ocr-config': 'OcrConfigPage',
         'master-data': 'MasterDataPage',
         'word-suggest': 'WordSuggestPage',
         'history': 'HistoryPage',
