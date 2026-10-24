@@ -32,7 +32,6 @@
         'master-data': 'MasterDataPage',
         'word-suggest': 'WordSuggestPage',
         'history': 'HistoryPage',
-        'ocr-training': 'OcrTrainingPage',
         'regex': 'RegexPage',
         'query': 'QueryPage',
         'database': 'DatabasePage'
@@ -7379,11 +7378,6 @@
         refreshWordList();
         refreshHistory();
         refreshDatabaseInfo();
-
-        // คลังคำที่แก้ (OCR) อยู่ในฐานข้อมูล — อ่านใหม่หลังนำเข้า/เปลี่ยนฐานข้อมูล
-        if (scope.DataExtract && scope.DataExtract.refreshTextFixes) {
-            scope.DataExtract.refreshTextFixes();
-        }
     }
 
     // ──────────────────────────────────────────────────────────────

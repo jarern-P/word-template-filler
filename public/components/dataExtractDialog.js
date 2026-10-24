@@ -66,16 +66,6 @@
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
-        '            <div class="data-fixes">',
-        '                <div class="data-fixes-head">',
-        '                    <h4>คำที่แก้เอง</h4>',
-        '                    <button id="dataFixOpenBtn" type="button" class="plain" disabled>',
-        '                        ตรวจคำบน PDF',
-        '                    </button>',
-        '                </div>',
-        '                <p id="dataFixHint" class="hint">OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — ' +
-            'อัปโหลด PDF แล้วกด "ตรวจคำบน PDF" เพื่อแก้คำจากตำแหน่งจริงบนหน้ากระดาษ</p>',
-        '            </div>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -121,11 +111,6 @@
     // กำลังอ่านไฟล์อยู่หรือไม่ — ใช้ตัดสินว่าจะแสดงความคืบหน้าหรือไม่
     let readingFile = false;
 
-    // หน้า OCR ของไฟล์ที่เพิ่งอ่าน (ไว้เปิดหน้าจอตรวจคำ)
-    // ไฟล์ .docx / PDF ที่มีชั้นข้อความ จะว่าง — ไม่มีภาพให้ตรวจ
-    let lastPages = [];
-    let lastFileName = '';
-
     function el(id) {
         return document.getElementById(id);
     }
@@ -159,9 +144,6 @@
         document.addEventListener('keydown', function (event) {
             if (event.key !== 'Escape') return;
 
-            // มีหน้าจอตรวจคำเปิดทับอยู่ — ปล่อยให้ Escape ปิดตัวนั้นตัวเดียว
-            if (document.querySelector('.words-overlay.open')) return;
-
             close();
         });
 
@@ -187,32 +169,9 @@
         });
 
         // ความคืบหน้าจาก main process ระหว่างอ่าน PDF
-        // (เอกสารสแกนต้อง OCR ทีละหน้า จึงใช้เวลาหลายวินาที)
         if (window.electronAPI && window.electronAPI.onPdfExtractProgress) {
             window.electronAPI.onPdfExtractProgress(function (progress) {
                 if (!readingFile || !progress) return;
-
-                if (progress.status === 'ocr') {
-                    const percent = Math.round(
-                        (Number(progress.progress) || 0) * 100
-                    );
-
-                    setSourceStatus(
-                        'พบเอกสารสแกน — กำลัง OCR หน้า ' +
-                        progress.page + '/' + progress.pageCount +
-                        ' (' + percent + '%)...'
-                    );
-                    return;
-                }
-
-                if (progress.status === 'ai') {
-                    setSourceStatus(
-                        'ให้ AI ช่วยตรวจคำ หน้า ' +
-                        progress.page + '/' + progress.pageCount +
-                        '...'
-                    );
-                    return;
-                }
 
                 if (progress.status === 'reading') {
                     setSourceStatus(
@@ -241,76 +200,6 @@
             saveJoinLinesSetting(joinLinesEnabled);
         });
 
-        // คำที่แก้เอง — เปิดภาพหน้า PDF เพื่อแก้คำตรงตำแหน่งจริง
-        el('dataFixOpenBtn').addEventListener('click', openWordsPreview);
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    // คำที่แก้เอง (เก็บใน localStorage — ใช้กับไฟล์ที่อ่านครั้งถัดไป)
-    // ──────────────────────────────────────────────────────────────
-
-    // เปิดภาพหน้า PDF ที่ OCR อ่าน พร้อมกล่องคำตามตำแหน่งจริง
-    // ไม่มีภาพ (docx / ไฟล์ที่มีชั้นข้อความ) = ปุ่มถูกปิดไว้ตั้งแต่ต้น
-    function openWordsPreview() {
-        if (lastPages.length === 0 || !scope.PdfWordsDialog) return;
-
-        scope.PdfWordsDialog.open({
-            pages: lastPages,
-            title: lastFileName,
-            onChange: applyTrainingToSource
-        });
-    }
-
-    // เปิด/ปิดปุ่มตรวจคำตามไฟล์ที่อ่านล่าสุด + บอกเหตุผลเมื่อเปิดไม่ได้
-    function setWordPreviewPages(pages, fileName) {
-        lastPages = Array.isArray(pages) ? pages : [];
-        lastFileName = fileName || '';
-
-        const button = el('dataFixOpenBtn');
-        const hint = el('dataFixHint');
-
-        if (!button || !hint) return;
-
-        button.disabled = lastPages.length === 0;
-
-        if (lastPages.length > 0) {
-            hint.textContent =
-                'พบ ' + lastPages.length + ' หน้าที่ OCR อ่าน — ' +
-                'กด "ตรวจคำบน PDF" แล้วคลิกคำที่อ่านผิดบนหน้าเพื่อแก้ ' +
-                '(จะเห็นผลในข้อความด้านบนทันที) — ใช้ปุ่ม "จัดกลุ่มคำ" กับ ' +
-                '"ลบคำ" สำหรับคำที่ถูกตัดข้ามบรรทัดหรือคำที่ OCR เก็บเกิน';
-        } else {
-            hint.textContent =
-                'OCR อ่านคำไทยผิดบ่อย (เช่น ตกไม้โท) — ' +
-                'อัปโหลด PDF ที่เป็นเอกสารสแกน แล้วกด "ตรวจคำบน PDF" ' +
-                'เพื่อแก้คำจากตำแหน่งจริงบนหน้ากระดาษ';
-        }
-    }
-
-    // ใช้รายการที่ฝึกไว้กับข้อความต้นทางที่แสดงอยู่ (ถ้ามี)
-    // ลำดับเดียวกับตอนอ่านไฟล์: ตัดคำที่ OCR เก็บเกิน → รวมกลุ่มคำ → แทนคำที่แก้
-    // เพื่อให้ผลที่เห็นในกล่องตรงกับข้อความที่เอาไปจับ regex
-    function applyTrainingToSource() {
-        const textarea = el('dataSourceText');
-
-        if (!textarea || textarea.value === '') return;
-
-        const dropped = scope.DataExtract.removeDropWords(textarea.value);
-        const grouped = scope.DataExtract.applyWordGroupMerges(dropped.text);
-        const fixed = scope.DataExtract.applyTextFixes(grouped.text);
-
-        if (!dropped.changed && !grouped.changed && !fixed.changed) return;
-
-        textarea.value = fixed.text;
-
-        const parts = [];
-
-        if (dropped.applied > 0) parts.push('ตัดคำที่ไม่ใช้ ' + dropped.applied);
-        if (grouped.applied > 0) parts.push('รวมกลุ่มคำ ' + grouped.applied);
-        if (fixed.changed) parts.push('แทนคำที่แก้');
-
-        setSourceStatus('ใช้รายการที่ฝึกไว้: ' + parts.join(' · '));
-        hideResults();
     }
 
     function close() {
@@ -471,48 +360,17 @@
         readingFile = true;
         setSourceStatus('กำลังอ่านไฟล์ ' + file.name + '...');
 
-        // ภาพหน้าของไฟล์ก่อนหน้าต้องไม่ถูกนำมาใช้ระหว่าง/หลังอ่านไฟล์ใหม่
-        setWordPreviewPages([], '');
-
         try {
             const result = await scope.DataExtract.extractFile(file, {
                 joinLines: joinLinesEnabled
             });
 
-            // extractFile คืน { text, ocrPages, pages, fixed }
+            // extractFile คืน { text, joined }
             const text = String(
                 result && typeof result === 'object'
                     ? result.text || ''
                     : result || ''
             );
-
-            const ocrPages =
-                (result && Array.isArray(result.ocrPages))
-                    ? result.ocrPages
-                    : [];
-
-            const pages =
-                (result && Array.isArray(result.pages))
-                    ? result.pages
-                    : [];
-
-            const aiPages =
-                (result && Array.isArray(result.aiPages))
-                    ? result.aiPages
-                    : [];
-
-            const aiError =
-                result && result.aiError ? String(result.aiError) : '';
-
-            const blueprintPages =
-                (result && Array.isArray(result.blueprintPages))
-                    ? result.blueprintPages
-                    : [];
-
-            const structuredPages =
-                (result && Array.isArray(result.structuredPages))
-                    ? result.structuredPages
-                    : [];
 
             const textarea = el('dataSourceText');
 
@@ -520,35 +378,10 @@
             setSourceStatus(
                 'อ่านแล้ว: ' + file.name +
                 ' — ' + text.length + ' ตัวอักษร' +
-                (ocrPages.length > 0
-                    ? ' (OCR ' + ocrPages.length + ' หน้า: ' +
-                        ocrPages.join(', ') + ')'
-                    : '') +
-                (blueprintPages.length > 0
-                    ? ' · ใช้ผังหน้าที่จำไว้ ' + blueprintPages.length + ' หน้า'
-                    : '') +
-                (aiPages.length > 0
-                    ? ' · AI ช่วยแก้ ' + aiPages.length + ' หน้า'
-                    : '') +
-                (structuredPages.length > 0
-                    ? ' · จัดหัวข้อ:ค่า ' + structuredPages.length + ' หน้า'
-                    : '') +
-                (aiError ? ' · AI ใช้ไม่ได้: ' + aiError : '') +
                 (result && result.joined
                     ? ' · รวม ' + result.joined + ' บรรทัดที่ถูกตัด'
-                    : '') +
-                (result && result.dropped
-                    ? ' · ตัดคำที่ไม่ใช้ ' + result.dropped + ' คำ'
-                    : '') +
-                (result && result.grouped
-                    ? ' · รวมกลุ่มคำ ' + result.grouped + ' จุด'
-                    : '') +
-                (result && result.fixed ? ' · แก้คำตามรายการที่บันทึกไว้แล้ว' : '') +
-                (pages.length > 0 ? ' · ตรวจคำบน PDF ได้' : ''),
-                aiError ? 'warn' : ''
+                    : '')
             );
-
-            setWordPreviewPages(pages, file.name);
 
             hideResults();
 
@@ -963,7 +796,6 @@
 
         el('dataSourceText').value = '';
         setSourceStatus('');
-        setWordPreviewPages([], '');
         hideResults();
 
         overlay.classList.add('open');
