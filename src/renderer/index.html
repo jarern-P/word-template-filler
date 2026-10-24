@@ -219,6 +219,11 @@
     <script src="./templateSettings.js"></script>
     <script src="./regexBuilder.js"></script>
     <script src="./wordSuggest.js"></script>
+
+    <!-- ระยะห่าง Levenshtein ใช้จัดลำดับ/กรองคำแนะนำของหน้าตรวจคำผิด OCR
+         (vendor จาก node_modules เหมือน jszip — เป็น CommonJS จึงถูกห่อตอน build) -->
+    <script src="./vendor/js-levenshtein.js"></script>
+
     <script src="./ocrTextTools.js"></script>
 
     <script src="./components/formPage.js"></script>

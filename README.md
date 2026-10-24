@@ -173,10 +173,12 @@ better-sqlite3 13.0.3
 concurrently   9.2.4
 wait-on        9.1.0
 jszip          3.10.2
+js-levenshtein 1.1.6
 ```
 
-> `jszip` ใช้ตอน build เท่านั้น (Vite คัดลอกไฟล์ไปที่ `dist/vendor/`)
-> Renderer จึงโหลด jszip จากในแอปได้ ไม่ต้องต่ออินเทอร์เน็ต
+> `jszip` กับ `js-levenshtein` ใช้ตอน build เท่านั้น (Vite คัดลอกไฟล์ไปที่ `dist/vendor/`)
+> Renderer จึงโหลดทั้งสองไฟล์จากในแอปได้ ไม่ต้องต่ออินเทอร์เน็ต
+> (`js-levenshtein` เป็น CommonJS จึงถูกห่อด้วย module shim ตอนคัดลอก)
 
 ---
 

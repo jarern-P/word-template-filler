@@ -48,10 +48,26 @@ const VENDORED_LIBS = [
                 ),
                 "docx-preview.min.js"
             )
+    },
+
+    {
+        // ระยะห่าง Levenshtein ใช้จัดลำดับ/กรองคำแนะนำใน ocrTextTools.js
+        url: "/vendor/js-levenshtein.js",
+        target: "dist/vendor/js-levenshtein.js",
+
+        // ไฟล์ต้นทางเป็น CommonJS (module.exports) โหลดด้วย <script> ธรรมดา
+        // ไม่ได้ จึงต้องครอบด้วย module shim แล้วโยนค่าขึ้น window.jsLevenshtein
+        content: () =>
+            wrapCommonJs(
+                "js-levenshtein",
+                "jsLevenshtein",
+                require.resolve("js-levenshtein")
+            )
     }
 ];
 
 const vendorSourceCache = {};
+const vendorBodyCache = {};
 
 function vendoredLib(url) {
 
@@ -69,6 +85,59 @@ function getVendorSource(lib) {
     }
 
     return vendorSourceCache[lib.url];
+}
+
+// อ่านไฟล์จาก node_modules แล้วห่อด้วย module shim เพื่อใช้เป็น <script> ธรรมดา
+// (โค้ดของไลบรารีถูกเย็บเข้าไปในฟังก์ชันเดียว จึงไม่แตะ global ของไลบรารีอื่น)
+function wrapCommonJs(name, globalName, file) {
+
+    const source = fs.readFileSync(file, "utf8");
+
+    const body = source
+        .split(/\r?\n/)
+        .map(line => line ? "    " + line : line)
+        .join("\n");
+
+    return [
+        "// " + name + " — ห่อ CommonJS ด้วย module shim (มิฉะนั้น module is not defined)",
+        "(function (root) {",
+        "    var module = { exports: {} };",
+        "    var exports = module.exports;",
+        body,
+        "    root." + globalName + " = module.exports;",
+        "})(typeof window !== \"undefined\" ? window : this);",
+        ""
+    ].join("\n");
+}
+
+// เนื้อหาไฟล์ที่จะเสิร์ฟ/คัดลอก (lib.content สร้างเอง หรืออ่านจาก lib.source)
+function getVendorBody(lib) {
+
+    if (!vendorBodyCache[lib.url]) {
+
+        if (lib.content) {
+
+            vendorBodyCache[lib.url] =
+                lib.content();
+
+        } else {
+
+            const source = getVendorSource(lib);
+
+            if (!fs.existsSync(source)) {
+
+                throw new Error(
+                    "ไม่พบไฟล์ " + source +
+                    " — รัน npm install ก่อน"
+                );
+            }
+
+            vendorBodyCache[lib.url] =
+                fs.readFileSync(source, "utf8");
+        }
+    }
+
+    return vendorBodyCache[lib.url];
 }
 
 
@@ -96,25 +165,14 @@ function vendoredLibsPlugin() {
                     }
 
                     try {
-
-                        const source =
-                            getVendorSource(lib);
-
-                        if (!fs.existsSync(source)) {
-
-                            throw new Error(
-                                "ไม่พบไฟล์ " + source +
-                                " — รัน npm install ก่อน"
-                            );
-                        }
+                        const body = getVendorBody(lib);
 
                         res.setHeader(
                             "Content-Type",
                             "text/javascript; charset=utf-8"
                         );
 
-                        fs.createReadStream(source)
-                            .pipe(res);
+                        res.end(body);
 
                     } catch (error) {
 
@@ -141,10 +199,11 @@ function vendoredLibsPlugin() {
                     }
                 );
 
-                fs.copyFileSync(
-                    getVendorSource(lib),
-                    target
-                );
+                if (lib.content) {
+                    fs.writeFileSync(target, getVendorBody(lib));
+                } else {
+                    fs.copyFileSync(getVendorSource(lib), target);
+                }
 
                 console.log(
                     "Copied " + lib.target

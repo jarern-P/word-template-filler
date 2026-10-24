@@ -435,6 +435,7 @@ Write-Host "[5/5] checking output"
 $checks = @(
     "dist\index.html",
     "dist\vendor\jszip.min.js",
+    "dist\vendor\js-levenshtein.js",
     "$OutputDir\win-unpacked\resources\app.asar",
     "$OutputDir\win-unpacked\resources\app.asar.unpacked\src\main\db\db-worker.cjs",
     "$OutputDir\win-unpacked\resources\app.asar.unpacked\node_modules\better-sqlite3"
@@ -472,6 +473,12 @@ if (Test-PathSafe -Path $indexHtml) {
         Write-Host "      ok      jszip is bundled locally" -ForegroundColor DarkGray
     } else {
         Write-Host "      WARNING jszip script tag not found in dist/index.html" -ForegroundColor Yellow
+    }
+
+    if ($html -match 'vendor/js-levenshtein\.js') {
+        Write-Host "      ok      js-levenshtein is bundled locally" -ForegroundColor DarkGray
+    } else {
+        Write-Host "      WARNING js-levenshtein script tag not found in dist/index.html" -ForegroundColor Yellow
     }
 }
 

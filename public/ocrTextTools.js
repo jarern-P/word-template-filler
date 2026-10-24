@@ -10,6 +10,8 @@
 //
 // ส่วนที่ตัดไม่ได้ (ไม่ใช่คำในพจนานุกรม) = คำที่น่าสงสัย แล้วเสนอคำใกล้เคียง
 // จากกฎใน .aff (สระ/วรรณยุกต์สลับ, ตัวอักษรใกล้กัน, พิมพ์เกิน/ขาด)
+// แล้วเรียง/กรองด้วยระยะห่าง Levenshtein (js-levenshtein ที่ vendor ไว้
+// ที่ vendor/js-levenshtein.js) ให้คำที่ใกล้ที่สุดอยู่บนสุด
 //
 // ข้อจำกัด: คำวิสามัญ/ชื่อเฉพาะ/คำใหม่ที่ไม่มีในพจนานุกรมจะถูกมองว่า
 // "น่าสงสัย" ได้ — หน้าจอจึงให้ผู้ใช้เลือกเองทีละคำ ไม่แก้ให้อัตโนมัติ
@@ -115,6 +117,59 @@
         return tokens;
     }
 
+    // ระยะห่าง Levenshtein ของ 2 คำ — คืน null ถ้าไม่ได้โหลดไลบรารีมา
+    // (ไฟล์ vendor หายก็ยังตรวจคำได้ตามเดิม แค่ไม่เรียงตามระยะห่าง)
+    function distanceOf(a, b) {
+        const fn = scope.jsLevenshtein;
+
+        if (typeof fn !== 'function') return null;
+
+        try {
+            return fn(a, b);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // คำยาวแค่นี้ ห่างจากคำตั้งต้นได้เท่าไรยังถือว่า "น่าจะเป็นคำเดียวกัน"
+    // สั้นต้องใกล้มาก (2-3 ตัวอักษร ห่างได้ 1), 4 ตัวขึ้นไปห่างได้ 2
+    function distanceLimit(word) {
+        if (word.length <= 3) return 1;
+
+        return 2;
+    }
+
+    // เรียงคำแนะนำจากใกล้ไปไกล แล้วตัดที่อยู่นอกวงเงินระยะห่าง
+    // ลำดับเดิมจากกฎ .aff คงไว้เมื่อระยะห่างเท่ากัน (sort แบบ stable)
+    function rankSuggestions(word, candidates) {
+        if (typeof scope.jsLevenshtein !== 'function') return candidates;
+
+        const limit = distanceLimit(word);
+        const ranked = [];
+
+        candidates.forEach(function (candidate) {
+            const distance = distanceOf(word, candidate);
+
+            if (distance === null || distance <= limit) {
+                ranked.push({
+                    word: candidate,
+                    distance: distance
+                });
+            }
+        });
+
+        ranked.sort(function (a, b) {
+            const left = a.distance === null ? 0 : a.distance;
+            const right = b.distance === null ? 0 : b.distance;
+
+            return left - right;
+        });
+
+        return ranked.map(function (item) {
+            return item.word;
+        });
+    }
+
     function contextOf(text, token) {
         const start = Math.max(0, token.start - 18);
         const end = Math.min(text.length, token.end + 18);
@@ -194,8 +249,12 @@
                     seen[candidate] = true;
 
                     return true;
-                })
-                .slice(0, MAX_SUGGESTIONS);
+                });
+
+            issue.suggestions = rankSuggestions(
+                issue.word,
+                issue.suggestions
+            ).slice(0, MAX_SUGGESTIONS);
 
             list.push(issue);
         });
