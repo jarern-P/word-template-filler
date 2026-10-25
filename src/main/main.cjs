@@ -2224,13 +2224,15 @@ ipcMain.handle(
                     ? payload
                     : {};
 
+            const result = ocrTraining.addManual(
+                getDataPath(),
+                input.source,
+                input.input
+            );
+
             return {
                 ok: true,
-                ...ocrTraining.addManual(
-                    getDataPath(),
-                    input.source,
-                    input.input
-                )
+                ...result
             };
 
         } catch (error) {

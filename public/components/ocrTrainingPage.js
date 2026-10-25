@@ -38,6 +38,7 @@
         '            <option value="all">ทั้งหมด</option>',
         '        </select>',
         '        <button id="ocrTrainRefresh" type="button" class="plain">รีเฟรช</button>',
+        '        <button id="ocrTrainAddManual" type="button" class="primary">เพิ่มเอง</button>',
         '    </div>',
 
         '    <p id="ocrTrainStatus" class="db-status"></p>',
@@ -62,6 +63,7 @@
     let search = '';
     let busy = false;
     let searchTimer = null;
+    let addManualBtn = null;
 
     function el(id) {
         return document.getElementById(id);
@@ -376,6 +378,11 @@
                 });
             }
 
+            addManualBtn = el('ocrTrainAddManual');
+            if (addManualBtn) {
+                addManualBtn.addEventListener('click', page.openAddManualDialog);
+            }
+
             if (searchInput) {
                 searchInput.addEventListener('input', function () {
                     window.clearTimeout(searchTimer);
@@ -385,9 +392,7 @@
                         loadList();
                     }, 250);
                 });
-            }
-
-            if (list) {
+            }            if (list) {
                 list.addEventListener('click', function (event) {
                     const button = event.target.closest
                         ? event.target.closest('button[data-action]')
@@ -404,6 +409,61 @@
             }
 
             loadList();
+        },
+
+        openAddManualDialog: function () {
+            if (busy) return;
+
+            const electron = api();
+
+            if (!electron || !electron.ocrTrainingAddManual) {
+                setStatus('ไม่รองรับการเพิ่มเอง — เปิดหน้านี้ในแอป', 'error');
+                return;
+            }
+
+            if (!scope.AppDialog || !scope.AppDialog.prompt) {
+                setStatus('ไม่สามารถเปิดกล่องเพิ่มเองได้ — แอปยังไม่พร้อม', 'error');
+                return;
+            }
+
+            const input = scope.AppDialog.prompt(
+                'เพิ่มบรรทัดใหม่ด้วยตนเอง',
+                [
+                    { label: 'บรรทัดที่อ่านผิด (OCR)', id: 'manualInput', type: 'text', required: true, placeholder: 'เช่น วิทยาลัยทักษิณ' },
+                    { label: 'คำอธิบาย (ไม่จำเป็น)', id: 'manualSource', type: 'text', required: false, placeholder: 'เช่น เอกสารระเบียบฯ' }
+                ]
+            );
+
+            if (!input) return;
+
+            const text = String(input.manualInput || '').trim();
+            const source = String(input.manualSource || '').trim();
+
+            if (text.length < 3) {
+                setStatus('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร', 'error');
+                return;
+            }
+
+            busy = true;
+            setStatus('กำลังเพิ่ม...', 'ok');
+
+            electron.ocrTrainingAddManual({ source: source || undefined, input: text })
+                .then(function (result) {
+                    if (!result || result.ok === false) {
+                        throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
+                    }
+
+                    setStatus('เพิ่มบรรทัดแล้ว — "' + text + '"', 'ok');
+                    loadList();
+                })
+                .catch(function (error) {
+                    setStatus(
+                        (error && error.message) || 'เพิ่มไม่สำเร็จ',
+                        'error'
+                    );
+                });
+
+            busy = false;
         }
     };
 
