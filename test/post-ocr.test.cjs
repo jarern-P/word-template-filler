@@ -367,6 +367,60 @@ test('engine api ใช้ข้อความเดิมพร้อมแจ
     }
 });
 
+test('engine api ใช้คู่ที่ฝึกเอง (หน้า ฝึก OCR) เป็น few-shot', async function () {
+    const originalFetch = global.fetch;
+    let body = null;
+
+    global.fetch = async function (url, init) {
+        body = JSON.parse(init.body);
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        {
+                            content: {
+                                parts: [{ text: 'รหัสทดสอบ XYZ99 ถูก' }]
+                            }
+                        }
+                    ]
+                };
+            }
+        };
+    };
+
+    try {
+        const result = await postOcr.processText('รหัสทดสอบ XYZ99 ผด', {
+            engine: 'api',
+            apiKey: 'test-key',
+            examples: [
+                {
+                    input: 'รหัสทดสอบ XYZ99 ผด',
+                    output: 'รหัสทดสอบ XYZ99 ถูก'
+                }
+            ]
+        });
+
+        assert.strictEqual(result.text, 'รหัสทดสอบ XYZ99 ถูก');
+
+        const modelTurns = body.contents.filter(function (item) {
+            return item.role === 'model';
+        });
+
+        assert.ok(
+            modelTurns.some(function (item) {
+                return item.parts[0].text === 'รหัสทดสอบ XYZ99 ถูก';
+            }),
+            'คำตอบของคู่ที่ฝึกต้องถูกใส่ใน prompt'
+        );
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
 test('processText ด้วย engine api ส่งคำขอและใช้คำตอบที่แก้แล้ว', async function () {
     const originalFetch = global.fetch;
     const calls = [];

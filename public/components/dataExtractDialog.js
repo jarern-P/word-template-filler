@@ -527,6 +527,9 @@
 
             hideResults();
 
+            // เก็บบรรทัดไว้ให้ผู้ใช้ตรวจ/แก้ในหน้า ฝึก OCR (ใช้เป็น few-shot)
+            saveTrainingLines(file.name, text);
+
             // OCR อ่านไม่ได้และไม่มีข้อความจากชั้นข้อความ = บอกสาเหตุให้ผู้ใช้รู้
             // (ไฟล์ที่มีชั้นข้อความยังใช้ต่อได้ จึงไม่ต้องรบกวนด้วยกล่องข้อความ)
             if (result && result.ocrError && text === '') {
@@ -559,6 +562,28 @@
         } finally {
             readingFile = false;
         }
+    }
+
+    // เก็บบรรทัดจากไฟล์ที่เพิ่งอ่านลงคลังฝึก OCR (ทำเงียบ ๆ — ไม่ขัดการทำงานหลัก)
+    function saveTrainingLines(source, text) {
+        if (!window.electronAPI || !window.electronAPI.ocrTrainingAdd) {
+            return;
+        }
+
+        const lines = String(text == null ? '' : text)
+            .split('\n')
+            .filter(function (line) {
+                return line.trim() !== '';
+            });
+
+        if (lines.length === 0) return;
+
+        window.electronAPI.ocrTrainingAdd({
+            source: source,
+            lines: lines
+        }).catch(function () {
+            // เก็บไม่ได้ก็ไม่เป็นไร — การอ่านไฟล์ต้องทำงานต่อได้
+        });
     }
 
     // ──────────────────────────────────────────────────────────────

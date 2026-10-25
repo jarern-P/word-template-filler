@@ -29,6 +29,9 @@ const postOcr =
 const postOcrLocal =
     require("./post-ocr-local.cjs");
 
+const ocrTraining =
+    require("./ocr-training.cjs");
+
 
 // ============================================================
 // Locale
@@ -1968,6 +1971,10 @@ ipcMain.handle(
                         engine: engine,
                         apiKey: saved.gemini?.apiKey || "",
                         model: saved.gemini?.model,
+                        // คู่ผิด → ถูก ที่ผู้ใช้ฝึกไว้ในหน้า ฝึก OCR
+                        examples: ocrTraining.examples(
+                            getDataPath()
+                        ),
                         dataPath: getDataPath(),
                         onProgress: function (progress) {
 
@@ -1994,6 +2001,207 @@ ipcMain.handle(
                 "post-ocr:process error:",
                 error
             );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+
+// ============================================================
+// OCR Training (ฝึก OCR — เก็บบรรทัดจากไฟล์ + คู่ผิด → ถูก)
+// ============================================================
+//
+// หน้าดึงข้อมูลส่งบรรทัดที่อ่านได้จากไฟล์ที่อัปโหลดมาเก็บไว้
+// ผู้ใช้มาแก้ในหน้า ฝึก OCR แล้วคู่ที่ฝึกจะถูกใช้เป็นตัวอย่าง
+// few-shot ให้ post-OCR (ดู ocr-training.cjs)
+
+ipcMain.handle(
+    "ocr-training:list",
+    async function (event, payload) {
+
+        try {
+
+            return {
+                ok: true,
+                ...ocrTraining.list(
+                    getDataPath(),
+                    payload
+                )
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr-training:list error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:add",
+    async function (event, payload) {
+
+        try {
+
+            const input =
+                payload && typeof payload === "object"
+                    ? payload
+                    : {};
+
+            return {
+                ok: true,
+                ...ocrTraining.addLines(
+                    getDataPath(),
+                    input.source,
+                    input.lines
+                )
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr-training:add error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:save",
+    async function (event, payload) {
+
+        try {
+
+            const input =
+                payload && typeof payload === "object"
+                    ? payload
+                    : {};
+
+            return {
+                ok: true,
+                line: ocrTraining.saveCorrection(
+                    getDataPath(),
+                    input.id,
+                    input.output
+                )
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:skip",
+    async function (event, id) {
+
+        try {
+
+            return {
+                ok: true,
+                line: ocrTraining.setStatus(
+                    getDataPath(),
+                    id,
+                    "skipped"
+                )
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:restore",
+    async function (event, id) {
+
+        try {
+
+            return {
+                ok: true,
+                line: ocrTraining.setStatus(
+                    getDataPath(),
+                    id,
+                    "new"
+                )
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:remove",
+    async function (event, id) {
+
+        try {
+
+            return {
+                ok: true,
+                ...ocrTraining.remove(
+                    getDataPath(),
+                    id
+                )
+            };
+
+        } catch (error) {
 
             return {
                 ok: false,

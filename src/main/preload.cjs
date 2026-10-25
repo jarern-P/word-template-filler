@@ -251,6 +251,50 @@ contextBridge.exposeInMainWorld(
             );
         },
 
+        // ─────────────────────────────
+        // OCR Training (หน้า ฝึก OCR)
+        // ─────────────────────────────
+
+        // payload = { status, search, limit } — คืน { lines, shown, matched, stats }
+        ocrTrainingList: (payload) =>
+            ipcRenderer.invoke(
+                "ocr-training:list",
+                payload
+            ),
+
+        // เก็บบรรทัดจากไฟล์ที่อัปโหลด — payload = { source, lines }
+        ocrTrainingAdd: (payload) =>
+            ipcRenderer.invoke(
+                "ocr-training:add",
+                payload
+            ),
+
+        // บันทึกข้อความที่แก้แล้ว — payload = { id, output }
+        ocrTrainingSave: (payload) =>
+            ipcRenderer.invoke(
+                "ocr-training:save",
+                payload
+            ),
+
+        ocrTrainingSkip: (id) =>
+            ipcRenderer.invoke(
+                "ocr-training:skip",
+                id
+            ),
+
+        // นำบรรทัดที่ข้ามไว้กลับมารอตรวจ
+        ocrTrainingRestore: (id) =>
+            ipcRenderer.invoke(
+                "ocr-training:restore",
+                id
+            ),
+
+        ocrTrainingRemove: (id) =>
+            ipcRenderer.invoke(
+                "ocr-training:remove",
+                id
+            ),
+
         // ความคืบหน้าระหว่างอ่าน PDF
         // callback ได้ { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare', progress }
         onPdfExtractProgress: (callback) => {

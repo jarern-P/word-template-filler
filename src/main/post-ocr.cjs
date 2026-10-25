@@ -511,7 +511,21 @@ async function geminiChunk(messages, options) {
 async function runChunks(text, options) {
     const opts = options || {};
     const chunks = chunkText(text, opts.chunkChars);
-    const examples = loadExamples();
+
+    // ตัวอย่างที่ผู้ใช้ฝึกเอง (หน้า ฝึก OCR) มาก่อน แล้วต่อด้วยชุดเริ่มต้น
+    const trained = Array.isArray(opts.examples)
+        ? opts.examples.filter(function (item) {
+            return (
+                item &&
+                typeof item.input === 'string' &&
+                typeof item.output === 'string' &&
+                item.input.trim() !== '' &&
+                item.output.trim() !== ''
+            );
+        })
+        : [];
+
+    const examples = trained.concat(loadExamples());
     const outputs = [];
     const warnings = [];
 
@@ -645,6 +659,7 @@ async function processWithGemini(text, options) {
 
     const result = await runChunks(text, {
         chunkChars: opts.chunkChars,
+        examples: opts.examples,
         onProgress: opts.onProgress,
         call: function (chunk, messages) {
             return geminiChunk(messages, {
@@ -665,6 +680,7 @@ async function processWithLocal(text, options) {
 
     const result = await runChunks(text, {
         chunkChars: opts.chunkChars,
+        examples: opts.examples,
         onProgress: opts.onProgress,
         embed: async function (texts) {
             // ถ้า endpoint embeddings ใช้ไม่ได้ จะคืน null → ใช้ char n-gram แทน

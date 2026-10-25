@@ -31,6 +31,7 @@
         'report': 'ReportPage',
         'template-config': 'TemplateConfigPage',
         'ocr-config': 'OcrConfigPage',
+        'ocr-training': 'OcrTrainingPage',
         'master-data': 'MasterDataPage',
         'word-suggest': 'WordSuggestPage',
         'history': 'HistoryPage',
