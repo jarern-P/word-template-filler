@@ -184,10 +184,17 @@
     }
 
     function getPageHTML(page) {
+        const component = getComponent(page);
+
+        if (!component || typeof component.getHTML !== 'function') {
+            throw new Error(
+                'ไม่พบหน้า "' + page + '" — ตรวจสอบการติดตั้ง component หรือลำดับ script'
+            );
+        }
 
         if (!pageCache[page]) {
             pageCache[page] =
-                getComponent(page).getHTML();
+                component.getHTML();
         }
 
         return pageCache[page];
