@@ -276,6 +276,14 @@ contextBridge.exposeInMainWorld(
                 payload
             ),
 
+        // เพิ่มบรรทัดใหม่ด้วยตนเอง (หน้าฝึก OCR — ปุ่ม "เพิ่มเอง")
+        // payload = { source, input } — source ถ้าไม่ใส่จะใช้ "เพิ่มเอง"
+        ocrTrainingAddManual: (payload) =>
+            ipcRenderer.invoke(
+                "ocr-training:add-manual",
+                payload
+            ),
+
         ocrTrainingSkip: (id) =>
             ipcRenderer.invoke(
                 "ocr-training:skip",

@@ -2184,10 +2184,7 @@ ipcMain.handle(
         }
 
     }
-);
-
-
-ipcMain.handle(
+);ipcMain.handle(
     "ocr-training:remove",
     async function (event, id) {
 
@@ -2209,6 +2206,71 @@ ipcMain.handle(
                     error?.message ||
                     String(error)
             };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:add-manual",
+    async function (event, payload) {
+
+        try {
+
+            const input =
+                payload && typeof payload === "object"
+                    ? payload
+                    : {};
+
+            return {
+                ok: true,
+                ...ocrTraining.addManual(
+                    getDataPath(),
+                    input.source,
+                    input.input
+                )
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "ocr-training:filter",
+    async function (event, payload) {
+
+        try {
+
+            return {
+                ok: true,
+                ...ocrTraining.sourceCounts(
+                    getDataPath(),
+                    payload
+                )
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+
         }
 
     }

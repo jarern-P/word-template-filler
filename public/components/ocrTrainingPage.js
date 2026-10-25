@@ -38,7 +38,12 @@
         '            <option value="all">ทั้งหมด</option>',
         '        </select>',
         '        <button id="ocrTrainRefresh" type="button" class="plain">รีเฟรช</button>',
+        '        <button id="ocrTrainAddManual" type="button" class="plain">เพิ่มเอง</button>',
         '    </div>',
+        '    <details class="source-filter" id="ocrTrainSourceFilter">',
+        '        <summary>ตัวกรองแหล่งที่มา</summary>',
+        '        <div class="source-filter-body" id="ocrTrainSourceFilterBody"></div>',
+        '    </details>',
 
         '    <p id="ocrTrainStatus" class="db-status"></p>',
         '</section>',
@@ -62,6 +67,86 @@
     let search = '';
     let busy = false;
     let searchTimer = null;
+    let sourceFilter = null;
+
+    let sourceFilterBody = null;
+    let addManualBtn = null;
+
+    function el(id) {
+        return document.getElementById(id);
+    }
+
+    function renderSourceFilter(result) {
+        sourceFilterBody = el('ocrTrainSourceFilterBody');
+
+        if (!sourceFilterBody) return;
+
+        const counts = result && result.bySource ? result.bySource : {};
+        const entries = Object.keys(counts).sort();
+
+        sourceFilterBody.innerHTML = '';
+
+        const allLabel = document.createElement('label');
+        allLabel.className = 'source-filter-radio';
+        allLabel.innerHTML = '<input type="radio" name="ocrSourceFilter" value="ทั้งหมด" checked>'
+            + '<span>ทั้งหมด</span><span class="source-filter-count">' + (result && result.total ? result.total : 0) + '</span>';
+        sourceFilterBody.appendChild(allLabel);
+
+        entries.forEach(function (source) {
+            const label = document.createElement('label');
+            label.className = 'source-filter-radio';
+            label.innerHTML = '<input type="radio" name="ocrSourceFilter" value="' + source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '">'
+                + '<span>' + source + '</span><span class="source-filter-count">' + counts[source] + '</span>';
+            sourceFilterBody.appendChild(label);
+        });
+
+        if (entries.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'ยังไม่มีบรรทัดในคลัง';
+            sourceFilterBody.appendChild(empty);
+        }
+    }
+
+    function el(id) {
+        return document.getElementById(id);
+    }
+
+    function renderSourceFilter(result) {
+        sourceFilterBody = el('ocrTrainSourceFilterBody');
+
+        if (!sourceFilterBody) return;
+
+        const counts = result && result.bySource ? result.bySource : {};
+        const entries = Object.keys(counts).sort();
+
+        sourceFilterBody.innerHTML = '';
+
+        const allLabel = document.createElement('label');
+        allLabel.className = 'source-filter-radio';
+        allLabel.innerHTML = '<input type="radio" name="ocrSourceFilter" value="ทั้งหมด" checked>' +
+            '<span>ทั้งหมด</span><span class="source-filter-count">' + (result && result.total ? result.total : 0) + '</span>';
+        sourceFilterBody.appendChild(allLabel);
+
+        entries.forEach(function (source) {
+            const label = document.createElement('label');
+            label.className = 'source-filter-radio';
+            label.innerHTML = '<input type="radio" name="ocrSourceFilter" value="' + source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '">' +
+                '<span>' + source + '</span><span class="source-filter-count">' + counts[source] + '</span>';
+            sourceFilterBody.appendChild(label);
+        });
+
+        if (entries.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'ยังไม่มีบรรทัดในคลัง';
+            sourceFilterBody.appendChild(empty);
+        }
+    }
+    let search = '';
+    let busy = false;
+    let searchTimer = null;
+    let sourceFilter = null;   // แหล่งที่มาในขณะนี้ (null = ทั้งหมด)
 
     function el(id) {
         return document.getElementById(id);
@@ -98,9 +183,9 @@
         return String(text == null ? '' : text).replace(/\s+/g, '');
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------------------
     // โหลด / แสดงรายการ
-    // ──────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------------------
 
     async function loadList() {
         const electron = api();
@@ -108,6 +193,17 @@
         if (!electron || !electron.ocrTrainingList) {
             setStatus('เปิดหน้านี้ในแอปเพื่อใช้คลังฝึก OCR', 'error');
             return;
+        }
+
+        // โหลดตัวกรองแหล่งที่มาก่อน แล้วค่อยโหลดรายการ (เพื่อแสดงตัวเลือก)
+        const filterResult = electron.ocrTrainingFilter
+            ? await electron.ocrTrainingFilter({ source: sourceFilter })
+            : null;
+
+        if (filterResult && filterResult.ok !== false) {
+            renderSourceFilter(filterResult);
+        } else {
+            el('ocrTrainSourceFilter') && (el('ocrTrainSourceFilter').hidden = true);
         }
 
         const result = await electron.ocrTrainingList({
@@ -124,10 +220,108 @@
             return;
         }
 
+        // กรองรายการที่แสดงด้วยแหล่งที่มาที่เลือก (ถ้ามี)
+        let lines = Array.isArray(result.lines) ? result.lines : [];
+
+        if (sourceFilter && sourceFilter !== 'ทั้งหมด' && sourceFilter !== 'ไม่ทราบไฟล์' && lines.length > 0) {
+            lines = lines.filter(function (line) {
+                return line.source === sourceFilter;
+            });
+        }
+
         renderStats(result.stats);
-        renderList(result);
+        renderList({ lines: lines, shown: lines.length, matched: result.matched, stats: result.stats, limit: result.limit });
 
         if (result.error) setStatus(result.error, 'error');
+    }
+        return window.electronAPI || null;
+    }
+
+    function setStatus(text, kind) {
+        const node = el('ocrTrainStatus');
+
+        if (!node) return;
+
+        node.textContent = text || '';
+        node.className = 'db-status' + (kind ? ' ' + kind : '');
+    }
+
+    function formatDate(isoText) {
+        const date = new Date(isoText);
+
+        if (isNaN(date.getTime())) return isoText || '';
+
+        return date.toLocaleString('th-TH', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function compact(text) {
+        return String(text == null ? '' : text).replace(/\s+/g, '');
+    }
+
+    async function loadList() {
+        const electron = api();
+
+        if (!electron || !electron.ocrTrainingList) {
+            setStatus('เปิดหน้านี้ในแอปเพื่อใช้คลังฝึก OCR', 'error');
+            return;
+        }
+
+        const filterResult = electron.ocrTrainingFilter
+            ? await electron.ocrTrainingFilter({ source: sourceFilter })
+            : null;
+
+        if (filterResult && filterResult.ok !== false) {
+            renderSourceFilter(filterResult);
+        } else {
+            el('ocrTrainSourceFilter') && (el('ocrTrainSourceFilter').hidden = true);
+        }
+
+        const result = await electron.ocrTrainingList({
+            status: filter,
+            search: search,
+            limit: 200
+        });
+
+        if (!result || result.ok === false) {
+            setStatus(
+                (result && result.error) || 'อ่านรายการฝึก OCR ไม่สำเร็จ',
+                'error'
+            );
+            return;
+        }
+
+        let lines = Array.isArray(result.lines) ? result.lines : [];
+
+        if (sourceFilter && sourceFilter !== 'ทั้งหมด' && sourceFilter !== 'ไม่ทราบไฟล์' && lines.length > 0) {
+            lines = lines.filter(function (line) {
+                return line.source === sourceFilter;
+            });
+        }
+
+        renderStats(result.stats);
+        renderList({ lines: lines, shown: lines.length, matched: result.matched, stats: result.stats, limit: result.limit });
+
+        if (result.error) setStatus(result.error, 'error');
+    }
+
+    function renderStats(stats) {
+        const node = el('ocrTrainStats');
+
+        if (!node) return;
+
+        const value = stats || {};
+
+        node.textContent =
+            'ทั้งหมด ' + (value.total || 0) + ' บรรทัด' +
+            ' · รอตรวจ ' + (value.new || 0) +
+            ' · ฝึกแล้ว ' + (value.trained || 0) +
+            ' · ข้าม ' + (value.skipped || 0);
     }
 
     function renderStats(stats) {
@@ -186,13 +380,17 @@
         const source = document.createElement('strong');
         source.textContent = line.source || 'ไม่ทราบไฟล์';
 
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'status-badge' + (line.status ? ' status-' + line.status : '');
+        statusBadge.textContent = STATUS_LABELS[line.status] || line.status;
+
         const meta = document.createElement('span');
         meta.className = 'meta';
         meta.textContent =
-            (STATUS_LABELS[line.status] || line.status) +
             ' · ' + formatDate(line.createdAt);
 
         head.appendChild(source);
+        head.appendChild(statusBadge);
         head.appendChild(meta);
 
         const original = document.createElement('p');
@@ -228,6 +426,14 @@
         remove.className = 'plain danger';
         remove.dataset.action = 'remove';
         remove.textContent = 'ลบ';
+
+        item.addEventListener('keydown', function (e) {
+            if ((e.key === 'Enter' || e.key === ',') && 
+                document.activeElement === input) {
+                e.preventDefault();
+                if (!save.disabled) save.click();
+            }
+        });
 
         function updateSaveState() {
             save.disabled =
@@ -307,7 +513,10 @@
                         'ลบบรรทัดนี้ออกจากคลังฝึก OCR?'
                     );
 
-                    if (!confirmed) return;
+                    if (!confirmed) {
+                        setStatus('ยกเลิกแล้ว', 'info');
+                        return;
+                    }
                 }
 
                 const result = await electron.ocrTrainingRemove(id);
@@ -341,6 +550,94 @@
     // Page
     // ──────────────────────────────────────────────────────────────
 
+    let filter = 'new';
+    let search = '';
+    let busy = false;
+    let searchTimer = null;
+    let sourceFilter = null;
+
+    function el(id) {
+        return document.getElementById(id);
+    }
+
+    function renderSourceFilter(result) {
+        sourceFilterBody = el('ocrTrainSourceFilterBody');
+
+        if (!sourceFilterBody) return;
+
+        const counts = result && result.bySource ? result.bySource : {};
+        const entries = Object.keys(counts).sort();
+
+        sourceFilterBody.innerHTML = '';
+
+        // ปุ่ม "ทั้งหมด" + นับรวม
+        const allLabel = document.createElement('label');
+        allLabel.className = 'source-filter-radio';
+        allLabel.innerHTML = '<input type="radio" name="ocrSourceFilter" value="ทั้งหมด" checked>' +
+            '<span>ทั้งหมด</span><span class="source-filter-count">' + (result && result.total ? result.total : 0) + '</span>';
+        sourceFilterBody.appendChild(allLabel);
+
+        entries.forEach(function (source) {
+            const label = document.createElement('label');
+            label.className = 'source-filter-radio';
+            label.innerHTML = '<input type="radio" name="ocrSourceFilter" value="' + source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '">' +
+                '<span>' + source + '</span><span class="source-filter-count">' + counts[source] + '</span>';
+            sourceFilterBody.appendChild(label);
+        });
+
+        if (entries.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'ยังไม่มีบรรทัดในคลัง';
+            sourceFilterBody.appendChild(empty);
+        }
+    }
+
+    // ---------- helpers ----------
+
+    function el(id) {
+        return document.getElementById(id);
+    }
+
+    function renderSourceFilter(result) {
+        sourceFilterBody = el('ocrTrainSourceFilterBody');
+
+        if (!sourceFilterBody) return;
+
+        const counts = result && result.bySource ? result.bySource : {};
+        const entries = Object.keys(counts).sort();
+
+        sourceFilterBody.innerHTML = '';
+
+        // ปุ่ม "ทั้งหมด" + นับรวม
+        const allLabel = document.createElement('label');
+        allLabel.className = 'source-filter-radio';
+        allLabel.innerHTML = '<input type="radio" name="ocrSourceFilter" value="ทั้งหมด" checked>' +
+            '<span>ทั้งหมด</span><span class="source-filter-count">' + (result && result.total ? result.total : 0) + '</span>';
+        sourceFilterBody.appendChild(allLabel);
+
+        entries.forEach(function (source) {
+            const label = document.createElement('label');
+            label.className = 'source-filter-radio';
+            label.innerHTML = '<input type="radio" name="ocrSourceFilter" value="' + source.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '">' +
+                '<span>' + source + '</span><span class="source-filter-count">' + counts[source] + '</span>';
+            sourceFilterBody.appendChild(label);
+        });
+
+        if (entries.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'ยังไม่มีบรรทัดในคลัง';
+            sourceFilterBody.appendChild(empty);
+        }
+    }
+
+    let filter = 'new';
+    let search = '';
+    let busy = false;
+    let searchTimer = null;
+    let sourceFilter = null;
+
     const page = {
 
         // หน้านี้จัดการ UI เอง ไม่ขึ้นกับ state ของไฟล์ .docx
@@ -370,11 +667,43 @@
                 });
             }
 
+            if (sourceFilterBody) {
+                sourceFilterBody.addEventListener('click', function (event) {
+                    const radio = event.target.closest('input[type="radio"]');
+
+                    if (!radio) return;
+
+                    sourceFilter = radio.value;
+                    loadList();
+                });
+            }
+
             if (refresh) {
                 refresh.addEventListener('click', function () {
                     loadList();
                 });
-            }
+            }                if (addManualBtn) {
+                    addManualBtn.addEventListener('click', openAddManualDialog);
+                }
+
+                if (sourceFilterBody) {
+                    sourceFilterBody.addEventListener('click', function (event) {
+                        const radio = event.target.closest('input[type="radio"]');
+
+                        if (!radio) return;
+
+                        sourceFilter = radio.value;
+                        loadList();
+                    });
+                }
+
+            // รีเฟรชเมื่อปิดตัวกรองแหล่งที่มา (กดปุ่ม "ทั้งหมด" ซ้ำ ไม่ต้องโหลดซ้ำ)
+            el('ocrTrainSourceFilter') && (el('ocrTrainSourceFilter').addEventListener('toggle', function () {
+                if (!el('ocrTrainSourceFilter').open) {
+                    sourceFilter = null;
+                    loadList();
+                }
+            }));
 
             if (searchInput) {
                 searchInput.addEventListener('input', function () {
@@ -403,7 +732,259 @@
                 });
             }
 
+            // รีเฟรชเมื่อปิดตัวกรองแหล่งที่มา (กดปุ่ม "ทั้งหมด" ซ้ำ ไม่ต้องโหลดซ้ำ)
+            el('ocrTrainSourceFilter') && (el('ocrTrainSourceFilter').addEventListener('toggle', function () {
+                if (!el('ocrTrainSourceFilter').open) {
+                    sourceFilter = null;
+                    loadList();
+                }
+            }));
+
             loadList();
+        }
+
+        // -------------------------------------------------------------------------------------
+        // เพิ่มบรรทัดใหม่ด้วยตนเอง
+        // -------------------------------------------------------------------------------------
+
+        function openAddManualDialog() {
+            if (busy) return;
+
+            if (!scope.AppDialog || !scope.AppDialog.prompt) {
+                setStatus('ไม่สามารถเปิดกล่องเพิ่มเองได้ — แอปยังไม่พร้อม', 'error');
+                return;
+            }
+
+            const electron = api();
+
+            if (!electron || !electron.ocrTrainingAddManual) {
+                setStatus('ไม่รองรับการเพิ่มเอง — เปิดหน้านี้ในแอป', 'error');
+                return;
+            }
+
+            const input = scope.AppDialog.prompt(
+                'เพิ่มบรรทัดใหม่ด้วยตนเอง',
+                [
+                    { label: 'บรรทัดที่อ่านผิด (OCR)', id: 'manualInput', type: 'text', required: true, placeholder: 'เช่น วิทยาลัยทักษิณ' },
+                    { label: 'คำอธิบาย (ไม่จำเป็น)', id: 'manualSource', type: 'text', required: false, placeholder: 'เช่น เอกสารระเบียบฯ' }
+                ]
+            );
+
+            if (!input) return;
+
+            const text = String(input.manualInput || '').trim();
+            const source = String(input.manualSource || '').trim();
+
+            if (text.length < 3) {
+                setStatus('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร', 'error');
+                return;
+            }
+
+            busy = true;
+            setStatus('กำลังเพิ่ม...', 'ok');
+
+            electron.ocrTrainingAddManual({ source: source || undefined, input: text })
+                .then(function (result) {
+                    if (!result || result.ok === false) {
+                        throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
+                    }
+
+                    setStatus('เพิ่มบรรทัดแล้ว — "' + text + '"', 'ok');
+                    return loadList();
+                })
+                .then(function () {
+                    busy = false;
+                })
+                .catch(function (error) {
+                    busy = false;
+                    setStatus(
+                        (error && error.message) || 'เพิ่มไม่สำเร็จ',
+                        'error'
+                    );
+                });
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // เพิ่มบรรทัดใหม่ด้วยตนเอง
+        // ──────────────────────────────────────────────────────────────
+
+        function openAddManualDialog() {
+            if (busy) return;
+
+            if (!scope.AppDialog || !scope.AppDialog.prompt) {
+                setStatus('ไม่สามารถเปิดกล่องเพิ่มเองได้ — แอปยังไม่พร้อม', 'error');
+                return;
+            }
+
+            const electron = api();
+
+            if (!electron || !electron.ocrTrainingAddManual) {
+                setStatus('ไม่รองรับการเพิ่มเอง — เปิดหน้านี้ในแอป', 'error');
+                return;
+            }
+
+            const input = scope.AppDialog.prompt(
+                'เพิ่มบรรทัดใหม่ด้วยตนเอง',
+                [
+                    { label: 'บรรทัดที่อ่านผิด (OCR)', id: 'manualInput', type: 'text', required: true, placeholder: 'เช่น วิทยาลัยทักษิณ' },
+                    { label: 'คำอธิบาย (ไม่จำเป็น)', id: 'manualSource', type: 'text', required: false, placeholder: 'เช่น เอกสารระเบียบฯ' }
+                ]
+            );
+
+            if (!input) return;
+
+            const text = String(input.manualInput || '').trim();
+            const source = String(input.manualSource || '').trim();
+
+            if (text.length < 3) {
+                setStatus('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร', 'error');
+                return;
+            }
+
+            busy = true;
+            setStatus('กำลังเพิ่ม...', 'ok');
+
+            electron.ocrTrainingAddManual({ source: source || undefined, input: text })
+                .then(function (result) {
+                    if (!result || result.ok === false) {
+                        throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
+                    }
+
+                    setStatus('เพิ่มบรรทัดแล้ว — "' + text + '"', 'ok');
+                    return loadList();
+                })
+                .then(function () {
+                    busy = false;
+                })
+                .catch(function (error) {
+                    busy = false;
+                    setStatus(
+                        (error && error.message) || 'เพิ่มไม่สำเร็จ',
+                        'error'
+                    );
+                });
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // เพิ่มบรรทัดใหม่ด้วยตนเอง
+        // ──────────────────────────────────────────────────────────────
+
+        function openAddManualDialog() {
+            if (busy) return;
+
+            if (!scope.AppDialog || !scope.AppDialog.prompt) {
+                setStatus('ไม่สามารถเปิดกล่องเพิ่มเองได้ — แอปยังไม่พร้อม', 'error');
+                return;
+            }
+
+            const electron = api();
+
+            if (!electron || !electron.ocrTrainingAddManual) {
+                setStatus('ไม่รองรับการเพิ่มเอง — เปิดหน้านี้ในแอป', 'error');
+                return;
+            }
+
+            const input = scope.AppDialog.prompt(
+                'เพิ่มบรรทัดใหม่ด้วยตนเอง',
+                [
+                    { label: 'บรรทัดที่อ่านผิด (OCR)', id: 'manualInput', type: 'text', required: true, placeholder: 'เช่น วิทยาลัยทักษิณ' },
+                    { label: 'คำอธิบาย (ไม่จำเป็น)', id: 'manualSource', type: 'text', required: false, placeholder: 'เช่น เอกสารระเบียบฯ' }
+                ]
+            );
+
+            if (!input) return;
+
+            const text = String(input.manualInput || '').trim();
+            const source = String(input.manualSource || '').trim();
+
+            if (text.length < 3) {
+                setStatus('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร', 'error');
+                return;
+            }
+
+            busy = true;
+            setStatus('กำลังเพิ่ม...', 'ok');
+
+            electron.ocrTrainingAddManual({ source: source || undefined, input: text })
+                .then(function (result) {
+                    if (!result || result.ok === false) {
+                        throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
+                    }
+
+                    setStatus('เพิ่มบรรทัดแล้ว — "' + text + '"', 'ok');
+                    return loadList();
+                })
+                .then(function () {
+                    busy = false;
+                })
+                .catch(function (error) {
+                    busy = false;
+                    setStatus(
+                        (error && error.message) || 'เพิ่มไม่สำเร็จ',
+                        'error'
+                    );
+                });
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // เพิ่มบรรทัดใหม่ด้วยตนเอง
+        // ──────────────────────────────────────────────────────────────
+
+        function openAddManualDialog() {
+            if (busy) return;
+
+            if (!scope.AppDialog || !scope.AppDialog.prompt) {
+                setStatus('ไม่สามารถเปิดกล่องเพิ่มเองได้ — แอปยังไม่พร้อม', 'error');
+                return;
+            }
+
+            const electron = api();
+
+            if (!electron || !electron.ocrTrainingAddManual) {
+                setStatus('ไม่รองรับการเพิ่มเอง — เปิดหน้านี้ในแอป', 'error');
+                return;
+            }
+
+            const input = scope.AppDialog.prompt(
+                'เพิ่มบรรทัดใหม่ด้วยตนเอง',
+                [
+                    { label: 'บรรทัดที่อ่านผิด (OCR)', id: 'manualInput', type: 'text', required: true, placeholder: 'เช่น วิทยาลัยทักษิณ' },
+                    { label: 'คำอธิบาย (ไม่จำเป็น)', id: 'manualSource', type: 'text', required: false, placeholder: 'เช่น เอกสารระเบียบฯ' }
+                ]
+            );
+
+            if (!input) return;   // ผู้ใช้กดยกเลิก
+
+            const text = String(input.manualInput || '').trim();
+            const source = String(input.manualSource || '').trim();
+
+            if (text.length < 3) {
+                setStatus('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร', 'error');
+                return;
+            }
+
+            busy = true;
+            setStatus('กำลังเพิ่ม...', 'ok');
+
+            electron.ocrTrainingAddManual({ source: source || undefined, input: text })
+                .then(function (result) {
+                    if (!result || result.ok === false) {
+                        throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
+                    }
+
+                    setStatus('เพิ่มบรรทัดแล้ว — "' + text + '"', 'ok');
+                    return loadList();
+                })
+                .then(function () {
+                    busy = false;
+                })
+                .catch(function (error) {
+                    busy = false;
+                    setStatus(
+                        (error && error.message) || 'เพิ่มไม่สำเร็จ',
+                        'error'
+                    );
+                });
         }
     };
 

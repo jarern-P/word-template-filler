@@ -180,6 +180,46 @@ function addLines(dataPath, source, lines) {
     };
 }
 
+// เพิ่มบรรทัดใหม่ด้วยตนเอง — payload = { source?, input }
+function addManual(dataPath, source, input) {
+    const store = load(dataPath);
+    const key = dedupeKey(input);
+
+    const now = new Date().toISOString();
+
+    if (store.lines.some(function (item) {
+        return item.source === (source || '') && item.input === input;
+    })) {
+        return {
+            ok: true,
+            added: 0,
+            duplicates: 1,
+            skipped: 0,
+            total: store.lines.length
+        };
+    }
+
+    store.lines.push({
+        id: crypto.randomUUID(),
+        source: cleanLine(source).slice(0, 260),
+        input: input,
+        output: '',
+        status: 'new',
+        createdAt: now,
+        updatedAt: now
+    });
+
+    save(dataPath, store);
+
+    return {
+        ok: true,
+        added: 1,
+        duplicates: 0,
+        skipped: 0,
+        total: store.lines.length
+    };
+}
+
 function findLine(store, id) {
     const target = String(id == null ? '' : id);
 
@@ -332,6 +372,95 @@ function list(dataPath, options) {
     };
 }
 
+// เพิ่มบรรทัดใหม่ด้วยตนเองจากหน้าฝึก OCR (และแหล่งอื่นที่ต้องการระบุ source)
+function addManual(dataPath, source, input) {
+    const cleanSource = cleanLine(source || '').slice(0, 260);
+    const cleanInput = cleanLine(input);
+
+    if (cleanInput.length < 3) {
+        throw new Error('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร');
+    }
+
+    const store = load(dataPath);
+
+    // กันไว้แล้วไม่เพิ่มซ้ำ
+    const key = dedupeKey(cleanInput);
+
+    if (store.lines.some(function (item) { return dedupeKey(item.input) === key; })) {
+        throw new Error('ข้อความนี้มีอยู่แล้วในคลัง — ไม่เพิ่มซ้ำ');
+    }
+
+    const now = new Date().toISOString();
+
+    store.lines.push({
+        id: crypto.randomUUID(),
+        source: cleanSource || 'เพิ่มเอง',
+        input: cleanInput,
+        output: '',
+        status: 'new',
+        createdAt: now,
+        updatedAt: now
+    });
+
+    if (store.lines.length > MAX_LINES) {
+        store.lines = store.lines.slice(store.lines.length - MAX_LINES);
+    }
+
+    save(dataPath, store);
+
+    return {
+        id: store.lines[store.lines.length - 1].id,
+        total: store.lines.length
+    };
+}
+
+// นับจำนวนบรรทัดแยกตามแหล่งที่มา (ใช้สำหรับตัวกรองในหน้าฝึก)
+function sourceCounts(dataPath, filters) {
+    const store = load(dataPath);
+    const opts = filters || {};
+
+    
+    // รองรับการส่ง { source: 'ชื่อไฟล์' } เพื่อกรองเฉพาะแหล่งนั้น ๆ
+    const sourceFilter = opts.source || null;
+
+    const statuses = Array.isArray(opts.statuses)
+        ? opts.statuses
+        : STATUSES;
+
+    const search = String(opts.search == null ? '' : opts.search)
+        .trim()
+        .toLowerCase();
+
+    const counts = {};
+    const total = { total: 0 };
+
+    store.lines.forEach(function (item) {
+        if (statuses.indexOf(item.status) === -1) {
+            return;
+        }
+
+        if (search !== '' &&
+            !item.input.toLowerCase().includes(search) &&
+            !item.output.toLowerCase().includes(search) &&
+            !item.source.toLowerCase().includes(search)) {
+            return;
+        }
+
+        // กรองเฉพาะแหล่งที่เลือก (ถ้ามี)
+        if (sourceFilter && item.source !== sourceFilter) {
+            return;
+        }
+
+        const src = item.source || 'ไม่ทราบไฟล์';
+        counts[src] = (counts[src] || 0) + 1;
+        total.total += 1;
+    });
+
+    total.bySource = counts;
+
+    return total;
+}
+
 module.exports = {
     FILE_NAME,
     MAX_LINES,
@@ -342,10 +471,12 @@ module.exports = {
     load,
     save,
     addLines,
+    addManual,
     saveCorrection,
     setStatus,
     remove,
     stats,
+    sourceCounts,
     examples,
     list
 };
