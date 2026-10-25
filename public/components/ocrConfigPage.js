@@ -115,6 +115,18 @@
         '    <section class="suggest-settings ocr-provider-settings" id="ocrPaddleSection">',
         '        <h2>PaddleOCR (Local AI)</h2>',
 
+        '        <label class="switch-toggle">',
+        '            <input type="checkbox" id="ocrTwoStage">',
+        '            <span class="switch-box"></span>',
+        '            <span>Two-Stage Localized OCR (อ่านทีละบริเวณ)</span>',
+        '        </label>',
+
+        '        <p class="hint">',
+        '            ระยะที่ 1 หาตำแหน่งข้อความบนหน้าก่อน ระยะที่ 2 ครอปเฉพาะบริเวณนั้น ',
+        '            จากภาพความละเอียดสูง (~300 DPI) มาอ่านด้วย PP-OCRv5 — ',
+        '            แม่นขึ้นเมื่อตัวอักษรเล็กหรือหน้ามีหลายคอลัมน์ แต่ใช้เวลามากกว่าปกติ',
+        '        </p>',
+
         '        <p class="hint">',
         '            ครั้งแรกที่ใช้ ระบบจะดาวน์โหลดโมเดล (~15 MB) มาเก็บไว้ในเครื่อง ',
         '            หลังจากนั้น OCR จะทำงานออฟไลน์ได้',
@@ -223,6 +235,7 @@
         provider: 'paddle',
         enabled: true,
         mode: 'auto',
+        twoStage: false,
         gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
         iloveapi: { hasKey: false }
     };
@@ -310,6 +323,7 @@
             provider: value.provider || 'paddle',
             enabled: value.enabled !== false,
             mode: value.mode === 'always' ? 'always' : 'auto',
+            twoStage: value.twoStage === true,
             gemini: {
                 model: (value.gemini && value.gemini.model) || DEFAULT_GEMINI_MODEL,
                 hasKey: Boolean(value.gemini && value.gemini.hasKey)
@@ -322,6 +336,7 @@
         selectProvider(settings.provider);
 
         el('ocrEnabled').checked = settings.enabled;
+        el('ocrTwoStage').checked = settings.twoStage;
         el('ocrModeAuto').checked = settings.mode !== 'always';
         el('ocrModeAlways').checked = settings.mode === 'always';
 
@@ -362,6 +377,7 @@
             provider: selectedProvider(),
             enabled: el('ocrEnabled').checked,
             mode: el('ocrModeAlways').checked ? 'always' : 'auto',
+            twoStage: el('ocrTwoStage').checked,
             gemini: {
                 apiKey: el('ocrGeminiKey').value,
                 model: el('ocrGeminiModel').value

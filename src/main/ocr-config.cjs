@@ -11,6 +11,8 @@
 //     "enabled": true,               // ใช้ OCR เมื่ออัปโหลด PDF
 //     "mode": "auto",                // auto = เฉพาะหน้าที่ไม่มีข้อความ
 //                                    // always = ทุกหน้า
+//     "twoStage": false,             // ตัวเลือกย่อยของ PaddleOCR:
+//                                    // true = Two-Stage Localized OCR
 //     "gemini": {
 //       "model": "gemini-2.5-flash",
 //       "apiKey": "enc:..."          // เข้ารหัสด้วย safeStorage (DPAPI) เมื่อทำได้
@@ -43,6 +45,7 @@ function defaultConfig() {
         provider: 'paddle',
         enabled: true,
         mode: 'auto',
+        twoStage: false,
         gemini: {
             apiKey: '',
             model: DEFAULT_MODEL
@@ -175,6 +178,7 @@ function normalizeRaw(input) {
         provider: pick(source.provider, PROVIDERS, 'paddle'),
         enabled: enabled,
         mode: mode,
+        twoStage: source.twoStage === true,
         gemini: {
             apiKey: typeof gemini.apiKey === 'string' ? gemini.apiKey : '',
             model: sanitizeModel(gemini.model)
@@ -192,6 +196,7 @@ function toPublic(raw) {
         provider: raw.provider,
         enabled: raw.enabled,
         mode: raw.mode,
+        twoStage: raw.twoStage,
         gemini: {
             apiKey: '',
             model: raw.gemini.model,
@@ -219,6 +224,7 @@ function readSecrets(dataPath) {
         provider: raw.provider,
         enabled: raw.enabled,
         mode: raw.mode,
+        twoStage: raw.twoStage,
         gemini: {
             apiKey: decryptKey(raw.gemini.apiKey),
             model: raw.gemini.model
@@ -265,6 +271,9 @@ function save(dataPath, payload) {
             ? input.enabled
             : current.enabled,
         mode: pick(input.mode, MODES, current.mode),
+        twoStage: typeof input.twoStage === 'boolean'
+            ? input.twoStage
+            : current.twoStage,
         gemini: {
             apiKey: geminiKey,
             model: sanitizeModel(

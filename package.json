@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "vite",
+    "test": "node --test test/ocr-two-stage.test.cjs test/ocr-two-stage-lines.test.cjs",
+    "test:integration": "node --test test/integration/two-stage-real-pdf.test.cjs",
     "electron": "electron .",
     "dev:electron": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\"",
     "build": "vite build",

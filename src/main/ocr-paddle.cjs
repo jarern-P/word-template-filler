@@ -284,8 +284,23 @@ function toPositionedLines(result) {
 
         if (text === '') return;
 
+        // ค่าเฉลี่ยความมั่นใจของคำในบรรทัด (ใช้กรองเศษข้อความรบกวนได้)
+        const scores = parts
+            .map(function (item) {
+                return Number(item.confidence);
+            })
+            .filter(function (value) {
+                return Number.isFinite(value);
+            });
+
+        const confidence = scores.length > 0
+            ? scores.reduce(function (sum, value) {
+                return sum + value;
+            }, 0) / scores.length
+            : undefined;
+
         if (boxes.length === 0) {
-            lines.push({ text: text });
+            lines.push({ text: text, confidence: confidence });
             return;
         }
 
@@ -311,6 +326,7 @@ function toPositionedLines(result) {
             right: right,
             top: top,
             bottom: bottom,
+            confidence: confidence,
             hadSpaceAfter: / $/.test(text)
         });
     });
@@ -361,6 +377,30 @@ async function recognizePng(png) {
     };
 }
 
+// ตรวจจับตำแหน่งข้อความเท่านั้น (ไม่อ่านตัวอักษร → ไม่เปลืองแรงอ่าน)
+// ใช้โดยโหมด Two-Stage Localized OCR ในระยะที่ 1
+async function detectPng(png, options) {
+    const service = await getService();
+
+    const buffer = png.buffer.slice(
+        png.byteOffset,
+        png.byteOffset + png.byteLength
+    );
+
+    let result;
+
+    try {
+        result = await service.detect(buffer, options || {});
+
+    } catch (error) {
+        const friendly = friendlyError(error);
+        friendly.cause = error;
+        throw friendly;
+    }
+
+    return Array.isArray(result && result.boxes) ? result.boxes : [];
+}
+
 // OCR หนึ่งหน้าของ PDF
 async function ocrPage(page, options) {
     const opts = options || {};
@@ -376,5 +416,6 @@ module.exports = {
     prepare,
     ocrPage,
     recognizePng,
+    detectPng,
     renderPageToPng
 };

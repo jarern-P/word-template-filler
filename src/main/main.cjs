@@ -2028,6 +2028,19 @@ ipcMain.handle(
             // ── PaddleOCR / Gemini: OCR ทีละหน้าตามที่ตั้งไว้ ──
             let ocrPage = null;
 
+            // PaddleOCR + เปิด "Two-Stage Localized OCR" = หาตำแหน่งข้อความก่อน
+            // แล้วครอปเฉพาะบริเวณมาอ่านด้วย PP-OCRv5 ที่ความละเอียดสูงขึ้น
+            if (useOcr && settings.provider === "paddle" && settings.twoStage) {
+
+                const ocrTwoStage =
+                    require("./ocr-two-stage.cjs");
+
+                ocrPage = function (page) {
+
+                    return ocrTwoStage.ocrPage(page);
+                };
+            }
+
             if (useOcr && settings.provider === "paddleVL") {
 
                 ocrPage = function (page) {
