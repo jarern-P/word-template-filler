@@ -132,6 +132,9 @@
     // กำลังอ่านไฟล์อยู่หรือไม่ — ใช้ตัดสินว่าจะแสดงความคืบหน้าหรือไม่
     let readingFile = false;
 
+    // ตัวจับเวลาเก็บข้อความที่วาง/พิมพ์เอง (กันเก็บทุกครั้งที่มีการพิมพ์)
+    let pasteCaptureTimer = null;
+
     // ไฟล์ PDF ล่าสุด (ใช้กับ Layout / Reading Order)
     let lastPdfFile = null;
 
@@ -218,6 +221,9 @@
         });
 
         el('dataSourceText').addEventListener('input', updateToolsState);
+
+        // ข้อความที่วาง/พิมพ์เอง (ไม่ใช่ไฟล์) เก็บลงคลังฝึก OCR ด้วย — ดู capturePastedLines
+        el('dataSourceText').addEventListener('input', schedulePasteCapture);
 
         // ความคืบหน้าระหว่างวิเคราะห์ Layout / ดาวน์โหลดโมเดล
         if (window.electronAPI && window.electronAPI.onPdfLayoutProgress) {
@@ -319,6 +325,13 @@
     function close() {
         // เรียกได้ก่อน build (เช่นตอนเปลี่ยนหน้า) — ยังไม่มี DOM ให้แตะ
         if (!overlay) return;
+
+        // ข้อความที่วาง/พิมพ์ค้างอยู่ — เก็บลงคลังฝึกก่อนปิด (ไม่รอจังหวะพิมพ์หยุด)
+        if (pasteCaptureTimer !== null) {
+            window.clearTimeout(pasteCaptureTimer);
+            pasteCaptureTimer = null;
+            capturePastedLines();
+        }
 
         overlay.classList.remove('open');
 
@@ -564,7 +577,31 @@
         }
     }
 
-    // เก็บบรรทัดจากไฟล์ที่เพิ่งอ่านลงคลังฝึก OCR (ทำเงียบ ๆ — ไม่ขัดการทำงานหลัก)
+    // ── เก็บข้อความจากช่องวางข้อความ ลงคลังฝึก OCR ──
+    //
+    // ไฟล์ .pdf/.docx ถูกเก็บตอนอ่านไฟล์แล้ว (ดู readFile) ส่วนข้อความที่ผู้ใช้
+    // วาง/พิมพ์เองถูกเก็บที่นี่ — รอให้พิมพ์หยุดสักครู่ หรือตอนปิดกล่อง
+    // คู่ "ผิด → ถูก" นี้จะถูกใช้เป็นตัวอย่าง (Vector Few-Shot) ให้ AI ปรับข้อความ
+    //
+    // ข้อความซ้ำถูกข้ามที่ main process เอง (เทียบไม่สนช่องว่าง/ตัวพิมพ์)
+    const PASTE_CAPTURE_DELAY_MS = 1500;
+
+    function schedulePasteCapture() {
+        if (pasteCaptureTimer !== null) {
+            window.clearTimeout(pasteCaptureTimer);
+        }
+
+        pasteCaptureTimer = window.setTimeout(function () {
+            pasteCaptureTimer = null;
+            capturePastedLines();
+        }, PASTE_CAPTURE_DELAY_MS);
+    }
+
+    function capturePastedLines() {
+        saveTrainingLines('วางข้อความ', sourceText());
+    }
+
+    // เก็บบรรทัดลงคลังฝึก OCR (ทำเงียบ ๆ — ไม่ขัดการทำงานหลัก)
     function saveTrainingLines(source, text) {
         if (!window.electronAPI || !window.electronAPI.ocrTrainingAdd) {
             return;

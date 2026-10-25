@@ -4449,6 +4449,13 @@ body.table-ratio-dragging .table-ratio-handle {
     font-weight: 600;
 }
 
+/* บอกช่องของฟอร์มที่เจอคำ (แผงตรวจคำในหน้ารายงาน) */
+.report-spell-field {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-faint);
+}
+
 /* โครงสร้างเอกสาร */
 
 .data-layout-page {

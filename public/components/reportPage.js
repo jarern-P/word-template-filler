@@ -18,6 +18,9 @@
         '    <input type="checkbox" id="highlightFieldToggle">',
         '    ไฮไลต์ตัวแปรเป็นสีเหลือง',
         '</label>',
+        // ตรวจคำไทยที่น่าสงสัยในค่าที่กรอก (พจนานุกรมในเครื่อง)
+        '<button id="reportSpellBtn" type="button" class="plain">' +
+        'ตรวจคำที่น่าสงสัย</button>' +
         '<button id="reportExportBtn" type="button" class="plain" style="display:none">' +
         'ดาวน์โหลด Excel</button>' +
         '<button id="reportImportBtn" type="button" class="plain" style="display:none">' +
@@ -46,8 +49,25 @@
         '</div>'
     ].join('\n');
 
+    // ผลตรวจคำที่น่าสงสัยของค่าที่กรอกในฟอร์ม (ปุ่ม "ตรวจคำที่น่าสงสัย" บนแถบเครื่องมือ)
+    // ใช้สไตล์ร่วมกับแผงตรวจคำผิดของกล่อง "ใส่ข้อมูล" (.data-tool-panel / .data-spell-*)
+    const SPELL_HTML = [
+        '<div id="reportSpellPanel" class="data-tool-panel" hidden>',
+        '    <div class="data-tool-head">',
+        '        <strong>คำที่น่าสงสัย</strong>',
+        '        <span id="reportSpellMeta" class="hint"></span>',
+        '        <div class="data-tool-actions">',
+        '            <button id="reportSpellApplyAll" type="button" class="plain">ใช้คำแนะนำทั้งหมด</button>',
+        '            <button id="reportSpellClose" type="button" class="plain">ปิด</button>',
+        '        </div>',
+        '    </div>',
+        '    <div id="reportSpellList" class="data-tool-list"></div>',
+        '</div>'
+    ].join('\n');
+
     const FOOTER_HTML =
         ROWS_HTML +
+        SPELL_HTML +
         '<p id="replaceWarning" class="replace-warning" style="display:none"></p>' +
         '<p id="downloadStatus" class="db-status" style="display:none"></p>';
 
@@ -251,6 +271,8 @@
 
         syncHighlightToggle();
         syncRowsBar();
+        // ฟอร์มถูกวาดใหม่ = ช่องกรอกชุดใหม่ → แถวผลตรวจเดิมใช้ไม่ได้แล้ว
+        hideSpellPanel();
     };
 
     const baseShowEmptyState = page.showEmptyState;
@@ -258,6 +280,7 @@
         baseShowEmptyState.call(page);
         syncHighlightToggle();
         syncRowsBar();
+        hideSpellPanel();
     };
 
     page.showPreviewButton = function (show) {
@@ -1399,6 +1422,383 @@
             renderTable(field);
         });
     };
+
+    // ──────────────────────────────────────────────────────────────
+    // ตรวจคำที่น่าสงสัยในค่าที่กรอก (ปุ่ม "ตรวจคำที่น่าสงสัย")
+    //
+    // ใช้ตัวตรวจเดียวกับกล่อง "ใส่ข้อมูล" (OcrTextTools — พจนานุกรมในเครื่อง
+    // + คำที่ผู้ใช้เพิ่มเองที่หน้า "คำแนะนำ") ไม่มีข้อความออกนอกเครื่อง
+    //
+    // ตรวจช่องข้อความทุกชนิด: [data-field], ช่อง list และช่องตาราง
+    // ไม่ตรวจ checkbox (ค่าเป็น true/false) และ currency (ค่า canon เป็นตัวเลข)
+    //
+    // แต่ละแถวเก็บ "ที่อยู่ช่อง" (ref) ไม่ใช่ element — เพราะฟอร์มถูกวาดใหม่
+    // ได้ทุกเมื่อ (เปลี่ยนแม่แบบ / สลับหน้า) จึงค่อยหาช่องตอนกดใช้
+    // ──────────────────────────────────────────────────────────────
+    const SPELL_MAX_ROWS = 100;
+
+    let spellQueue = [];     // แถวที่มีคำแนะนำ — ใช้กับ "ใช้คำแนะนำทั้งหมด"
+    let spellChecked = 0;    // จำนวนคำที่ตรวจในรอบล่าสุด
+
+    function spellEl(id) {
+        return document.getElementById(id);
+    }
+
+    function hideSpellPanel() {
+        const panel = spellEl('reportSpellPanel');
+        if (panel) panel.hidden = true;
+
+        const list = spellEl('reportSpellList');
+        if (list) list.innerHTML = '';
+
+        spellQueue = [];
+        spellChecked = 0;
+    }
+
+    function updateSpellMeta(note) {
+        const meta = spellEl('reportSpellMeta');
+        if (!meta) return;
+
+        if (note) {
+            meta.textContent = note;
+            return;
+        }
+
+        const list = spellEl('reportSpellList');
+        const remaining = list
+            ? list.querySelectorAll('.data-spell-row').length
+            : 0;
+
+        meta.textContent = 'ตรวจ ' + spellChecked + ' คำ' + (remaining > 0
+            ? ' — เหลือ ' + remaining + ' คำ คลิกคำแนะนำเพื่อแทนที่ในช่องนั้น'
+            : ' — ไม่มีคำค้างให้แก้');
+    }
+
+    // ช่องกรอกที่ต้องตรวจ — คืน [{ ref, control, label }]
+    function spellTargets() {
+        const form = document.getElementById('form');
+        const targets = [];
+
+        if (!form) return targets;
+
+        form.querySelectorAll('[data-field]').forEach(function (control) {
+            if (control.type === 'checkbox') return;
+            if (control.dataset.currencyInput === '1') return;
+            if (!String(control.value || '').trim()) return;
+
+            targets.push({
+                ref: { kind: 'field', field: control.dataset.field },
+                control: control,
+                label: control.dataset.field
+            });
+        });
+
+        form.querySelectorAll('[data-list-input]').forEach(function (control) {
+            if (!String(control.value || '').trim()) return;
+
+            const row = Number(control.dataset.listRow);
+
+            targets.push({
+                ref: { kind: 'list', field: control.dataset.listInput, row: row },
+                control: control,
+                label: control.dataset.listInput + ' · แถว ' + (row + 1)
+            });
+        });
+
+        form.querySelectorAll('[data-table-input]').forEach(function (control) {
+            if (!String(control.value || '').trim()) return;
+
+            const field = control.dataset.tableInput;
+            const row = Number(control.dataset.tableRow);
+            const col = Number(control.dataset.tableCol);
+            const column = tableSchema(field).columns[col];
+
+            targets.push({
+                ref: { kind: 'table', field: field, row: row, col: col },
+                control: control,
+                label: field + ' · ' +
+                    (column == null ? 'คอลัมน์ ' + (col + 1) : String(column)) +
+                    ' · แถว ' + (row + 1)
+            });
+        });
+
+        return targets;
+    }
+
+    // หาช่องจาก ref ณ ตอนกดใช้ (ฟอร์มอาจถูกวาดใหม่ไปแล้ว)
+    function findSpellControl(ref) {
+        const form = document.getElementById('form');
+        if (!form || !ref) return null;
+
+        let found = null;
+
+        if (ref.kind === 'list') {
+            form.querySelectorAll('[data-list-input]').forEach(function (control) {
+                if (
+                    control.dataset.listInput === ref.field &&
+                    Number(control.dataset.listRow) === Number(ref.row)
+                ) {
+                    found = control;
+                }
+            });
+
+            return found;
+        }
+
+        if (ref.kind === 'table') {
+            form.querySelectorAll('[data-table-input]').forEach(function (control) {
+                if (
+                    control.dataset.tableInput === ref.field &&
+                    Number(control.dataset.tableRow) === Number(ref.row) &&
+                    Number(control.dataset.tableCol) === Number(ref.col)
+                ) {
+                    found = control;
+                }
+            });
+
+            return found;
+        }
+
+        form.querySelectorAll('[data-field]').forEach(function (control) {
+            if (control.dataset.field === ref.field) found = control;
+        });
+
+        return found;
+    }
+
+    function applySpellCorrection(ref, word, replacement, row) {
+        const control = findSpellControl(ref);
+
+        if (control && scope.OcrTextTools) {
+            control.value = scope.OcrTextTools.replaceWord(
+                control.value,
+                word,
+                replacement
+            );
+
+            // ยิง event input เหมือนตอนพิมพ์ เพื่อให้ app.js เก็บค่าของช่องนั้น
+            // (รวมค่าของตาราง/list ที่เก็บแยกไว้ใน component)
+            control.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        if (row) row.remove();
+
+        updateSpellMeta(
+            control
+                ? null
+                : 'ไม่พบช่องนี้ในฟอร์มแล้ว (เปลี่ยนแม่แบบหรือล้างค่าไปแล้ว)'
+        );
+    }
+
+    function addSpellRow(target, issue) {
+        const row = document.createElement('div');
+        row.className = 'data-spell-row';
+
+        const head = document.createElement('div');
+        head.className = 'data-spell-head';
+
+        const word = document.createElement('code');
+        word.className = 'data-spell-word';
+        word.textContent = issue.word;
+
+        // บอกด้วยว่าคำนี้อยู่ช่องไหนของฟอร์ม
+        const where = document.createElement('span');
+        where.className = 'report-spell-field';
+        where.textContent = target.label;
+        where.title = target.label;
+
+        const count = document.createElement('span');
+        count.className = 'hint';
+        count.textContent = issue.count > 1 ? 'พบ ' + issue.count + ' ครั้ง' : '';
+
+        const context = document.createElement('span');
+        context.className = 'data-spell-context';
+        context.textContent = issue.context;
+        context.title = issue.context;
+
+        head.appendChild(word);
+        head.appendChild(where);
+        head.appendChild(count);
+        head.appendChild(context);
+
+        const actions = document.createElement('div');
+        actions.className = 'data-spell-actions';
+
+        if (issue.suggestions.length === 0) {
+            const none = document.createElement('span');
+            none.className = 'hint';
+            none.textContent = 'ไม่พบคำแนะนำ — ';
+            actions.appendChild(none);
+        }
+
+        issue.suggestions.forEach(function (suggestion) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'plain data-spell-suggest';
+            button.textContent = suggestion;
+            button.title = 'แทนที่ "' + issue.word + '" ด้วย "' + suggestion + '"';
+            button.addEventListener('click', function () {
+                applySpellCorrection(target.ref, issue.word, suggestion, row);
+            });
+
+            actions.appendChild(button);
+        });
+
+        const manual = document.createElement('button');
+        manual.type = 'button';
+        manual.className = 'plain';
+        manual.textContent = 'แก้เอง';
+        manual.addEventListener('click', async function () {
+            const value = await scope.AppDialog.prompt(
+                'แก้คำ "' + issue.word + '" เป็น:',
+                issue.word
+            );
+
+            if (value === null) return;
+
+            const replacement = String(value).trim();
+
+            if (replacement === '' || replacement === issue.word) return;
+
+            applySpellCorrection(target.ref, issue.word, replacement, row);
+        });
+
+        const skip = document.createElement('button');
+        skip.type = 'button';
+        skip.className = 'plain';
+        skip.textContent = 'ข้าม';
+        skip.addEventListener('click', function () {
+            row.remove();
+            updateSpellMeta();
+        });
+
+        actions.appendChild(manual);
+        actions.appendChild(skip);
+
+        row.appendChild(head);
+        row.appendChild(actions);
+
+        spellEl('reportSpellList').appendChild(row);
+
+        if (issue.suggestions.length > 0) {
+            spellQueue.push({
+                ref: target.ref,
+                word: issue.word,
+                replacement: issue.suggestions[0],
+                row: row
+            });
+        }
+    }
+
+    function runSpellCheck() {
+        const panel = spellEl('reportSpellPanel');
+        const list = spellEl('reportSpellList');
+
+        if (!panel || !list) return;
+
+        list.innerHTML = '';
+        spellQueue = [];
+        spellChecked = 0;
+
+        if (!scope.OcrTextTools) {
+            panel.hidden = false;
+            updateSpellMeta('ไม่พบตัวตรวจคำ — โหลดหน้าใหม่แล้วลองอีกครั้ง');
+            return;
+        }
+
+        const targets = spellTargets();
+        let rows = 0;
+        let truncated = false;
+        let unavailable = false;
+
+        targets.forEach(function (target) {
+            const result = scope.OcrTextTools.check(target.control.value);
+
+            if (result.unavailable) {
+                unavailable = true;
+                return;
+            }
+
+            spellChecked += result.checked;
+
+            result.issues.forEach(function (issue) {
+                if (rows >= SPELL_MAX_ROWS) {
+                    truncated = true;
+                    return;
+                }
+
+                addSpellRow(target, issue);
+                rows += 1;
+            });
+        });
+
+        panel.hidden = false;
+
+        if (unavailable) {
+            updateSpellMeta('พจนานุกรมยังโหลดไม่เสร็จ — รอสักครู่แล้วลองอีกครั้ง');
+            return;
+        }
+
+        if (rows === 0) {
+            updateSpellMeta(targets.length === 0
+                ? 'ยังไม่มีข้อความในฟอร์มให้ตรวจ'
+                : 'ตรวจ ' + spellChecked + ' คำ — ไม่พบคำที่น่าสงสัย');
+
+            if (targets.length > 0) {
+                const empty = document.createElement('p');
+                empty.className = 'hint';
+                empty.textContent = 'ทุกคำที่ตรวจพบอยู่ในพจนานุกรมหรือคำที่เพิ่มเอง';
+                list.appendChild(empty);
+            }
+
+            return;
+        }
+
+        updateSpellMeta(
+            'ตรวจ ' + spellChecked + ' คำ — พบ ' + rows + ' คำที่น่าสงสัย' +
+            (truncated ? ' (แสดง ' + SPELL_MAX_ROWS + ' คำแรก)' : '')
+        );
+    }
+
+    function applyAllSpellSuggestions() {
+        let applied = 0;
+
+        spellQueue.forEach(function (item) {
+            if (!item.row.isConnected) return;
+
+            applySpellCorrection(item.ref, item.word, item.replacement, item.row);
+            applied += 1;
+        });
+
+        spellQueue = [];
+
+        updateSpellMeta(applied > 0
+            ? 'ใช้คำแนะนำ ' + applied + ' คำแล้ว'
+            : 'ไม่มีคำแนะนำให้ใช้ — เลือกคำเองหรือข้าม');
+    }
+
+    // event ระดับ document — ปุ่ม/แผงถูกสร้างใหม่ทุกครั้งที่เปิดหน้า เหมือนสวิตช์ไฮไลต์
+    function onSpellClick(event) {
+        const target = event.target;
+
+        if (!target || !target.id) return;
+
+        if (target.id === 'reportSpellBtn') {
+            runSpellCheck();
+            return;
+        }
+
+        if (target.id === 'reportSpellClose') {
+            hideSpellPanel();
+            return;
+        }
+
+        if (target.id === 'reportSpellApplyAll') {
+            applyAllSpellSuggestions();
+        }
+    }
+
+    document.addEventListener('click', onSpellClick);
 
     scope.ReportPage = page;
 })(window);
