@@ -13,6 +13,10 @@
 //                                    // always = ทุกหน้า
 //     "twoStage": false,             // ตัวเลือกย่อยของ PaddleOCR:
 //                                    // true = Two-Stage Localized OCR
+//     "postOcr": {
+//       "engine": "library"          // library | local | api
+//                                    // ตัวเลือกของปุ่ม "ปรับข้อความหลัง OCR"
+//     },
 //     "gemini": {
 //       "model": "gemini-2.5-flash",
 //       "apiKey": "enc:..."          // เข้ารหัสด้วย safeStorage (DPAPI) เมื่อทำได้
@@ -33,6 +37,7 @@ const CONFIG_FILE = 'ocr-config.json';
 
 const PROVIDERS = ['paddle', 'paddleVL', 'gemini', 'iloveapi'];
 const MODES = ['auto', 'always'];
+const POST_OCR_ENGINES = ['library', 'local', 'api'];
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -46,6 +51,9 @@ function defaultConfig() {
         enabled: true,
         mode: 'auto',
         twoStage: false,
+        postOcr: {
+            engine: 'library'
+        },
         gemini: {
             apiKey: '',
             model: DEFAULT_MODEL
@@ -161,6 +169,9 @@ function normalizeRaw(input) {
     const iloveapi = source.iloveapi && typeof source.iloveapi === 'object'
         ? source.iloveapi
         : {};
+    const postOcr = source.postOcr && typeof source.postOcr === 'object'
+        ? source.postOcr
+        : {};
 
     // เวอร์ชัน 1 เก็บ enabled/mode ไว้ใต้ paddle — อ่านเป็นค่าเริ่มต้นให้
     const enabled = typeof source.enabled === 'boolean'
@@ -179,6 +190,9 @@ function normalizeRaw(input) {
         enabled: enabled,
         mode: mode,
         twoStage: source.twoStage === true,
+        postOcr: {
+            engine: pick(postOcr.engine, POST_OCR_ENGINES, 'library')
+        },
         gemini: {
             apiKey: typeof gemini.apiKey === 'string' ? gemini.apiKey : '',
             model: sanitizeModel(gemini.model)
@@ -197,6 +211,7 @@ function toPublic(raw) {
         enabled: raw.enabled,
         mode: raw.mode,
         twoStage: raw.twoStage,
+        postOcr: raw.postOcr,
         gemini: {
             apiKey: '',
             model: raw.gemini.model,
@@ -225,6 +240,7 @@ function readSecrets(dataPath) {
         enabled: raw.enabled,
         mode: raw.mode,
         twoStage: raw.twoStage,
+        postOcr: raw.postOcr,
         gemini: {
             apiKey: decryptKey(raw.gemini.apiKey),
             model: raw.gemini.model
@@ -251,6 +267,9 @@ function save(dataPath, payload) {
     const iloveInput = input.iloveapi && typeof input.iloveapi === 'object'
         ? input.iloveapi
         : {};
+    const postOcrInput = input.postOcr && typeof input.postOcr === 'object'
+        ? input.postOcr
+        : {};
 
     const geminiKey = geminiInput.clearKey === true
         ? ''
@@ -274,6 +293,13 @@ function save(dataPath, payload) {
         twoStage: typeof input.twoStage === 'boolean'
             ? input.twoStage
             : current.twoStage,
+        postOcr: {
+            engine: pick(
+                postOcrInput.engine,
+                POST_OCR_ENGINES,
+                current.postOcr.engine
+            )
+        },
         gemini: {
             apiKey: geminiKey,
             model: sanitizeModel(
@@ -302,6 +328,7 @@ module.exports = {
     CONFIG_FILE,
     PROVIDERS,
     MODES,
+    POST_OCR_ENGINES,
     DEFAULT_MODEL,
     read,
     readSecrets,

@@ -220,6 +220,65 @@
         '        </p>',
         '    </section>',
 
+        // ── หลัง OCR ──
+        '    <section class="suggest-settings ocr-provider-settings" id="ocrPostSection">',
+        '        <h2>หลัง OCR — ปรับข้อความ</h2>',
+
+        '        <p class="hint">',
+        '            ใช้กับปุ่ม “ปรับข้อความหลัง OCR” ในหน้าดึงข้อมูล ซึ่งทำต่อกันเป็นชุด: ',
+        '            รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ → วิเคราะห์ Layout → จัดลำดับการอ่าน → ',
+        '            ตรวจแก้คำผิด → แบ่งประโยค',
+        '        </p>',
+
+        '        <div class="ocr-mode">',
+        '            <span class="ocr-mode-label">วิธีประมวลผล</span>',
+
+        '            <label class="ocr-choice">',
+        '                <input type="radio" name="postOcrEngine" value="library" id="ocrPostLibrary" checked>',
+        '                <span>',
+        '                    <strong>ไลบรารีในเครื่อง</strong>',
+        '                    <small>เร็ว ไม่ต้องโหลดโมเดล — ใช้ layout ในเครื่อง + พจนานุกรมไทย ',
+        'แก้คำทีละคำ (ไม่แบ่งประโยคด้วย AI)</small>',
+        '                </span>',
+        '            </label>',
+
+        '            <label class="ocr-choice">',
+        '                <input type="radio" name="postOcrEngine" value="local" id="ocrPostLocal">',
+        '                <span>',
+        '                    <strong>Local AI — Qwen2.5-3B-Instruct (ในเครื่อง)</strong>',
+        '                    <small>แก้คำทั้งข้อความและแบ่งประโยคด้วย AI ทำงานออฟไลน์ ',
+        'ครั้งแรกต้องดาวน์โหลดโมเดล ~2 GB</small>',
+        '                </span>',
+        '            </label>',
+
+        '            <label class="ocr-choice">',
+        '                <input type="radio" name="postOcrEngine" value="api" id="ocrPostApi">',
+        '                <span>',
+        '                    <strong>AI API — Gemini</strong>',
+        '                    <small>ใช้ API key เดิมของ Gemini — เร็วและแม่น แต่ต้องต่ออินเทอร์เน็ต</small>',
+        '                </span>',
+        '            </label>',
+        '        </div>',
+
+        '        <p class="hint">',
+        '            เมื่อใช้ AI ระบบจะทำ <b>Vector Few-Shot</b> (เลือกคู่ตัวอย่าง “ผิด → ถูก” ',
+        'ที่ใกล้เคียงที่สุดใส่ prompt) และ <b>Sentence Segmentation</b> ',
+        'ให้พร้อมกันในรอบเดียว',
+        '        </p>',
+
+        '        <div id="ocrPostLocalBox">',
+        '            <div class="ocr-status-box" id="ocrPostStatusBox">',
+        '                <p class="ocr-status-head" id="ocrPostStatusTitle">กำลังตรวจสอบสถานะ...</p>',
+        '                <p class="hint" id="ocrPostStatusDetail"></p>',
+        '            </div>',
+
+        '            <div class="form-actions page-actions ocr-actions">',
+        '                <button id="ocrPostPrepareBtn" type="button" class="plain">ดาวน์โหลดโมเดล (~2 GB)</button>',
+        '                <button id="ocrPostRemoveBtn" type="button" class="plain">ลบโมเดล</button>',
+        '            </div>',
+        '        </div>',
+        '    </section>',
+
         '    <div class="form-actions page-actions">',
         '        <button id="ocrSaveBtn" type="button">บันทึกการตั้งค่า</button>',
         '    </div>',
@@ -236,6 +295,7 @@
         enabled: true,
         mode: 'auto',
         twoStage: false,
+        postOcr: { engine: 'library' },
         gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
         iloveapi: { hasKey: false }
     };
@@ -312,6 +372,21 @@
         el('ocrModeAlways').disabled = !enabled;
     }
 
+    // แสดงกล่องดาวน์โหลดโมเดลเฉพาะเมื่อเลือก Local AI
+    function updatePostOcrState() {
+        const local = el('ocrPostLocal').checked;
+        const apiEngine = el('ocrPostApi').checked;
+
+        el('ocrPostLocalBox').hidden = !local;
+
+        if (apiEngine && !settings.gemini.hasKey) {
+            setStatus(
+                'AI API ต้องใช้ API key ของ Gemini — เพิ่มที่ส่วน Gemini API ด้านบน',
+                'warn'
+            );
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────
     // ค่าที่กรอกอยู่บนหน้าจอ
     // ──────────────────────────────────────────────────────────────
@@ -324,6 +399,9 @@
             enabled: value.enabled !== false,
             mode: value.mode === 'always' ? 'always' : 'auto',
             twoStage: value.twoStage === true,
+            postOcr: {
+                engine: (value.postOcr && value.postOcr.engine) || 'library'
+            },
             gemini: {
                 model: (value.gemini && value.gemini.model) || DEFAULT_GEMINI_MODEL,
                 hasKey: Boolean(value.gemini && value.gemini.hasKey)
@@ -337,6 +415,10 @@
 
         el('ocrEnabled').checked = settings.enabled;
         el('ocrTwoStage').checked = settings.twoStage;
+
+        el('ocrPostLibrary').checked = settings.postOcr.engine === 'library';
+        el('ocrPostLocal').checked = settings.postOcr.engine === 'local';
+        el('ocrPostApi').checked = settings.postOcr.engine === 'api';
         el('ocrModeAuto').checked = settings.mode !== 'always';
         el('ocrModeAlways').checked = settings.mode === 'always';
 
@@ -346,6 +428,7 @@
 
         updateKeyHints();
         updateModeState();
+        updatePostOcrState();
     }
 
     function updateKeyHints() {
@@ -378,6 +461,11 @@
             enabled: el('ocrEnabled').checked,
             mode: el('ocrModeAlways').checked ? 'always' : 'auto',
             twoStage: el('ocrTwoStage').checked,
+            postOcr: {
+                engine: el('ocrPostLibrary').checked
+                    ? 'library'
+                    : (el('ocrPostLocal').checked ? 'local' : 'api')
+            },
             gemini: {
                 apiKey: el('ocrGeminiKey').value,
                 model: el('ocrGeminiModel').value
@@ -683,6 +771,201 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // สถานะโมเดล Qwen2.5-3B (Local AI สำหรับหลัง OCR)
+    // ──────────────────────────────────────────────────────────────
+
+    function renderPostOcrStatus(result) {
+        const title = el('ocrPostStatusTitle');
+        const detail = el('ocrPostStatusDetail');
+
+        el('ocrPostRemoveBtn').disabled =
+            !result ||
+            result.ok === false ||
+            !(result.runtimeReady || result.modelReady);
+
+        if (!result || result.ok === false) {
+            title.textContent = 'ตรวจสอบสถานะไม่สำเร็จ';
+            title.className = 'ocr-status-head error';
+            detail.textContent = (result && result.error) || 'ไม่ทราบสาเหตุ';
+            return;
+        }
+
+        if (!result.ready) {
+            title.textContent = 'ยังใช้ Local AI ไม่ได้';
+            title.className = 'ocr-status-head error';
+            detail.textContent =
+                'ขาด: ' + result.missing.join(', ') +
+                (result.modelBytes > 0
+                    ? ' (มีโมเดลแล้ว ' + formatSize(result.modelBytes) + ')'
+                    : '') +
+                ' — ดาวน์โหลดโมเดลก่อนใช้';
+            return;
+        }
+
+        title.textContent = 'พร้อมใช้งาน';
+        title.className = 'ocr-status-head ok';
+
+        detail.textContent = [
+            result.engine || 'Qwen2.5-3B-Instruct',
+            'โมเดลในเครื่อง ' + formatSize(result.modelBytes),
+            result.running
+                ? 'เซิร์ฟเวอร์กำลังทำงาน'
+                : 'เซิร์ฟเวอร์จะเริ่มเมื่อใช้ครั้งแรก',
+            'ที่เก็บ: ' + (result.modelPath || '-')
+        ].join(' · ');
+    }
+
+    async function refreshPostOcrStatus() {
+        const electron = api();
+
+        if (!electron || !electron.postOcrStatus) {
+            el('ocrPostStatusTitle').textContent =
+                'เปิดในแอปเพื่อตรวจสอบสถานะ';
+            el('ocrPostStatusTitle').className = 'ocr-status-head error';
+            el('ocrPostStatusDetail').textContent = '';
+            return null;
+        }
+
+        el('ocrPostStatusTitle').textContent = 'กำลังตรวจสอบสถานะ...';
+        el('ocrPostStatusTitle').className = 'ocr-status-head';
+        el('ocrPostStatusDetail').textContent = '';
+
+        let result = null;
+
+        try {
+            result = await electron.postOcrStatus();
+        } catch (error) {
+            result = {
+                ok: false,
+                error: (error && error.message) || 'ตรวจสอบสถานะไม่สำเร็จ'
+            };
+        }
+
+        renderPostOcrStatus(result);
+        return result;
+    }
+
+    async function preparePostOcrModel() {
+        const electron = api();
+        const button = el('ocrPostPrepareBtn');
+
+        if (!electron || !electron.postOcrPrepare) {
+            setStatus('เปิดหน้านี้ในแอปเพื่อเตรียมโมเดล', 'error');
+            return;
+        }
+
+        const onProgress = function (progress) {
+            if (!progress) return;
+
+            const percent = Number(progress.percent) || 0;
+            const hasTotal = Number(progress.total) > 0;
+
+            el('ocrPostStatusTitle').textContent =
+                progress.label || 'กำลังเตรียมโมเดล...';
+            el('ocrPostStatusTitle').className = 'ocr-status-head warn';
+
+            el('ocrPostStatusDetail').textContent = hasTotal
+                ? percent + '% · ' +
+                  formatSize(progress.received) + ' / ' +
+                  formatSize(progress.total)
+                : 'กำลังเตรียมไฟล์ — อาจใช้เวลาสักครู่';
+
+            setStatus(
+                (progress.label || 'กำลังเตรียมโมเดล') +
+                (hasTotal ? ' ' + percent + '%' : '') +
+                '...',
+                'warn'
+            );
+        };
+
+        button.disabled = true;
+        button.textContent = 'กำลังเตรียมโมเดล...';
+        el('ocrPostRemoveBtn').disabled = true;
+
+        if (electron.onPostOcrProgress) {
+            electron.onPostOcrProgress(onProgress);
+        }
+
+        try {
+            const result = await electron.postOcrPrepare();
+
+            if (!result || result.ok === false) {
+                throw new Error(
+                    (result && result.error) || 'เตรียมโมเดลไม่สำเร็จ'
+                );
+            }
+
+            renderPostOcrStatus(result);
+            setStatus('เตรียมโมเดล Qwen2.5-3B สำเร็จ — พร้อมใช้งาน', 'ok');
+
+        } catch (error) {
+            setStatus(
+                'เตรียมโมเดลไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ'),
+                'error'
+            );
+
+            await refreshPostOcrStatus();
+
+        } finally {
+            if (electron.offPostOcrProgress) {
+                electron.offPostOcrProgress();
+            }
+
+            button.disabled = false;
+            button.textContent = 'ดาวน์โหลดโมเดล (~2 GB)';
+        }
+    }
+
+    async function removePostOcrModel() {
+        const electron = api();
+        const button = el('ocrPostRemoveBtn');
+
+        if (!electron || !electron.postOcrRemove) {
+            setStatus('เปิดหน้านี้ในแอปเพื่อลบโมเดล', 'error');
+            return;
+        }
+
+        if (scope.AppDialog && scope.AppDialog.confirm) {
+            const confirmed = await scope.AppDialog.confirm(
+                'ลบโมเดล Qwen2.5-3B (~2 GB) ออกจากเครื่องนี้?'
+            );
+
+            if (!confirmed) return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'กำลังลบ...';
+
+        try {
+            const result = await electron.postOcrRemove();
+
+            if (!result || result.ok === false) {
+                throw new Error((result && result.error) || 'ลบโมเดลไม่สำเร็จ');
+            }
+
+            renderPostOcrStatus(result);
+            setStatus(
+                'ลบโมเดลแล้ว — พื้นที่ที่คืนมา ' +
+                formatSize(result.removedBytes || 0),
+                'ok'
+            );
+
+        } catch (error) {
+            setStatus(
+                'ลบโมเดลไม่สำเร็จ: ' +
+                ((error && error.message) || 'ไม่ทราบสาเหตุ'),
+                'error'
+            );
+
+            await refreshPostOcrStatus();
+
+        } finally {
+            button.textContent = 'ลบโมเดล';
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // โหลด / บันทึก
     // ──────────────────────────────────────────────────────────────
 
@@ -861,6 +1144,8 @@
         el('ocrVlRefreshBtn').addEventListener('click', refreshVlStatus);
         el('ocrVlPrepareBtn').addEventListener('click', prepareVlModels);
         el('ocrVlRemoveBtn').addEventListener('click', removeVlModels);
+        el('ocrPostPrepareBtn').addEventListener('click', preparePostOcrModel);
+        el('ocrPostRemoveBtn').addEventListener('click', removePostOcrModel);
         el('ocrGeminiClearBtn').addEventListener('click', function () {
             clearKey('gemini');
         });
@@ -874,6 +1159,12 @@
             .querySelectorAll('input[name="ocrProvider"]')
             .forEach(function (radio) {
                 radio.addEventListener('change', updateProviderSections);
+            });
+
+        document
+            .querySelectorAll('input[name="postOcrEngine"]')
+            .forEach(function (radio) {
+                radio.addEventListener('change', updatePostOcrState);
             });
     }
 
@@ -892,6 +1183,7 @@
             loadConfig();
             refreshStatus();
             refreshVlStatus();
+            refreshPostOcrStatus();
         }
     };
 

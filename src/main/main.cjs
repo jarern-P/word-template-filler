@@ -23,6 +23,12 @@ const ocrPaddleVl =
 const pdfLayout =
     require("./pdf-layout.cjs");
 
+const postOcr =
+    require("./post-ocr.cjs");
+
+const postOcrLocal =
+    require("./post-ocr-local.cjs");
+
 
 // ============================================================
 // Locale
@@ -1813,6 +1819,195 @@ ipcMain.handle(
 
 
 // ============================================================
+// Post-OCR (ปรับข้อความหลัง OCR)
+// ============================================================
+//
+// ใช้กับปุ่มเดียวในหน้าดึงข้อมูล: รวมบรรทัดที่ถูกตัด → ตรวจคำผิด
+// → แบ่งประโยค โดยเลือก engine ตาม ตั้งค่า OCR (postOcr.engine)
+//   library = ทำฝั่งหน้าจอด้วย pdf-layout/line-join
+//   local   = Qwen2.5-3B-Instruct ผ่าน llama.cpp ในเครื่อง
+//   api     = Gemini (ใช้ key เดิม)
+
+ipcMain.handle(
+    "post-ocr:status",
+    async () => {
+
+        try {
+
+            return {
+                ok: true,
+                ...postOcrLocal.status(
+                    getDataPath()
+                )
+            };
+
+        } catch (error) {
+
+            console.error(
+                "post-ocr:status error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "post-ocr:prepare",
+    async (event) => {
+
+        try {
+
+            const result =
+                await postOcrLocal.prepare(
+                    getDataPath(),
+                    function (progress) {
+
+                        if (event.sender.isDestroyed()) {
+                            return;
+                        }
+
+                        event.sender.send(
+                            "post-ocr:progress",
+                            progress
+                        );
+                    }
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "post-ocr:prepare error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "post-ocr:remove",
+    async () => {
+
+        try {
+
+            const result =
+                await postOcrLocal.remove(
+                    getDataPath()
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "post-ocr:remove error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "post-ocr:process",
+    async function (event, payload) {
+
+        try {
+
+            const input = payload && typeof payload === "object"
+                ? payload
+                : {};
+
+            // อ่าน key จริงจาก main process เท่านั้น (หน้าจอไม่เคยได้รับ key)
+            const saved = ocrConfig.readSecrets(getDataPath());
+
+            const engine =
+                input.engine === "local" ||
+                input.engine === "api" ||
+                input.engine === "library"
+                    ? input.engine
+                    : (saved.postOcr?.engine || "library");
+
+            const result =
+                await postOcr.processText(
+                    input.text,
+                    {
+                        engine: engine,
+                        apiKey: saved.gemini?.apiKey || "",
+                        model: saved.gemini?.model,
+                        dataPath: getDataPath(),
+                        onProgress: function (progress) {
+
+                            if (event.sender.isDestroyed()) {
+                                return;
+                            }
+
+                            event.sender.send(
+                                "post-ocr:progress",
+                                progress
+                            );
+                        }
+                    }
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "post-ocr:process error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+// ============================================================
 // Document Layout (วิเคราะห์โครงสร้าง + ลำดับการอ่าน)
 // ============================================================
 //
@@ -1839,6 +2034,8 @@ ipcMain.handle(
                     data,
                     {
                         dataPath: getDataPath(),
+                        joinLines:
+                            Boolean(payload && payload.joinLines),
                         onProgress: function (progress) {
                             if (event.sender.isDestroyed()) {
                                 return;

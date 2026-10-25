@@ -211,6 +211,46 @@ contextBridge.exposeInMainWorld(
             );
         },
 
+        // ─────────────────────────────
+        // Post-OCR (ปรับข้อความหลัง OCR)
+        // ─────────────────────────────
+
+        // สถานะโมเดล Qwen2.5-3B ในเครื่อง
+        // ({ ready, runtimeReady, modelReady, modelBytes, running, modelPath })
+        postOcrStatus: () =>
+            ipcRenderer.invoke("post-ocr:status"),
+
+        // ดาวน์โหลดโมเดลครั้งแรก (~2 GB)
+        postOcrPrepare: () =>
+            ipcRenderer.invoke("post-ocr:prepare"),
+
+        postOcrRemove: () =>
+            ipcRenderer.invoke("post-ocr:remove"),
+
+        // payload = { text, engine? } — engine ไม่ส่ง = ใช้ค่าที่บันทึกไว้
+        // คืน { ok, text, engine, chunks, sentences, warnings }
+        postOcrProcess: (payload) =>
+            ipcRenderer.invoke(
+                "post-ocr:process",
+                payload
+            ),
+
+        // ความคืบหน้า { stage: 'download'|'chunk'|'done', percent, ... }
+        onPostOcrProgress: (callback) => {
+            if (typeof callback !== "function") return;
+
+            ipcRenderer.on(
+                "post-ocr:progress",
+                (event, progress) => callback(progress)
+            );
+        },
+
+        offPostOcrProgress: () => {
+            ipcRenderer.removeAllListeners(
+                "post-ocr:progress"
+            );
+        },
+
         // ความคืบหน้าระหว่างอ่าน PDF
         // callback ได้ { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare', progress }
         onPdfExtractProgress: (callback) => {

@@ -67,13 +67,14 @@
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
         '            <div class="data-tools">',
-        '                <button id="dataFixWordsBtn" type="button" class="plain" title="ตรวจคำภาษาไทยที่น่าสงสัยด้วยพจนานุกรมในเครื่อง">ตรวจคำผิด</button>',
-        '                <button id="dataLayoutBtn" type="button" class="plain" title="วิเคราะห์บล็อกเอกสาร (หัวเรื่อง/ย่อหน้า/ตาราง/รูป) — ใช้กับ PDF ที่อัปโหลด">วิเคราะห์ Layout</button>',
-        '                <button id="dataOrderBtn" type="button" class="plain" title="จัดข้อความใหม่ตามลำดับการอ่านของเอกสาร — ใช้กับ PDF ที่อัปโหลด">จัดลำดับการอ่าน</button>',
+        '                <button id="dataPostOcrBtn" type="button" title="รวมบรรทัดที่ถูกตัด → วิเคราะห์ Layout → จัดลำดับการอ่าน → ตรวจแก้คำผิด → แบ่งประโยค">ปรับข้อความหลัง OCR</button>',
+        '                <button id="dataPostOcrUndoBtn" type="button" class="plain" hidden>ย้อนกลับ</button>',
         '            </div>',
         '            <p class="hint data-tools-hint">',
-        '                วิเคราะห์ Layout และจัดลำดับการอ่านใช้กับ PDF ที่อัปโหลด — ',
-        '                ครั้งแรกจะดาวน์โหลดโมเดล PP-DocLayoutV2 (~213 MB) และทำงานในเครื่องทั้งหมด',
+        '                ปุ่มเดียวรวมทุกขั้น: รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ → วิเคราะห์ Layout → ',
+        '                จัดลำดับการอ่าน → ตรวจแก้คำผิด → แบ่งประโยค',
+        '                <br>วิธีประมวลผลเลือกได้ที่ ตั้งค่า OCR › หลัง OCR: ',
+        '                <span id="dataPostOcrEngine" class="data-engine-badge">ไลบรารีในเครื่อง</span>',
         '            </p>',
         '            <div id="dataSpellPanel" class="data-tool-panel" hidden>',
         '                <div class="data-tool-head">',
@@ -85,17 +86,6 @@
         '                    </div>',
         '                </div>',
         '                <div id="dataSpellList" class="data-tool-list"></div>',
-        '            </div>',
-        '            <div id="dataLayoutPanel" class="data-tool-panel" hidden>',
-        '                <div class="data-tool-head">',
-        '                    <strong>โครงสร้างเอกสาร</strong>',
-        '                    <span id="dataLayoutMeta" class="hint"></span>',
-        '                    <div class="data-tool-actions">',
-        '                        <button id="dataLayoutApply" type="button" class="plain">ใช้ข้อความตามลำดับนี้</button>',
-        '                        <button id="dataLayoutClose" type="button" class="plain">ปิด</button>',
-        '                    </div>',
-        '                </div>',
-        '                <div id="dataLayoutList" class="data-tool-list"></div>',
         '            </div>',
         '        </section>',
         '        <section class="data-results">',
@@ -210,16 +200,14 @@
             el('dataPdfInput').click();
         });
 
-        // ── เครื่องมือหลัง OCR ──
-        el('dataFixWordsBtn').addEventListener('click', runSpellCheck);
-
-        el('dataLayoutBtn').addEventListener('click', function () {
-            runLayoutAnalysis('view');
+        // ── ปุ่มเดียว: ปรับข้อความหลัง OCR ──
+        el('dataPostOcrBtn').addEventListener('click', function () {
+            runPostOcr();
         });
 
-        el('dataOrderBtn').addEventListener('click', function () {
-            runLayoutAnalysis('order');
-        });
+        el('dataPostOcrUndoBtn').addEventListener('click', undoPostOcr);
+
+        refreshPostOcrEngine();
 
         el('dataSpellApplyAll').addEventListener('click', applyAllSpellSuggestions);
 
@@ -227,13 +215,6 @@
             el('dataSpellPanel').hidden = true;
             el('dataSpellList').innerHTML = '';
             spellQueue = [];
-        });
-
-        el('dataLayoutApply').addEventListener('click', applyLayoutText);
-
-        el('dataLayoutClose').addEventListener('click', function () {
-            el('dataLayoutPanel').hidden = true;
-            el('dataLayoutList').innerHTML = '';
         });
 
         el('dataSourceText').addEventListener('input', updateToolsState);
@@ -253,6 +234,28 @@
                 }
 
                 setSourceStatus(text);
+            });
+        }
+
+        // ความคืบหน้าระหว่างปรับข้อความหลัง OCR (Local AI / AI API)
+        if (window.electronAPI && window.electronAPI.onPostOcrProgress) {
+            window.electronAPI.onPostOcrProgress(function (progress) {
+                if (!postOcrBusy || !progress) return;
+
+                if (progress.stage === 'download') {
+                    setSourceStatus(
+                        'กำลังดาวน์โหลดโมเดล Qwen2.5-3B... ' +
+                        (Number(progress.percent) || 0) + '%'
+                    );
+                    return;
+                }
+
+                if (progress.stage === 'chunk') {
+                    setSourceStatus(
+                        'กำลังปรับข้อความด้วย AI ก้อนที่ ' +
+                        progress.index + '/' + progress.total + '...'
+                    );
+                }
             });
         }
 
@@ -314,7 +317,13 @@
     }
 
     function close() {
-        if (overlay) overlay.classList.remove('open');
+        // เรียกได้ก่อน build (เช่นตอนเปลี่ยนหน้า) — ยังไม่มี DOM ให้แตะ
+        if (!overlay) return;
+
+        overlay.classList.remove('open');
+
+        el('dataPostOcrUndoBtn').hidden = true;
+        postOcrUndo = null;
     }
 
     // จำนวน field ที่มี regex (ไม่นับ field ที่เป็นตาราง)
@@ -559,8 +568,6 @@
     function hideToolPanels() {
         el('dataSpellPanel').hidden = true;
         el('dataSpellList').innerHTML = '';
-        el('dataLayoutPanel').hidden = true;
-        el('dataLayoutList').innerHTML = '';
 
         spellQueue = [];
     }
@@ -570,9 +577,7 @@
         const textarea = el('dataSourceText');
         const hasText = Boolean(textarea && textarea.value.trim() !== '');
 
-        el('dataFixWordsBtn').disabled = !hasText || layoutBusy;
-        el('dataLayoutBtn').disabled = !lastPdfFile || layoutBusy;
-        el('dataOrderBtn').disabled = !lastPdfFile || layoutBusy;
+        el('dataPostOcrBtn').disabled = (!hasText && !lastPdfFile) || layoutBusy;
     }
 
     // ── ตรวจคำผิด (พจนานุกรมในเครื่อง + คำที่เพิ่มเอง) ──
@@ -700,8 +705,6 @@
         const textarea = el('dataSourceText');
         const text = textarea.value;
 
-        el('dataLayoutPanel').hidden = true;
-        el('dataLayoutList').innerHTML = '';
         el('dataSpellList').innerHTML = '';
         spellQueue = [];
 
@@ -777,15 +780,22 @@
 
     // ── Layout / Reading order ──
 
-    async function ensureLayoutResult() {
-        if (layoutCache && layoutCache.file === lastPdfFile) {
+    async function ensureLayoutResult(joinLines) {
+        const join = joinLines === true;
+
+        if (
+            layoutCache &&
+            layoutCache.file === lastPdfFile &&
+            layoutCache.joinLines === join
+        ) {
             return layoutCache.result;
         }
 
         const buffer = await lastPdfFile.arrayBuffer();
 
         const result = await window.electronAPI.analyzePdfLayout({
-            data: new Uint8Array(buffer)
+            data: new Uint8Array(buffer),
+            joinLines: join
         });
 
         if (!result || result.ok === false) {
@@ -796,192 +806,214 @@
 
         layoutCache = {
             file: lastPdfFile,
+            joinLines: join,
             result: result
         };
 
         return result;
     }
 
-    function renderLayoutPanel(result, mode) {
-        const list = el('dataLayoutList');
-        const pages = Array.isArray(result.pages) ? result.pages : [];
+    // ── ปุ่มเดียว: ปรับข้อความหลัง OCR ──
 
-        let regionCount = 0;
+    const POST_OCR_ENGINE_LABELS = {
+        library: 'ไลบรารีในเครื่อง',
+        local: 'Local AI (Qwen2.5-3B)',
+        api: 'AI API (Gemini)'
+    };
 
-        list.innerHTML = '';
+    let postOcrBusy = false;
+    let postOcrUndo = null;
 
-        pages.forEach(function (page) {
-            const header = document.createElement('div');
-            header.className = 'data-layout-page';
-
-            const regions = Array.isArray(page.regions) ? page.regions : [];
-
-            regionCount += regions.length;
-
-            header.textContent = [
-                'หน้า ' + page.page,
-                page.source === 'ocr' ? 'OCR' : 'ชั้นข้อความ',
-                regions.length + ' บล็อก'
-            ].join(' · ');
-
-            list.appendChild(header);
-
-            if (page.error) {
-                const error = document.createElement('p');
-                error.className = 'hint error';
-                error.textContent = page.error;
-                list.appendChild(error);
-                return;
-            }
-
-            if (page.ocrError) {
-                const warning = document.createElement('p');
-                warning.className = 'hint error';
-                warning.textContent = 'OCR บางบล็อกไม่สำเร็จ: ' + page.ocrError;
-                list.appendChild(warning);
-            }
-
-            regions.forEach(function (region) {
-                const row = document.createElement('div');
-                row.className = 'data-layout-row';
-
-                const index = document.createElement('code');
-                index.className = 'data-layout-index';
-                index.textContent = String(region.index);
-
-                const label = document.createElement('span');
-                label.className = 'data-layout-label';
-                label.textContent = region.labelTh || region.label;
-
-                const score = document.createElement('span');
-                score.className = 'hint';
-                score.textContent = region.score > 0
-                    ? Math.round(region.score * 100) + '%'
-                    : '';
-
-                const text = document.createElement('span');
-                text.className = 'data-layout-text';
-
-                const preview = String(region.text || '')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-
-                text.textContent = preview === ''
-                    ? 'ไม่มีข้อความ'
-                    : (preview.length > 120
-                        ? preview.slice(0, 120) + '…'
-                        : preview);
-
-                text.title = String(region.text || '');
-
-                row.appendChild(index);
-                row.appendChild(label);
-                row.appendChild(score);
-                row.appendChild(text);
-                list.appendChild(row);
-            });
-        });
-
-        el('dataLayoutMeta').textContent = pages.length + ' หน้า · ' + regionCount + ' บล็อก' +
-            (mode === 'order' ? ' — เรียงตามลำดับการอ่านแล้ว' : '');
-
-        el('dataLayoutPanel').hidden = false;
+    function engineLabel(engine) {
+        return POST_OCR_ENGINE_LABELS[engine] || POST_OCR_ENGINE_LABELS.library;
     }
 
-    async function runLayoutAnalysis(mode) {
-        if (!lastPdfFile) {
+    // อ่าน engine ที่เลือกไว้ในหน้า ตั้งค่า OCR มาแสดงบนปุ่ม
+    async function refreshPostOcrEngine() {
+        let engine = 'library';
+
+        try {
+            const response =
+                window.electronAPI && window.electronAPI.ocrGetConfig
+                    ? await window.electronAPI.ocrGetConfig()
+                    : null;
+
+            const config = response && response.config
+                ? response.config
+                : response;
+
+            engine = (config && config.postOcr && config.postOcr.engine) || 'library';
+
+        } catch (error) {
+            engine = 'library';
+        }
+
+        const badge = el('dataPostOcrEngine');
+
+        if (badge) {
+            badge.textContent = engineLabel(engine) + ' › ตั้งค่า OCR';
+            badge.title = 'เลือกวิธีประมวลผลได้ที่หน้า ตั้งค่า OCR';
+        }
+
+        return engine;
+    }
+
+    function undoPostOcr() {
+        if (postOcrUndo === null) return;
+
+        el('dataSourceText').value = postOcrUndo;
+        postOcrUndo = null;
+
+        el('dataPostOcrUndoBtn').hidden = true;
+
+        hideToolPanels();
+        hideResults();
+        updateToolsState();
+
+        setSourceStatus('ย้อนกลับข้อความก่อนปรับแล้ว');
+    }
+
+    async function runPostOcr() {
+        if (postOcrBusy) return;
+
+        const textarea = el('dataSourceText');
+        const original = textarea.value;
+        const hasPdf = Boolean(lastPdfFile);
+
+        if (!hasPdf && original.trim() === '') {
             await scope.AppDialog.alert(
-                'ต้องอัปโหลดไฟล์ PDF ก่อนใช้เครื่องมือนี้'
+                'วางข้อความหรืออัปโหลดไฟล์ PDF ก่อนใช้ปุ่มนี้'
             );
             return;
         }
 
-        if (!window.electronAPI || !window.electronAPI.analyzePdfLayout) {
+        if (hasPdf && (!window.electronAPI || !window.electronAPI.analyzePdfLayout)) {
             await scope.AppDialog.alert(
-                'เปิดหน้านี้ในแอป (Electron) เพื่อวิเคราะห์โครงสร้างเอกสาร'
+                'เปิดหน้านี้ในแอป (Electron) เพื่อวิเคราะห์ Layout และจัดลำดับการอ่าน'
             );
             return;
         }
 
+        const engine = await refreshPostOcrEngine();
+        const isAi = engine === 'local' || engine === 'api';
+
+        if (isAi && (!window.electronAPI || !window.electronAPI.postOcrProcess)) {
+            await scope.AppDialog.alert(
+                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ AI ปรับข้อความ'
+            );
+            return;
+        }
+
+        postOcrBusy = true;
         layoutBusy = true;
         updateToolsState();
 
-        el('dataSpellPanel').hidden = true;
-        el('dataSpellList').innerHTML = '';
-        spellQueue = [];
+        hideToolPanels();
+        hideResults();
 
-        setSourceStatus(
-            mode === 'order'
-                ? 'กำลังวิเคราะห์และจัดลำดับการอ่าน...'
-                : 'กำลังวิเคราะห์โครงสร้างเอกสาร...'
-        );
+        if (original.trim() !== '') {
+            postOcrUndo = original;
+            el('dataPostOcrUndoBtn').hidden = false;
+        }
 
         try {
-            const result = await ensureLayoutResult();
+            let text = original;
+            let pageNote = '';
 
-            renderLayoutPanel(result, mode);
+            // 1) วิเคราะห์ Layout + จัดลำดับการอ่าน + รวมบรรทัดที่ถูกตัด
+            if (hasPdf) {
+                setSourceStatus('กำลังวิเคราะห์ Layout และจัดลำดับการอ่าน...');
 
-            if (mode === 'order') {
-                const text = String(result.text || '');
+                const result = await ensureLayoutResult(joinLinesEnabled);
+                const layoutText = String(result.text || '');
 
-                if (text.trim() === '') {
+                if (layoutText.trim() !== '') {
+                    text = layoutText;
+                    pageNote = ' · ' + result.pageCount + ' หน้า';
+                } else if (text.trim() === '') {
                     throw new Error(
                         'ไม่พบข้อความในเอกสาร — ลอง OCR หรืออัปโหลดไฟล์อื่น'
                     );
                 }
 
-                el('dataSourceText').value = text;
+                textarea.value = text;
+                updateToolsState();
+            }
 
-                hideResults();
+            // 2) ตรวจแก้คำ + แบ่งประโยค
+            let stepNote = '';
+            let warnings = [];
 
+            if (isAi) {
                 setSourceStatus(
-                    'จัดลำดับการอ่านใหม่แล้ว — ' +
-                    result.pageCount + ' หน้า · ' +
-                    text.length + ' ตัวอักษร'
+                    'กำลังปรับข้อความด้วย ' + engineLabel(engine) + '...'
                 );
+
+                const response = await window.electronAPI.postOcrProcess({
+                    text: text,
+                    engine: engine
+                });
+
+                if (!response || response.ok === false) {
+                    throw new Error(
+                        (response && response.error) ||
+                        'ปรับข้อความหลัง OCR ไม่สำเร็จ'
+                    );
+                }
+
+                text = String(response.text || text);
+                warnings = Array.isArray(response.warnings)
+                    ? response.warnings
+                    : [];
+
+                stepNote = ' · ' + response.chunks + ' ก้อน · ' +
+                    response.sentences + ' ประโยค';
 
             } else {
-                const regions = (result.pages || []).reduce(function (total, page) {
-                    return total + (page.regions || []).length;
-                }, 0);
-
-                setSourceStatus(
-                    'วิเคราะห์โครงสร้างแล้ว — ' +
-                    result.pageCount + ' หน้า · ' +
-                    regions + ' บล็อก'
-                );
+                // ไลบรารีในเครื่อง: พจนานุกรมบอกได้แค่ว่า "น่าสงสัย" —
+                // ให้ผู้ใช้เลือกคำแนะนำเองด้านล่าง (ไม่แก้ให้อัตโนมัติ)
+                stepNote = ' · ตรวจคำด้วยพจนานุกรม';
             }
+
+            textarea.value = text;
+            updateToolsState();
+
+            // 3) คำที่ยังน่าสงสัย — ให้ผู้ใช้ตรวจเอง (ไม่แก้ให้อัตโนมัติ)
+            if (scope.OcrTextTools) {
+                const check = scope.OcrTextTools.check(text);
+
+                if (!check.unavailable && check.issues.length > 0) {
+                    el('dataSpellPanel').hidden = false;
+                    el('dataSpellList').innerHTML = '';
+                    spellQueue = [];
+
+                    check.issues.forEach(addSpellRow);
+                    updateSpellMeta();
+                }
+            }
+
+            hideResults();
+
+            setSourceStatus(
+                'ปรับข้อความแล้ว (' + engineLabel(engine) + ')' +
+                pageNote + stepNote +
+                (warnings.length > 0
+                    ? ' — ' + warnings.length + ' ก้อนใช้ข้อความเดิม'
+                    : '') +
+                ' · ' + text.length + ' ตัวอักษร'
+            );
 
         } catch (error) {
             setSourceStatus(
-                (error && error.message) || 'วิเคราะห์โครงสร้างเอกสารไม่สำเร็จ',
+                (error && error.message) || 'ปรับข้อความหลัง OCR ไม่สำเร็จ',
                 'error'
             );
 
         } finally {
+            postOcrBusy = false;
             layoutBusy = false;
             updateToolsState();
         }
-    }
-
-    function applyLayoutText() {
-        if (!layoutCache || layoutCache.file !== lastPdfFile) return;
-
-        const text = String(layoutCache.result.text || '');
-
-        if (text.trim() === '') {
-            setSourceStatus('ไม่มีข้อความให้ใช้จากผลวิเคราะห์', 'error');
-            return;
-        }
-
-        el('dataSourceText').value = text;
-
-        hideResults();
-        updateToolsState();
-
-        setSourceStatus(
-            'ใช้ข้อความตามลำดับการอ่านแล้ว — ' + text.length + ' ตัวอักษร'
-        );
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1382,9 +1414,13 @@
         lastPdfFile = null;
         layoutCache = null;
         layoutBusy = false;
+        postOcrUndo = null;
+
+        el('dataPostOcrUndoBtn').hidden = true;
 
         hideToolPanels();
         updateToolsState();
+        refreshPostOcrEngine();
 
         overlay.classList.add('open');
 

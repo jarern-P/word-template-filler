@@ -37,6 +37,8 @@ const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
 
 const { renderPageToPng, recognizePng } = require('./ocr-paddle.cjs');
 
+const { joinWrappedLines } = require('./line-join.cjs');
+
 // ความละเอียดที่ใช้เรนเดอร์หน้า (เท่ากับ OCR ปกติ ~200 DPI)
 // พิกัดจากโมเดล layout และพิกัดบรรทัดจาก OCR จึงอยู่ในหน่วยพิกเซลเดียวกัน
 const PAGE_SCALE = 200 / 72;
@@ -730,6 +732,9 @@ async function analyzePdf(data, options) {
     const opts = options || {};
     const dataPath = opts.dataPath;
 
+    // รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ภายในแต่ละบล็อก (ใช้กับปุ่มปรับข้อความหลัง OCR)
+    const joinLines = opts.joinLines === true;
+
     if (!dataPath) {
         throw new Error('ไม่ได้ระบุตำแหน่งข้อมูลสำหรับวิเคราะห์ Layout');
     }
@@ -825,6 +830,10 @@ async function analyzePdf(data, options) {
                         pageRegions = ordered.map(function (region, index) {
                             const regionLines = byRegion.get(region) || [];
 
+                            const regionText = joinLines
+                                ? joinWrappedLines(regionLines)
+                                : null;
+
                             return {
                                 index: index + 1,
                                 label: region.label,
@@ -835,9 +844,11 @@ async function analyzePdf(data, options) {
                                 width: Math.round(region.width * 10) / 10,
                                 height: Math.round(region.height * 10) / 10,
                                 lineCount: regionLines.length,
-                                text: regionLines.map(function (line) {
-                                    return line.text;
-                                }).join('\n')
+                                text: regionText
+                                    ? regionText.lines.join('\n')
+                                    : regionLines.map(function (line) {
+                                        return line.text;
+                                    }).join('\n')
                             };
                         });
 
@@ -939,7 +950,15 @@ async function analyzePdf(data, options) {
                                 width: Math.round(region.width * 10) / 10,
                                 height: Math.round(region.height * 10) / 10,
                                 lineCount: ocr.lineCount,
-                                text: ocr.text
+                                text: joinLines
+                                    ? joinWrappedLines(
+                                        String(ocr.text || '')
+                                            .split('\n')
+                                            .map(function (line) {
+                                                return { text: line };
+                                            })
+                                    ).lines.join('\n')
+                                    : ocr.text
                             };
                         });
                     }

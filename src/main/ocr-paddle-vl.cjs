@@ -1133,5 +1133,11 @@ module.exports = {
     prepare,
     ocrPage,
     remove,
-    stop
+    stop,
+    // ใช้ร่วมกับฟีเจอร์หลัง OCR (llama.cpp runtime + ตัวดาวน์โหลด)
+    runtimeDir,
+    runtimeReady,
+    ensureRuntime,
+    downloadFile,
+    findFreePort
 };
