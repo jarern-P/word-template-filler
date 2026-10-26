@@ -18,7 +18,8 @@ const MAX_OUTPUT_TOKENS = 8192;
 // จำนวนตัวอักษรต่อก้อนที่ส่งให้ AI (ภาษาไทย ~1 ตัวอักษรต่อ 1 token โดยประมาณ)
 const CHUNK_CHARS = 6000;
 
-const INSTRUCTIONS = [
+// prompt เริ่มต้น — แสดง/แก้ได้ในหน้า ตั้งค่า OCR (ถ้าเว้นว่าง = ใช้ชุดนี้)
+const DEFAULT_PROMPT = [
     'คุณเป็นบรรณาธิการข้อความภาษาไทยที่ได้จาก OCR',
     '',
     'ทำ 2 อย่างเท่านั้น:',
@@ -76,9 +77,14 @@ function friendlyError(status, message) {
 }
 
 // คำสั่งเต็มที่ส่งให้โมเดล (แยกไว้เพื่อทดสอบได้โดยไม่ต้องเรียกเน็ต)
-function buildPrompt(text) {
+// prompt ที่ผู้ใช้แก้ในหน้าตั้งค่าจะแทนที่ชุดเริ่มต้น ส่วนข้อความต้นฉบับ
+// ถูกต่อท้ายด้วยรูปแบบเดิมเสมอ เพื่อไม่ให้ตำแหน่งข้อความหายไป
+function buildPrompt(text, prompt) {
+    const instructions =
+        String(prompt == null ? '' : prompt).trim() || DEFAULT_PROMPT;
+
     return [
-        INSTRUCTIONS,
+        instructions,
         '',
         'ข้อความต้นฉบับ:',
         '<<<',
@@ -147,13 +153,13 @@ function splitChunks(text, limit) {
     return chunks;
 }
 
-async function requestChunk(text, apiKey, model) {
+async function requestChunk(text, apiKey, model, prompt) {
     const body = {
         contents: [
             {
                 role: 'user',
                 parts: [
-                    { text: buildPrompt(text) }
+                    { text: buildPrompt(text, prompt) }
                 ]
             }
         ],
@@ -276,7 +282,9 @@ async function improveText(text, options) {
             });
         }
 
-        results.push(await requestChunk(chunks[index], apiKey, model));
+        results.push(
+            await requestChunk(chunks[index], apiKey, model, opts.prompt)
+        );
     }
 
     return {
@@ -288,6 +296,7 @@ async function improveText(text, options) {
 
 module.exports = {
     DEFAULT_MODEL,
+    DEFAULT_PROMPT,
     CHUNK_CHARS,
     improveText,
     buildPrompt,

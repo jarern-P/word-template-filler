@@ -225,6 +225,27 @@
         '        </p>',
         '    </section>',
 
+        // ── ปรับปรุงข้อความด้วย AI (ปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูล) ──
+        '    <section class="suggest-settings" id="ocrImproveSection">',
+        '        <h2>ปรับปรุงข้อความด้วย AI</h2>',
+
+        '        <p class="hint">',
+        '            ใช้กับปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูล — ตรวจคำผิดและจัดข้อความเป็น ',
+        '            “ชื่อฟิลด์: ค่า” ทีละบรรทัด ด้วย Gemini (key และโมเดลจากส่วน Gemini API) ',
+        '            ข้อความต้นฉบับจะถูกต่อท้าย prompt นี้ให้อัตโนมัติ',
+        '        </p>',
+
+        '        <div class="field">',
+        '            <label for="ocrImprovePrompt">Prompt ที่ส่งให้ AI</label>',
+        '            <textarea id="ocrImprovePrompt" rows="14" spellcheck="false"></textarea>',
+        '            <p class="hint" id="ocrImprovePromptHint"></p>',
+        '        </div>',
+
+        '        <div class="form-actions page-actions ocr-actions">',
+        '            <button id="ocrImproveResetBtn" type="button" class="plain">คืนค่า prompt เริ่มต้น</button>',
+        '        </div>',
+        '    </section>',
+
         '    <div class="form-actions page-actions">',
         '        <button id="ocrSaveBtn" type="button">บันทึกการตั้งค่า</button>',
         '    </div>',
@@ -241,6 +262,7 @@
         enabled: true,
         mode: 'auto',
         twoStage: false,
+        improve: { prompt: '', defaultPrompt: '' },
         gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
         iloveapi: { hasKey: false }
     };
@@ -329,6 +351,10 @@
             enabled: value.enabled !== false,
             mode: value.mode === 'always' ? 'always' : 'auto',
             twoStage: value.twoStage === true,
+            improve: {
+                prompt: (value.improve && value.improve.prompt) || '',
+                defaultPrompt: (value.improve && value.improve.defaultPrompt) || ''
+            },
             gemini: {
                 model: (value.gemini && value.gemini.model) || DEFAULT_GEMINI_MODEL,
                 hasKey: Boolean(value.gemini && value.gemini.hasKey)
@@ -350,8 +376,28 @@
         el('ocrGeminiKey').value = '';
         el('ocrIloveKey').value = '';
 
+        // prompt ที่แก้เอง — ถ้ายังไม่เคยแก้ (= ว่าง) ให้แสดงค่าเริ่มต้นให้เห็นและแก้ได้
+        el('ocrImprovePrompt').value =
+            settings.improve.prompt || settings.improve.defaultPrompt;
+
         updateKeyHints();
+        updateImprovePromptHint();
         updateModeState();
+    }
+
+    // บอกว่าตอนนี้ใช้ prompt ที่แก้เองหรือค่าเริ่มต้น (+ เตือนให้กดบันทึก)
+    function updateImprovePromptHint() {
+        const textarea = el('ocrImprovePrompt');
+        const hint = el('ocrImprovePromptHint');
+
+        if (!textarea || !hint) return;
+
+        const isDefault =
+            textarea.value.trim() === settings.improve.defaultPrompt.trim();
+
+        hint.textContent = isDefault
+            ? 'ขณะนี้ใช้ prompt เริ่มต้น — แก้ข้อความข้างบนแล้วกด “บันทึกการตั้งค่า” เพื่อใช้เวอร์ชันของคุณ'
+            : 'ใช้ prompt ที่แก้เอง — กด “บันทึกการตั้งค่า” เพื่อเก็บไว้ใช้กับปุ่ม ปรับปรุง';
     }
 
     function updateKeyHints() {
@@ -384,6 +430,13 @@
             enabled: el('ocrEnabled').checked,
             mode: el('ocrModeAlways').checked ? 'always' : 'auto',
             twoStage: el('ocrTwoStage').checked,
+            improve: {
+                // แก้กลับเป็นข้อความเริ่มต้น = เก็บเป็นว่าง (ใช้ค่าเริ่มต้นของโปรแกรม)
+                prompt: el('ocrImprovePrompt').value.trim() ===
+                    settings.improve.defaultPrompt.trim()
+                    ? ''
+                    : el('ocrImprovePrompt').value
+            },
             gemini: {
                 apiKey: el('ocrGeminiKey').value,
                 model: el('ocrGeminiModel').value
@@ -867,6 +920,12 @@
         el('ocrVlRefreshBtn').addEventListener('click', refreshVlStatus);
         el('ocrVlPrepareBtn').addEventListener('click', prepareVlModels);
         el('ocrVlRemoveBtn').addEventListener('click', removeVlModels);
+        el('ocrImproveResetBtn').addEventListener('click', function () {
+            el('ocrImprovePrompt').value = settings.improve.defaultPrompt;
+            updateImprovePromptHint();
+            setStatus('คืนค่า prompt เริ่มต้นแล้ว — กด “บันทึกการตั้งค่า” เพื่อยืนยัน');
+        });
+        el('ocrImprovePrompt').addEventListener('input', updateImprovePromptHint);
         el('ocrGeminiClearBtn').addEventListener('click', function () {
             clearKey('gemini');
         });

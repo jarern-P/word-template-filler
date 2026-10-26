@@ -4,7 +4,22 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 const improve = require('../src/main/ocr-improve.cjs');
+const ocrConfig = require('../src/main/ocr-config.cjs');
+
+function withTempDir(fn) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-improve-'));
+
+    try {
+        return fn(dir);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
 
 test('buildPrompt สั่งแก้คำผิดและจัดเป็น key-value พร้อมแนบข้อความเดิม', function () {
     const prompt = improve.buildPrompt('จา นวนเงนิ 4,000.00 บาท');
@@ -166,6 +181,98 @@ test('improveText แบ่งก้อนและรายงานควา�
     } finally {
         global.fetch = originalFetch;
     }
+});
+
+test('buildPrompt ใช้ prompt ที่ผู้ใช้แก้แทนชุดเริ่มต้น', function () {
+    const prompt = improve.buildPrompt(
+        'เลขที่ 702057001',
+        'ตอบเป็นภาษาไทย บรรทัดละฟิลด์'
+    );
+
+    assert.ok(prompt.includes('ตอบเป็นภาษาไทย บรรทัดละฟิลด์'));
+    assert.ok(!prompt.includes('คุณเป็นบรรณาธิการข้อความภาษาไทย'));
+    assert.ok(prompt.includes('เลขที่ 702057001'));
+
+    // prompt ว่าง/ช่องว่าง = กลับไปใช้ค่าเริ่มต้น
+    assert.ok(
+        improve.buildPrompt('x', '   ').includes('key-value pair')
+    );
+});
+
+test('improveText ส่ง prompt ที่แก้เองไปในคำขอ', async function () {
+    const originalFetch = global.fetch;
+    let body = null;
+
+    global.fetch = async function (url, init) {
+        body = JSON.parse(init.body);
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        { content: { parts: [{ text: 'จำนวนเงิน: 4,000.00' }] } }
+                    ]
+                };
+            }
+        };
+    };
+
+    try {
+        await improve.improveText('จา นวนเงนิ 4,000.00', {
+            apiKey: 'k',
+            prompt: 'แก้คำผิดเท่านั้น'
+        });
+
+        const sent = body.contents[0].parts[0].text;
+
+        assert.ok(sent.startsWith('แก้คำผิดเท่านั้น'));
+        assert.ok(sent.includes('จา นวนเงนิ 4,000.00'));
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('ocr-config เก็บ prompt ที่แก้เองและคืน prompt เริ่มต้นให้หน้าจอ', function () {
+    withTempDir(function (dir) {
+        const initial = ocrConfig.read(dir);
+
+        assert.strictEqual(initial.improve.prompt, '');
+        assert.strictEqual(initial.improve.defaultPrompt, improve.DEFAULT_PROMPT);
+
+        const saved = ocrConfig.save(dir, {
+            improve: { prompt: '  บรรทัดละฟิลด์  \nคงตัวเลขเดิม ' }
+        });
+
+        assert.strictEqual(saved.improve.prompt, 'บรรทัดละฟิลด์\nคงตัวเลขเดิม');
+        assert.strictEqual(
+            ocrConfig.readSecrets(dir).improve.prompt,
+            'บรรทัดละฟิลด์\nคงตัวเลขเดิม'
+        );
+
+        // ไม่ส่ง prompt มา = ใช้ค่าเดิมที่เก็บไว้
+        const again = ocrConfig.save(dir, { provider: 'gemini' });
+        assert.strictEqual(again.improve.prompt, 'บรรทัดละฟิลด์\nคงตัวเลขเดิม');
+
+        // ส่งสตริงว่าง = กลับไปใช้ค่าเริ่มต้น
+        const reset = ocrConfig.save(dir, { improve: { prompt: '' } });
+        assert.strictEqual(reset.improve.prompt, '');
+    });
+});
+
+test('ocr-config ตัด prompt ที่ยาวเกินกำหนด', function () {
+    withTempDir(function (dir) {
+        const saved = ocrConfig.save(dir, {
+            improve: { prompt: 'ก'.repeat(ocrConfig.MAX_PROMPT_LENGTH + 500) }
+        });
+
+        assert.strictEqual(
+            saved.improve.prompt.length,
+            ocrConfig.MAX_PROMPT_LENGTH
+        );
+    });
 });
 
 test('improveText ปฏิเสธเมื่อไม่มี key หรือข้อความว่าง', async function () {

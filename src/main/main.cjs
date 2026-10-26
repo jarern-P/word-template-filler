@@ -1850,6 +1850,8 @@ ipcMain.handle(
                     {
                         apiKey: saved.gemini?.apiKey || "",
                         model: saved.gemini?.model,
+                        // prompt ที่แก้ไว้ในหน้า ตั้งค่า OCR (ว่าง = ค่าเริ่มต้น)
+                        prompt: saved.improve?.prompt || "",
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {

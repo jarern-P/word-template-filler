@@ -13,6 +13,9 @@
 //                                    // always = ทุกหน้า
 //     "twoStage": false,             // ตัวเลือกย่อยของ PaddleOCR:
 //                                    // true = Two-Stage Localized OCR
+//     "improve": {
+//       "prompt": ""                 // prompt ของปุ่ม "ปรับปรุง" (ว่าง = ค่าเริ่มต้น)
+//     },
 //     "gemini": {
 //       "model": "gemini-2.5-flash",
 //       "apiKey": "enc:..."          // เข้ารหัสด้วย safeStorage (DPAPI) เมื่อทำได้
@@ -29,12 +32,17 @@
 const fs = require('fs');
 const path = require('path');
 
+const improve = require('./ocr-improve.cjs');
+
 const CONFIG_FILE = 'ocr-config.json';
 
 const PROVIDERS = ['paddle', 'paddleVL', 'gemini', 'iloveapi'];
 const MODES = ['auto', 'always'];
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
+
+// ความยาวสูงสุดของ prompt ที่แก้เองในหน้า ตั้งค่า OCR
+const MAX_PROMPT_LENGTH = 8000;
 
 // อนุญาตเฉพาะชื่อโมเดลที่ใช้ใน URL ได้ (กันการพิมพ์ผิด/แทรก path)
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
@@ -46,6 +54,9 @@ function defaultConfig() {
         enabled: true,
         mode: 'auto',
         twoStage: false,
+        improve: {
+            prompt: ''
+        },
         gemini: {
             apiKey: '',
             model: DEFAULT_MODEL
@@ -64,6 +75,23 @@ function sanitizeModel(value) {
     const model = String(value == null ? '' : value).trim();
 
     return MODEL_PATTERN.test(model) ? model : DEFAULT_MODEL;
+}
+
+// prompt ที่แก้เอง: เก็บเป็นข้อความหลายบรรทัดได้ (ว่าง = ใช้ค่าเริ่มต้น)
+function sanitizePrompt(value) {
+    const text = String(value == null ? '' : value)
+        .replace(/\r\n?/g, '\n')
+        // ตัดช่องว่างท้ายบรรทัด (มองไม่เห็น) แต่คงการย่อหน้าไว้ตามที่พิมพ์
+        .split('\n')
+        .map(function (line) {
+            return line.replace(/[ \t]+$/, '');
+        })
+        .join('\n')
+        .trim();
+
+    return text.length > MAX_PROMPT_LENGTH
+        ? text.slice(0, MAX_PROMPT_LENGTH).trim()
+        : text;
 }
 
 // ------------------------------------------------------------------
@@ -161,6 +189,9 @@ function normalizeRaw(input) {
     const iloveapi = source.iloveapi && typeof source.iloveapi === 'object'
         ? source.iloveapi
         : {};
+    const improveInput = source.improve && typeof source.improve === 'object'
+        ? source.improve
+        : {};
 
     // เวอร์ชัน 1 เก็บ enabled/mode ไว้ใต้ paddle — อ่านเป็นค่าเริ่มต้นให้
     const enabled = typeof source.enabled === 'boolean'
@@ -179,6 +210,9 @@ function normalizeRaw(input) {
         enabled: enabled,
         mode: mode,
         twoStage: source.twoStage === true,
+        improve: {
+            prompt: sanitizePrompt(improveInput.prompt)
+        },
         gemini: {
             apiKey: typeof gemini.apiKey === 'string' ? gemini.apiKey : '',
             model: sanitizeModel(gemini.model)
@@ -197,6 +231,11 @@ function toPublic(raw) {
         enabled: raw.enabled,
         mode: raw.mode,
         twoStage: raw.twoStage,
+        improve: {
+            prompt: raw.improve.prompt,
+            // prompt เริ่มต้นมาพร้อมกัน เพื่อให้หน้าจอแสดง/แก้ไขได้
+            defaultPrompt: improve.DEFAULT_PROMPT
+        },
         gemini: {
             apiKey: '',
             model: raw.gemini.model,
@@ -225,6 +264,9 @@ function readSecrets(dataPath) {
         enabled: raw.enabled,
         mode: raw.mode,
         twoStage: raw.twoStage,
+        improve: {
+            prompt: raw.improve.prompt
+        },
         gemini: {
             apiKey: decryptKey(raw.gemini.apiKey),
             model: raw.gemini.model
@@ -251,6 +293,9 @@ function save(dataPath, payload) {
     const iloveInput = input.iloveapi && typeof input.iloveapi === 'object'
         ? input.iloveapi
         : {};
+    const improveInput = input.improve && typeof input.improve === 'object'
+        ? input.improve
+        : {};
 
     const geminiKey = geminiInput.clearKey === true
         ? ''
@@ -274,6 +319,11 @@ function save(dataPath, payload) {
         twoStage: typeof input.twoStage === 'boolean'
             ? input.twoStage
             : current.twoStage,
+        improve: {
+            prompt: improveInput.prompt === undefined
+                ? current.improve.prompt
+                : sanitizePrompt(improveInput.prompt)
+        },
         gemini: {
             apiKey: geminiKey,
             model: sanitizeModel(
@@ -303,8 +353,10 @@ module.exports = {
     PROVIDERS,
     MODES,
     DEFAULT_MODEL,
+    MAX_PROMPT_LENGTH,
     read,
     readSecrets,
     save,
-    sanitizeModel
+    sanitizeModel,
+    sanitizePrompt
 };
