@@ -31,6 +31,28 @@ test('buildPrompt สั่งแก้คำผิดและจัดเป�
     assert.ok(prompt.includes('<<<') && prompt.includes('>>>'));
 });
 
+test('buildPrompt แนบ context raw text เมื่อมีข้อมูล', function () {
+    const prompt = improve.buildPrompt(
+        'เลขที่ 702057001',
+        '',
+        '--- ข้อมูลอ้างอิง ---\nเลขที่: 702057001'
+    );
+
+    assert.ok(prompt.includes('ข้อมูลอ้างอิงจากฐานข้อมูล'));
+    assert.ok(prompt.includes('--- ข้อมูลอ้างอิง ---'));
+    assert.ok(prompt.includes('เลขที่: 702057001'));
+});
+
+test('buildPrompt ไม่แนบ context เมื่อว่าง', function () {
+    const prompt = improve.buildPrompt(
+        'เลขที่ 702057001',
+        '',
+        '   '
+    );
+
+    assert.ok(!prompt.includes('ข้อมูลอ้างอิงจากฐานข้อมูล'));
+});
+
 test('cleanResult ตัด code fence บรรทัดว่าง และช่องว่างเกิน', function () {
     const cleaned = improve.cleanResult(
         '```text\n' +
@@ -123,6 +145,46 @@ test('improveText ส่งคำขอ Gemini ด้วย key/model ที่�
         );
         assert.strictEqual(result.model, 'gemini-2.5-flash');
         assert.strictEqual(result.chunks, 1);
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('improveText ส่ง context raw text ไปในคำขอ เมื่อมีข้อมูลอ้างอิง', async function () {
+    const originalFetch = global.fetch;
+    let body = null;
+
+    global.fetch = async function (url, init) {
+        body = JSON.parse(init.body);
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        { content: { parts: [{ text: 'จำนวนเงิน: 4,000.00' }] } }
+                    ]
+                };
+            }
+        };
+    };
+
+    try {
+        await improve.improveText(
+            'จำนวนเงิน 4,000.00 บาท',
+            {
+                apiKey: 'k',
+                contextRawText: '--- ข้อมูลอ้างอิง ---\nลูกค้า: บริษัททดสอบ'
+            }
+        );
+
+        const sent = body.contents[0].parts[0].text;
+
+        assert.ok(sent.includes('จำนวนเงิน 4,000.00 บาท'));
+        assert.ok(sent.includes('--- ข้อมูลอ้างอิง ---'));
+        assert.ok(sent.includes('ลูกค้า: บริษัททดสอบ'));
 
     } finally {
         global.fetch = originalFetch;

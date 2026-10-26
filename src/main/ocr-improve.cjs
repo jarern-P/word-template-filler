@@ -79,18 +79,24 @@ function friendlyError(status, message) {
 // คำสั่งเต็มที่ส่งให้โมเดล (แยกไว้เพื่อทดสอบได้โดยไม่ต้องเรียกเน็ต)
 // prompt ที่ผู้ใช้แก้ในหน้าตั้งค่าจะแทนที่ชุดเริ่มต้น ส่วนข้อความต้นฉบับ
 // ถูกต่อท้ายด้วยรูปแบบเดิมเสมอ เพื่อไม่ให้ตำแหน่งข้อความหายไป
-function buildPrompt(text, prompt) {
+function buildPrompt(text, prompt, contextRawText) {
     const instructions =
         String(prompt == null ? '' : prompt).trim() || DEFAULT_PROMPT;
 
-    return [
+    const parts = [
         instructions,
         '',
         'ข้อความต้นฉบับ:',
         '<<<',
         String(text == null ? '' : text),
         '>>>'
-    ].join('\n');
+    ];
+
+    if (contextRawText && contextRawText.trim()) {
+        parts.push('', 'ข้อมูลอ้างอิงจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ):', '<<<', contextRawText, '>>>');
+    }
+
+    return parts.join('\n');
 }
 
 // ตัด code fence, บรรทัดว่าง และช่องว่างเกิน ที่โมเดลอาจใส่มา
@@ -153,13 +159,13 @@ function splitChunks(text, limit) {
     return chunks;
 }
 
-async function requestChunk(text, apiKey, model, prompt) {
+async function requestChunk(text, apiKey, model, prompt, contextRawText) {
     const body = {
         contents: [
             {
                 role: 'user',
                 parts: [
-                    { text: buildPrompt(text, prompt) }
+                    { text: buildPrompt(text, prompt, contextRawText) }
                 ]
             }
         ],
@@ -259,6 +265,7 @@ async function improveText(text, options) {
     const opts = options || {};
     const apiKey = String(opts.apiKey || '').trim();
     const source = String(text == null ? '' : text);
+    const contextRawText = String(opts.contextRawText || '').trim();
 
     if (source.trim() === '') {
         throw new Error('ไม่มีข้อความให้ปรับปรุง');
@@ -283,7 +290,7 @@ async function improveText(text, options) {
         }
 
         results.push(
-            await requestChunk(chunks[index], apiKey, model, opts.prompt)
+            await requestChunk(chunks[index], apiKey, model, opts.prompt, opts.contextRawText)
         );
     }
 

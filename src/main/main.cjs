@@ -1825,6 +1825,9 @@ ipcMain.handle(
 // ปุ่ม "ปรับปรุง" ในกล่องใส่ข้อมูล: ส่งข้อความที่อ่านได้ให้ Gemini
 // เพื่อแก้คำที่ OCR อ่านผิด แล้วจัดใหม่เป็น "ชื่อฟิลด์: ค่า" ทีละบรรทัด
 // ใช้ API key + โมเดลเดียวกับที่บันทึกไว้ในหน้า ตั้งค่า OCR
+//
+// นอกจากนี้ยังดึงข้อมูลจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) มาเป็น raw text
+// ส่งไปพร้อมกับ prompt เพื่อให้ AI มีบริบทเพิ่มเติม
 
 ipcMain.handle(
     "ocr:improve",
@@ -1844,6 +1847,9 @@ ipcMain.handle(
             // key จริงอยู่ใน main process เท่านั้น
             const saved = ocrConfig.readSecrets(getDataPath());
 
+            // ดึง raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
+            const contextRawText = await buildContextRawText();
+
             const result =
                 await ocrImprove.improveText(
                     text,
@@ -1852,6 +1858,7 @@ ipcMain.handle(
                         model: saved.gemini?.model,
                         // prompt ที่แก้ไว้ในหน้า ตั้งค่า OCR (ว่าง = ค่าเริ่มต้น)
                         prompt: saved.improve?.prompt || "",
+                        contextRawText: contextRawText,
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -1888,6 +1895,72 @@ ipcMain.handle(
 
     }
 );
+
+
+// ============================================================
+// สร้าง raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
+// ============================================================
+//
+// ใช้ดึงข้อมูลทั้งหมดจากตาราง master และ words
+// แล้วรวมเป็น raw text เดียว เพื่อส่งให้ AI ใช้เป็นบริบท
+
+async function buildContextRawText() {
+    try {
+        await dbReady();
+
+        // ดึงข้อมูลหลัก (master)
+        const masterList = await dbRequest(
+            "master-list",
+            {}
+        );
+
+        // ดึงคลังคำ (words)
+        const wordList = await dbRequest(
+            "word-list",
+            {}
+        );
+
+        const parts = [];
+
+        // รวมข้อมูลหลัก
+        if (masterList && masterList.ok && Array.isArray(masterList.result)) {
+            const masters = masterList.result;
+            if (masters.length > 0) {
+                parts.push('--- ข้อมูลหลัก (Master Data) ---');
+                for (const m of masters) {
+                    const codeGroup = m.code_group || '';
+                    const subGroup = m.sub_group || '';
+                    const name = m.name || '';
+                    const created = m.created_at || '';
+                    const updated = m.updated_at || '';
+                    parts.push(`${codeGroup}${subGroup ? ' / ' + subGroup : ''} | ${name} | created: ${created} | updated: ${updated}`);
+                }
+                parts.push('');
+            }
+        }
+
+        // รวมคลังคำ
+        if (wordList && wordList.ok && Array.isArray(wordList.result)) {
+            const words = wordList.result;
+            if (words.length > 0) {
+                parts.push('--- คลังคำ (Word Dictionary) ---');
+                for (const w of words) {
+                    const word = w.word || '';
+                    const created = w.created_at || '';
+                    const updated = w.updated_at || '';
+                    parts.push(`${word} | created: ${created} | updated: ${updated}`);
+                }
+                parts.push('');
+            }
+        }
+
+        return parts.join('\n').trim();
+
+    } catch (error) {
+        console.error('Error building context raw text:', error);
+        return '';
+    }
+}
 
 
 // ============================================================

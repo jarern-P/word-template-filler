@@ -217,6 +217,9 @@ contextBridge.exposeInMainWorld(
 
         // payload = { text } — ใช้ API key + โมเดลของ Gemini ที่บันทึกไว้ในหน้า ตั้งค่า OCR
         // คืน { ok, text, model, chunks }
+        //
+        // นอกจากนี้ยังส่ง context raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
+        // ไปพร้อมกับ prompt อัตโนมัติ (ไม่ต้องทำอะไรที่ฝั่ง renderer)
         ocrImproveText: (payload) =>
             ipcRenderer.invoke("ocr:improve", payload),
 
