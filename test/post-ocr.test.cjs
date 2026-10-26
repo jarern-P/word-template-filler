@@ -59,6 +59,97 @@ test('chunkText ไม่คืนก้อนที่เป็นช่อง�
     assert.ok(joined.includes('อีกบรรทัด'));
 });
 
+test('buildUnits โหมด line: หนึ่งบรรทัด = หนึ่งหน่วย และคงบรรทัดว่างไว้', function () {
+    const built = postOcr.buildUnits(
+        'จา นวนเงนิ 4,000.00 บาท\n\n  ผตู้ รวจสอบ  ',
+        'line'
+    );
+
+    assert.strictEqual(built.unit, 'line');
+    assert.deepStrictEqual(built.units, [
+        'จา นวนเงนิ 4,000.00 บาท',
+        'ผตู้ รวจสอบ'
+    ]);
+
+    assert.strictEqual(
+        postOcr.assemble(built.parts, [
+            'จำนวนเงิน 4,000.00 บาท',
+            'ผู้ตรวจสอบ'
+        ]),
+        'จำนวนเงิน 4,000.00 บาท\n\n  ผู้ตรวจสอบ  '
+    );
+});
+
+test('buildUnits โหมด sentence: แยกประโยคในบรรทัดเดียวและต่อกลับได้เท่าเดิม', function () {
+    const text = 'ทดสอบหนึ่ง. ทดสอบสอง!';
+    const built = postOcr.buildUnits(text, 'sentence');
+
+    assert.strictEqual(built.unit, 'sentence');
+    assert.strictEqual(built.units.length, 2, 'ต้องแยกเป็น 2 ประโยค');
+    assert.strictEqual(postOcr.assemble(built.parts, built.units), text);
+});
+
+test('buildUnits โหมด chunk รวมบรรทัดสั้นเป็นก้อนเดียว และ normalizeUnit กันค่าที่ไม่รู้จัก', function () {
+    const built = postOcr.buildUnits('หนึ่ง\nสอง', 'chunk', 1200);
+
+    assert.strictEqual(built.units.length, 1);
+    assert.strictEqual(postOcr.normalizeUnit('bogus'), 'chunk');
+    assert.strictEqual(postOcr.DEFAULT_UNIT, 'chunk');
+});
+
+test('resolveUnit: AI API ส่งทั้งก้อนเสมอ ไม่สนใจค่าที่เลือก', function () {
+    assert.strictEqual(postOcr.resolveUnit('api', 'line'), 'chunk');
+    assert.strictEqual(postOcr.resolveUnit('api', 'sentence'), 'chunk');
+    assert.strictEqual(postOcr.resolveUnit('api', undefined), 'chunk');
+
+    assert.strictEqual(postOcr.resolveUnit('local', 'line'), 'line');
+    assert.strictEqual(postOcr.resolveUnit('local', 'sentence'), 'sentence');
+    assert.strictEqual(postOcr.resolveUnit('local', 'bogus'), 'chunk');
+});
+
+test('isAcceptableOutput กันคำตอบที่จำนวนบรรทัดไม่เท่าเดิม', function () {
+    assert.strictEqual(postOcr.isAcceptableOutput('a\nb', 'a\nb', 'chunk'), true);
+    assert.strictEqual(
+        postOcr.isAcceptableOutput('a\nb\nc', 'a\nb', 'chunk'),
+        false
+    );
+    assert.strictEqual(postOcr.isAcceptableOutput('a b', 'a\nb', 'line'), true);
+    assert.strictEqual(postOcr.isAcceptableOutput(null, 'a', 'line'), false);
+});
+
+test('ชุดตัวอย่าง built-in แก้เฉพาะคำ ไม่เปลี่ยนจำนวนบรรทัด', function () {
+    const examples = postOcr.loadExamples();
+
+    assert.ok(examples.length > 0);
+
+    examples.forEach(function (example) {
+        assert.strictEqual(
+            postOcr.nonEmptyLineCount(example.output),
+            postOcr.nonEmptyLineCount(example.input),
+            'ตัวอย่าง "' + example.input + '" ต้องมีจำนวนบรรทัดเท่าเดิม'
+        );
+    });
+});
+
+test('cleanUnitOutput ต่อบรรทัดที่โมเดลเผลอแบ่งกลับเป็นบรรทัดเดียว', function () {
+    const raw = 'จำนวนเงิน 4,000.00 บาท\nวันที่ 25/10/2569';
+    const original = 'จา นวนเงนิ 4,000.00 บาท วันที่ 25/10/2569';
+
+    assert.strictEqual(
+        postOcr.cleanUnitOutput(raw, original, 'line'),
+        'จำนวนเงิน 4,000.00 บาท วันที่ 25/10/2569'
+    );
+
+    assert.strictEqual(postOcr.cleanUnitOutput(raw, raw, 'chunk'), raw);
+    assert.strictEqual(postOcr.cleanUnitOutput('   ', original, 'line'), null);
+});
+
+test('SYSTEM_PROMPT สั่งแก้คำผิดอย่างเดียว ไม่ให้แบ่งประโยค', function () {
+    assert.ok(postOcr.SYSTEM_PROMPT.includes('ห้ามแบ่งประโยค'));
+    assert.ok(postOcr.SYSTEM_PROMPT.includes('คงจำนวนบรรทัด'));
+    assert.ok(!/ให้แต่ละประโยคขึ้นบรรทัดใหม่/.test(postOcr.SYSTEM_PROMPT));
+});
+
 test('charNgramVector เป็นเวกเตอร์หนึ่งหน่วย และข้อความเดียวกันได้ cosine = 1', function () {
     const vector = postOcr.charNgramVector('แบบขออนุมัติเบิกเงิน');
 
@@ -281,9 +372,10 @@ test('engine api ลองใหม่แบบ strict เมื่อคำต�
     const originalFetch = global.fetch;
     const bodies = [];
 
+    // รอบแรกทำตัวเลขหาย → รอบสอง (strict) ต้องได้บรรทัดเดิมครบทุกตัวเลข
     const replies = [
         'แบบขออนุมัติเบิกเงิน',
-        'แบบขออนุมัติเบิกเงิน\nจำนวน 4,000.00 บาท\nวันที่ 25/10/2569'
+        'แบบขออนุมัติเบิกเงิน จำนวน 4,000.00 บาท วันที่ 25/10/2569'
     ];
 
     global.fetch = async function (url, init) {
@@ -305,7 +397,7 @@ test('engine api ลองใหม่แบบ strict เมื่อคำต�
     try {
         const result = await postOcr.processText(
             'แบบขออนุมัติเบิกเงน จำนวน 4,000.00 บาท วันที่ 25/10/2569',
-            { engine: 'api', apiKey: 'test-key' }
+            { engine: 'api', apiKey: 'test-key', unit: 'chunk' }
         );
 
         assert.strictEqual(bodies.length, 2, 'ต้องเรียกซ้ำหนึ่งครั้ง');
@@ -318,7 +410,7 @@ test('engine api ลองใหม่แบบ strict เมื่อคำต�
 
         assert.strictEqual(
             result.text,
-            'แบบขออนุมัติเบิกเงิน\nจำนวน 4,000.00 บาท\nวันที่ 25/10/2569'
+            'แบบขออนุมัติเบิกเงิน จำนวน 4,000.00 บาท วันที่ 25/10/2569'
         );
         assert.deepStrictEqual(result.warnings, []);
 
@@ -455,6 +547,7 @@ test('processText ด้วย engine api ส่งคำขอและใช�
                 engine: 'api',
                 apiKey: 'test-key',
                 model: 'gemini-2.5-flash',
+                unit: 'chunk',
                 chunkChars: 500
             }
         );
@@ -481,6 +574,144 @@ test('processText ด้วย engine api ส่งคำขอและใช�
 
     } finally {
         global.fetch = originalFetch;
+    }
+});
+
+test('runChunks โหมด line ส่งทีละบรรทัดและรักษาโครงสร้างเดิม', async function () {
+    const calls = [];
+
+    const result = await postOcr.runChunks(
+        'จา นวนเงนิ 4,000.00 บาท\n\nผตู้ รวจสอบ',
+        {
+            unit: 'line',
+            call: function (chunk) {
+                calls.push(chunk);
+
+                return Promise.resolve(
+                    chunk.replace('จา นวนเงนิ', 'จำนวนเงิน')
+                );
+            }
+        }
+    );
+
+    assert.deepStrictEqual(calls, [
+        'จา นวนเงนิ 4,000.00 บาท',
+        'ผตู้ รวจสอบ'
+    ]);
+
+    assert.strictEqual(result.unit, 'line');
+    assert.strictEqual(result.chunks, 2);
+    assert.strictEqual(
+        result.text,
+        'จำนวนเงิน 4,000.00 บาท\n\nผตู้ รวจสอบ'
+    );
+    assert.deepStrictEqual(result.warnings, []);
+});
+
+test('runChunks ไม่รับคำตอบที่ยุบ/แยกบรรทัดและใช้ข้อความเดิม', async function () {
+    let calls = 0;
+
+    await assert.rejects(
+        function () {
+            return postOcr.runChunks('บรรทัดหนึ่ง\nบรรทัดสอง', {
+                unit: 'chunk',
+                call: function () {
+                    calls += 1;
+
+                    return Promise.resolve(
+                        'บรรทัดหนึ่ง\nบรรทัดสอง\nบรรทัดสาม'
+                    );
+                }
+            });
+        },
+        /ใช้ข้อความเดิม/
+    );
+
+    assert.strictEqual(calls, 2, 'ต้องลองใหม่หนึ่งครั้งก่อนยอมแพ้');
+});
+
+test('processText ด้วย api ส่งทั้งก้อนแม้ตั้งให้แก้ทีละบรรทัด', async function () {
+    const originalFetch = global.fetch;
+    const bodies = [];
+
+    global.fetch = async function (url, init) {
+        const body = JSON.parse(init.body);
+
+        bodies.push(body);
+
+        const request = body.contents[body.contents.length - 1].parts[0].text;
+        const text = request.split('\n').slice(1).join('\n');
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        {
+                            content: {
+                                parts: [
+                                    {
+                                        text: text.replace(
+                                            'จา นวนเงนิ',
+                                            'จำนวนเงิน'
+                                        )
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                };
+            }
+        };
+    };
+
+    try {
+        const result = await postOcr.processText(
+            'จา นวนเงนิ 4,000.00 บาท\nผตู้ รวจสอบ\nวันที่ 25/10/2569',
+            { engine: 'api', apiKey: 'test-key', unit: 'line' }
+        );
+
+        assert.strictEqual(bodies.length, 1, 'ต้องส่งทั้งก้อนในคำขอเดียว');
+        assert.strictEqual(result.unit, 'chunk');
+        assert.strictEqual(result.chunks, 1);
+        assert.strictEqual(
+            result.text,
+            'จำนวนเงิน 4,000.00 บาท\nผตู้ รวจสอบ\nวันที่ 25/10/2569'
+        );
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('ocr-config เก็บและตรวจค่า postOcr.unit', function () {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const ocrConfig = require('../src/main/ocr-config.cjs');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'post-ocr-unit-'));
+
+    try {
+        assert.strictEqual(ocrConfig.read(dir).postOcr.unit, 'chunk');
+
+        ocrConfig.save(dir, { postOcr: { unit: 'sentence' } });
+        assert.strictEqual(ocrConfig.read(dir).postOcr.unit, 'sentence');
+        assert.strictEqual(
+            ocrConfig.readSecrets(dir).postOcr.unit,
+            'sentence'
+        );
+
+        // ค่าที่ไม่รู้จักต้องไม่เขียนทับค่าเดิม
+        ocrConfig.save(dir, { postOcr: { unit: 'unknown' } });
+        assert.strictEqual(ocrConfig.read(dir).postOcr.unit, 'sentence');
+
+        ocrConfig.save(dir, { postOcr: { unit: 'chunk' } });
+        assert.strictEqual(ocrConfig.read(dir).postOcr.unit, 'chunk');
+
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
     }
 });
 

@@ -55,38 +55,21 @@
         '            </div>',
         '            <input type="file" id="dataDocxInput" accept=".docx" hidden>',
         '            <input type="file" id="dataPdfInput" accept=".pdf" hidden>',
-        '            <div class="data-source-options">',
-        '                <label class="data-join-toggle" title="ใช้เมื่ออ่านไฟล์ PDF — ' +
-            'ระบบจะเย็บบรรทัดที่ถูกตัดกลางประโยคกลับเป็นบรรทัดเดียว ' +
-            'โดยดูจากตำแหน่งบรรทัดและคำเชื่อม/คำลงท้ายไทย">',
-        '                    <input type="checkbox" id="dataJoinLines">',
-        '                    <span>รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่</span>',
-        '                </label>',
-        '            </div>',
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
         '            <div class="data-tools">',
-        '                <button id="dataPostOcrBtn" type="button" title="รวมบรรทัดที่ถูกตัด → วิเคราะห์ Layout → จัดลำดับการอ่าน → ตรวจแก้คำผิด → แบ่งประโยค">ปรับข้อความหลัง OCR</button>',
+        '                <button id="dataPostOcrBtn" type="button" title="แก้เฉพาะคำที่ OCR อ่านผิด — ไม่จัด Layout ไม่สลับลำดับ ไม่แบ่งประโยค (เลือก Local AI / AI API ที่ ตั้งค่า OCR)">แก้คำผิด</button>',
         '                <button id="dataPostOcrUndoBtn" type="button" class="plain" hidden>ย้อนกลับ</button>',
         '            </div>',
         '            <p class="hint data-tools-hint">',
-        '                ปุ่มเดียวรวมทุกขั้น: รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ → วิเคราะห์ Layout → ',
-        '                จัดลำดับการอ่าน → ตรวจแก้คำผิด → แบ่งประโยค',
+        '                แก้เฉพาะคำที่ OCR อ่านผิด — ไม่แตะ Layout ไม่สลับลำดับ ไม่แบ่งประโยค ',
+        '                บรรทัดเดิมจึงคงอยู่',
+        '                <br>Local AI ส่งตามขนาดหน่วยที่ตั้งไว้ · AI API ส่งทั้งก้อนเสมอ ',
+        '                พร้อมคู่ตัวอย่างจากคลัง ฝึก OCR',
         '                <br>วิธีประมวลผลเลือกได้ที่ ตั้งค่า OCR › หลัง OCR: ',
         '                <span id="dataPostOcrEngine" class="data-engine-badge">ไลบรารีในเครื่อง</span>',
         '            </p>',
-        '            <div id="dataSpellPanel" class="data-tool-panel" hidden>',
-        '                <div class="data-tool-head">',
-        '                    <strong>คำที่น่าสงสัย</strong>',
-        '                    <span id="dataSpellMeta" class="hint"></span>',
-        '                    <div class="data-tool-actions">',
-        '                        <button id="dataSpellApplyAll" type="button" class="plain">ใช้คำแนะนำทั้งหมด</button>',
-        '                        <button id="dataSpellClose" type="button" class="plain">ปิด</button>',
-        '                    </div>',
-        '                </div>',
-        '                <div id="dataSpellList" class="data-tool-list"></div>',
-        '            </div>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -102,28 +85,9 @@
         '</div>'
     ].join('\n');
 
-    // สวิตช์ "รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่" — ค่าติดตั้งของเครื่องนี้
-    const JOIN_LINES_KEY = 'wordTemplateFiller:joinLines';
-
-    function loadJoinLinesSetting() {
-        try {
-            const raw = window.localStorage.getItem(JOIN_LINES_KEY);
-
-            return raw === null ? true : raw !== '0';
-        } catch (error) {
-            return true;
-        }
-    }
-
-    function saveJoinLinesSetting(enabled) {
-        try {
-            window.localStorage.setItem(JOIN_LINES_KEY, enabled ? '1' : '0');
-        } catch (error) {
-            // เก็บไม่ได้ก็ยังใช้ค่าที่เลือกกับไฟล์รอบนี้ได้
-        }
-    }
-
-    let joinLinesEnabled = loadJoinLinesSetting();
+    // รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่เมื่ออ่าน PDF — ทำทุกครั้ง
+    // (เดิมมีสวิตช์ให้เลือกในกล่องนี้)
+    const JOIN_LINES = true;
 
     let overlay = null;
     let settings = null;   // ค่าที่ส่งมาตอน open
@@ -134,17 +98,6 @@
 
     // ตัวจับเวลาเก็บข้อความที่วาง/พิมพ์เอง (กันเก็บทุกครั้งที่มีการพิมพ์)
     let pasteCaptureTimer = null;
-
-    // ไฟล์ PDF ล่าสุด (ใช้กับ Layout / Reading Order)
-    let lastPdfFile = null;
-
-    // ผลวิเคราะห์ layout ที่แคชไว้ — ใช้ซ้ำเมื่อไฟล์เดิมและไม่ต้องรันโมเดลซ้ำ
-    let layoutCache = null;
-
-    let layoutBusy = false;
-
-    // รายการคำที่รอแก้ (ใช้กับ "ใช้คำแนะนำทั้งหมด")
-    let spellQueue = [];
 
     function el(id) {
         return document.getElementById(id);
@@ -203,7 +156,7 @@
             el('dataPdfInput').click();
         });
 
-        // ── ปุ่มเดียว: ปรับข้อความหลัง OCR ──
+        // ── ปุ่มเดียว: แก้คำผิด ──
         el('dataPostOcrBtn').addEventListener('click', function () {
             runPostOcr();
         });
@@ -212,38 +165,12 @@
 
         refreshPostOcrEngine();
 
-        el('dataSpellApplyAll').addEventListener('click', applyAllSpellSuggestions);
-
-        el('dataSpellClose').addEventListener('click', function () {
-            el('dataSpellPanel').hidden = true;
-            el('dataSpellList').innerHTML = '';
-            spellQueue = [];
-        });
-
         el('dataSourceText').addEventListener('input', updateToolsState);
 
         // ข้อความที่วาง/พิมพ์เอง (ไม่ใช่ไฟล์) เก็บลงคลังฝึก OCR ด้วย — ดู capturePastedLines
         el('dataSourceText').addEventListener('input', schedulePasteCapture);
 
-        // ความคืบหน้าระหว่างวิเคราะห์ Layout / ดาวน์โหลดโมเดล
-        if (window.electronAPI && window.electronAPI.onPdfLayoutProgress) {
-            window.electronAPI.onPdfLayoutProgress(function (progress) {
-                if (!layoutBusy || !progress) return;
-
-                let text = progress.label || 'กำลังวิเคราะห์โครงสร้างเอกสาร...';
-
-                if (
-                    progress.stage === 'download' &&
-                    Number(progress.total) > 0
-                ) {
-                    text += ' ' + progress.percent + '%';
-                }
-
-                setSourceStatus(text);
-            });
-        }
-
-        // ความคืบหน้าระหว่างปรับข้อความหลัง OCR (Local AI / AI API)
+        // ความคืบหน้าระหว่างแก้คำผิด (Local AI / AI API)
         if (window.electronAPI && window.electronAPI.onPostOcrProgress) {
             window.electronAPI.onPostOcrProgress(function (progress) {
                 if (!postOcrBusy || !progress) return;
@@ -258,8 +185,8 @@
 
                 if (progress.stage === 'chunk') {
                     setSourceStatus(
-                        'กำลังปรับข้อความด้วย AI ก้อนที่ ' +
-                        progress.index + '/' + progress.total + '...'
+                        'กำลังแก้คำผิดด้วย AI ' + unitLabel(progress.unit) +
+                        'ที่ ' + progress.index + '/' + progress.total + '...'
                     );
                 }
             });
@@ -309,15 +236,6 @@
 
         el('dataPdfInput').addEventListener('change', function (event) {
             readFile(event.target);
-        });
-
-        // สวิตช์เย็บบรรทัดที่ถูกตัด (ใช้กับ PDF ที่จะอ่านครั้งถัดไป)
-        const joinToggle = el('dataJoinLines');
-
-        joinToggle.checked = joinLinesEnabled;
-        joinToggle.addEventListener('change', function () {
-            joinLinesEnabled = joinToggle.checked;
-            saveJoinLinesSetting(joinLinesEnabled);
         });
 
     }
@@ -495,7 +413,7 @@
 
         try {
             const result = await scope.DataExtract.extractFile(file, {
-                joinLines: joinLinesEnabled
+                joinLines: JOIN_LINES
             });
 
             // extractFile คืน { text, joined }
@@ -509,11 +427,6 @@
 
             textarea.value = text;
 
-            // เก็บไฟล์ PDF ไว้ให้ปุ่ม Layout / Reading Order ใช้ต่อ
-            lastPdfFile = /\.pdf$/i.test(file.name) ? file : null;
-            layoutCache = null;
-
-            hideToolPanels();
             updateToolsState();
 
             const ocrPages =
@@ -555,10 +468,6 @@
         } catch (error) {
             console.error(error);
 
-            lastPdfFile = null;
-            layoutCache = null;
-
-            hideToolPanels();
             updateToolsState();
 
             setSourceStatus(
@@ -624,264 +533,32 @@
     }
 
     // ──────────────────────────────────────────────────────────────
-    // เครื่องมือหลัง OCR: ตรวจคำผิด / วิเคราะห์ Layout / จัดลำดับการอ่าน
+    // เครื่องมือหลัง OCR: แก้คำผิดอย่างเดียว
     // ──────────────────────────────────────────────────────────────
-
-    function hideToolPanels() {
-        el('dataSpellPanel').hidden = true;
-        el('dataSpellList').innerHTML = '';
-
-        spellQueue = [];
-    }
 
     // เปิด/ปิดปุ่มตามข้อมูลที่มีอยู่ — และปิดระหว่างทำงาน
     function updateToolsState() {
         const textarea = el('dataSourceText');
         const hasText = Boolean(textarea && textarea.value.trim() !== '');
 
-        el('dataPostOcrBtn').disabled = (!hasText && !lastPdfFile) || layoutBusy;
+        el('dataPostOcrBtn').disabled = !hasText || postOcrBusy;
     }
-
-    // ── ตรวจคำผิด (พจนานุกรมในเครื่อง + คำที่เพิ่มเอง) ──
-
-    function updateSpellMeta() {
-        const remaining = el('dataSpellList')
-            .querySelectorAll('.data-spell-row').length;
-
-        el('dataSpellMeta').textContent = remaining === 0
-            ? 'ไม่มีคำค้างให้แก้'
-            : 'เหลือ ' + remaining + ' คำ — คลิกคำแนะนำเพื่อแทนที่ทั้งข้อความ';
-    }
-
-    function applySpellCorrection(word, replacement, row) {
-        const textarea = el('dataSourceText');
-
-        textarea.value = scope.OcrTextTools.replaceWord(
-            textarea.value,
-            word,
-            replacement
-        );
-
-        if (row) row.remove();
-
-        hideResults();
-        updateSpellMeta();
-        updateToolsState();
-
-        setSourceStatus('แก้คำแล้ว: ' + word + ' → ' + replacement);
-    }
-
-    function addSpellRow(issue) {
-        const row = document.createElement('div');
-        row.className = 'data-spell-row';
-
-        const head = document.createElement('div');
-        head.className = 'data-spell-head';
-
-        const word = document.createElement('code');
-        word.className = 'data-spell-word';
-        word.textContent = issue.word;
-
-        const count = document.createElement('span');
-        count.className = 'hint';
-        count.textContent = issue.count > 1 ? 'พบ ' + issue.count + ' ครั้ง' : '';
-
-        const context = document.createElement('span');
-        context.className = 'data-spell-context';
-        context.textContent = issue.context;
-        context.title = issue.context;
-
-        head.appendChild(word);
-        head.appendChild(count);
-        head.appendChild(context);
-
-        const actions = document.createElement('div');
-        actions.className = 'data-spell-actions';
-
-        if (issue.suggestions.length === 0) {
-            const none = document.createElement('span');
-            none.className = 'hint';
-            none.textContent = 'ไม่พบคำแนะนำ — ';
-            actions.appendChild(none);
-        }
-
-        issue.suggestions.forEach(function (suggestion) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'plain data-spell-suggest';
-            button.textContent = suggestion;
-            button.title = 'แทนที่ "' + issue.word + '" ด้วย "' + suggestion + '"';
-            button.addEventListener('click', function () {
-                applySpellCorrection(issue.word, suggestion, row);
-            });
-
-            actions.appendChild(button);
-        });
-
-        const manual = document.createElement('button');
-        manual.type = 'button';
-        manual.className = 'plain';
-        manual.textContent = 'แก้เอง';
-        manual.addEventListener('click', async function () {
-            const value = await scope.AppDialog.prompt(
-                'แก้คำ "' + issue.word + '" เป็น:',
-                issue.word
-            );
-
-            if (value === null) return;
-
-            const replacement = String(value).trim();
-
-            if (replacement === '' || replacement === issue.word) return;
-
-            applySpellCorrection(issue.word, replacement, row);
-        });
-
-        const skip = document.createElement('button');
-        skip.type = 'button';
-        skip.className = 'plain';
-        skip.textContent = 'ข้าม';
-        skip.addEventListener('click', function () {
-            row.remove();
-            updateSpellMeta();
-        });
-
-        actions.appendChild(manual);
-        actions.appendChild(skip);
-
-        row.appendChild(head);
-        row.appendChild(actions);
-
-        el('dataSpellList').appendChild(row);
-
-        if (issue.suggestions.length > 0) {
-            spellQueue.push({
-                word: issue.word,
-                replacement: issue.suggestions[0],
-                row: row
-            });
-        }
-    }
-
-    function runSpellCheck() {
-        const textarea = el('dataSourceText');
-        const text = textarea.value;
-
-        el('dataSpellList').innerHTML = '';
-        spellQueue = [];
-
-        if (!scope.OcrTextTools) {
-            setSourceStatus('ไม่พบตัวตรวจคำ — โหลดหน้าใหม่แล้วลองอีกครั้ง', 'error');
-            return;
-        }
-
-        const result = scope.OcrTextTools.check(text);
-
-        if (result.unavailable) {
-            setSourceStatus(
-                'พจนานุกรมยังโหลดไม่เสร็จ — รอสักครู่แล้วลองอีกครั้ง',
-                'error'
-            );
-            return;
-        }
-
-        el('dataSpellPanel').hidden = false;
-
-        if (result.issues.length === 0) {
-            el('dataSpellMeta').textContent =
-                'ตรวจ ' + result.checked + ' คำ — ไม่พบคำที่น่าสงสัย';
-
-            const empty = document.createElement('p');
-            empty.className = 'hint';
-            empty.textContent = 'ทุกคำที่ตรวจพบอยู่ในพจนานุกรมหรือคำที่เพิ่มเอง';
-            el('dataSpellList').appendChild(empty);
-
-            setSourceStatus('ตรวจคำผิดแล้ว — ไม่พบคำที่น่าสงสัย');
-            return;
-        }
-
-        result.issues.forEach(addSpellRow);
-
-        updateSpellMeta();
-
-        setSourceStatus(
-            'ตรวจ ' + result.checked + ' คำ — พบ ' +
-            result.issues.length + ' คำที่น่าสงสัย'
-        );
-    }
-
-    function applyAllSpellSuggestions() {
-        const textarea = el('dataSourceText');
-        let applied = 0;
-
-        spellQueue.forEach(function (item) {
-            if (!item.row.isConnected) return;
-
-            textarea.value = scope.OcrTextTools.replaceWord(
-                textarea.value,
-                item.word,
-                item.replacement
-            );
-
-            item.row.remove();
-            applied += 1;
-        });
-
-        spellQueue = [];
-
-        hideResults();
-        updateSpellMeta();
-        updateToolsState();
-
-        setSourceStatus(
-            applied > 0
-                ? 'ใช้คำแนะนำ ' + applied + ' คำแล้ว'
-                : 'ไม่มีคำแนะนำให้ใช้ — เลือกคำเองหรือข้าม'
-        );
-    }
-
-    // ── Layout / Reading order ──
-
-    async function ensureLayoutResult(joinLines) {
-        const join = joinLines === true;
-
-        if (
-            layoutCache &&
-            layoutCache.file === lastPdfFile &&
-            layoutCache.joinLines === join
-        ) {
-            return layoutCache.result;
-        }
-
-        const buffer = await lastPdfFile.arrayBuffer();
-
-        const result = await window.electronAPI.analyzePdfLayout({
-            data: new Uint8Array(buffer),
-            joinLines: join
-        });
-
-        if (!result || result.ok === false) {
-            throw new Error(
-                (result && result.error) || 'วิเคราะห์โครงสร้างเอกสารไม่สำเร็จ'
-            );
-        }
-
-        layoutCache = {
-            file: lastPdfFile,
-            joinLines: join,
-            result: result
-        };
-
-        return result;
-    }
-
-    // ── ปุ่มเดียว: ปรับข้อความหลัง OCR ──
 
     const POST_OCR_ENGINE_LABELS = {
-        library: 'ไลบรารีในเครื่อง',
+        library: 'ไม่แก้คำ (ไลบรารี)',
         local: 'Local AI (Qwen2.5-3B)',
         api: 'AI API (Gemini)'
     };
+
+    const POST_OCR_UNIT_LABELS = {
+        line: 'บรรทัด',
+        sentence: 'ประโยค',
+        chunk: 'ก้อน'
+    };
+
+    function unitLabel(unit) {
+        return POST_OCR_UNIT_LABELS[unit] || POST_OCR_UNIT_LABELS.line;
+    }
 
     let postOcrBusy = false;
     let postOcrUndo = null;
@@ -890,9 +567,10 @@
         return POST_OCR_ENGINE_LABELS[engine] || POST_OCR_ENGINE_LABELS.library;
     }
 
-    // อ่าน engine ที่เลือกไว้ในหน้า ตั้งค่า OCR มาแสดงบนปุ่ม
+    // อ่าน engine + ขนาดหน่วยที่เลือกไว้ในหน้า ตั้งค่า OCR มาแสดงบนปุ่ม
     async function refreshPostOcrEngine() {
         let engine = 'library';
+        let unit = 'line';
 
         try {
             const response =
@@ -903,8 +581,10 @@
             const config = response && response.config
                 ? response.config
                 : response;
+            const postOcr = (config && config.postOcr) || {};
 
-            engine = (config && config.postOcr && config.postOcr.engine) || 'library';
+            engine = postOcr.engine || 'library';
+            unit = postOcr.unit || 'line';
 
         } catch (error) {
             engine = 'library';
@@ -913,8 +593,14 @@
         const badge = el('dataPostOcrEngine');
 
         if (badge) {
-            badge.textContent = engineLabel(engine) + ' › ตั้งค่า OCR';
-            badge.title = 'เลือกวิธีประมวลผลได้ที่หน้า ตั้งค่า OCR';
+            // AI API ส่งทั้งก้อนเสมอ (ดู main process)
+            const effectiveUnit = engine === 'api' ? 'chunk' : unit;
+
+            badge.textContent = engine === 'api'
+                ? engineLabel(engine) + ' · ส่งทั้งก้อน'
+                : engineLabel(engine) + ' · แก้ทีละ' + unitLabel(effectiveUnit);
+            badge.title =
+                'เลือกวิธีประมวลผลและขนาดหน่วยได้ที่หน้า ตั้งค่า OCR';
         }
 
         return engine;
@@ -928,152 +614,96 @@
 
         el('dataPostOcrUndoBtn').hidden = true;
 
-        hideToolPanels();
         hideResults();
         updateToolsState();
 
-        setSourceStatus('ย้อนกลับข้อความก่อนปรับแล้ว');
+        setSourceStatus('ย้อนกลับข้อความก่อนแก้คำแล้ว');
     }
 
+    // แก้คำผิดอย่างเดียว — ไม่จัด Layout ไม่สลับลำดับ ไม่แบ่งประโยค
+    // แต่ละหน่วย (บรรทัด/ประโยค/ก้อน) ได้คู่ตัวอย่างจากคลัง ฝึก OCR เป็น few-shot
     async function runPostOcr() {
         if (postOcrBusy) return;
 
         const textarea = el('dataSourceText');
         const original = textarea.value;
-        const hasPdf = Boolean(lastPdfFile);
 
-        if (!hasPdf && original.trim() === '') {
+        if (original.trim() === '') {
             await scope.AppDialog.alert(
-                'วางข้อความหรืออัปโหลดไฟล์ PDF ก่อนใช้ปุ่มนี้'
-            );
-            return;
-        }
-
-        if (hasPdf && (!window.electronAPI || !window.electronAPI.analyzePdfLayout)) {
-            await scope.AppDialog.alert(
-                'เปิดหน้านี้ในแอป (Electron) เพื่อวิเคราะห์ Layout และจัดลำดับการอ่าน'
+                'วางข้อความหรืออัปโหลดไฟล์ .pdf / .docx ก่อนใช้ปุ่มนี้'
             );
             return;
         }
 
         const engine = await refreshPostOcrEngine();
-        const isAi = engine === 'local' || engine === 'api';
 
-        if (isAi && (!window.electronAPI || !window.electronAPI.postOcrProcess)) {
+        if (engine !== 'local' && engine !== 'api') {
             await scope.AppDialog.alert(
-                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ AI ปรับข้อความ'
+                'ยังไม่ได้เลือก AI สำหรับแก้คำ\n\n' +
+                'ไปที่ ตั้งค่า OCR › หลัง OCR แล้วเลือก Local AI (Qwen) ' +
+                'หรือ AI API (Gemini) ก่อน'
+            );
+            return;
+        }
+
+        if (!window.electronAPI || !window.electronAPI.postOcrProcess) {
+            await scope.AppDialog.alert(
+                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ AI แก้คำ'
             );
             return;
         }
 
         postOcrBusy = true;
-        layoutBusy = true;
         updateToolsState();
 
-        hideToolPanels();
         hideResults();
 
-        if (original.trim() !== '') {
-            postOcrUndo = original;
-            el('dataPostOcrUndoBtn').hidden = false;
-        }
+        postOcrUndo = original;
+        el('dataPostOcrUndoBtn').hidden = false;
 
         try {
-            let text = original;
-            let pageNote = '';
+            setSourceStatus(
+                'กำลังแก้คำผิดด้วย ' + engineLabel(engine) + '...'
+            );
 
-            // 1) วิเคราะห์ Layout + จัดลำดับการอ่าน + รวมบรรทัดที่ถูกตัด
-            if (hasPdf) {
-                setSourceStatus('กำลังวิเคราะห์ Layout และจัดลำดับการอ่าน...');
+            const response = await window.electronAPI.postOcrProcess({
+                text: original,
+                engine: engine
+            });
 
-                const result = await ensureLayoutResult(joinLinesEnabled);
-                const layoutText = String(result.text || '');
-
-                if (layoutText.trim() !== '') {
-                    text = layoutText;
-                    pageNote = ' · ' + result.pageCount + ' หน้า';
-                } else if (text.trim() === '') {
-                    throw new Error(
-                        'ไม่พบข้อความในเอกสาร — ลอง OCR หรืออัปโหลดไฟล์อื่น'
-                    );
-                }
-
-                textarea.value = text;
-                updateToolsState();
-            }
-
-            // 2) ตรวจแก้คำ + แบ่งประโยค
-            let stepNote = '';
-            let warnings = [];
-
-            if (isAi) {
-                setSourceStatus(
-                    'กำลังปรับข้อความด้วย ' + engineLabel(engine) + '...'
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'แก้คำผิดไม่สำเร็จ'
                 );
-
-                const response = await window.electronAPI.postOcrProcess({
-                    text: text,
-                    engine: engine
-                });
-
-                if (!response || response.ok === false) {
-                    throw new Error(
-                        (response && response.error) ||
-                        'ปรับข้อความหลัง OCR ไม่สำเร็จ'
-                    );
-                }
-
-                text = String(response.text || text);
-                warnings = Array.isArray(response.warnings)
-                    ? response.warnings
-                    : [];
-
-                stepNote = ' · ' + response.chunks + ' ก้อน · ' +
-                    response.sentences + ' ประโยค';
-
-            } else {
-                // ไลบรารีในเครื่อง: พจนานุกรมบอกได้แค่ว่า "น่าสงสัย" —
-                // ให้ผู้ใช้เลือกคำแนะนำเองด้านล่าง (ไม่แก้ให้อัตโนมัติ)
-                stepNote = ' · ตรวจคำด้วยพจนานุกรม';
             }
+
+            const text = String(response.text || original);
+            const warnings = Array.isArray(response.warnings)
+                ? response.warnings
+                : [];
 
             textarea.value = text;
             updateToolsState();
 
-            // 3) คำที่ยังน่าสงสัย — ให้ผู้ใช้ตรวจเอง (ไม่แก้ให้อัตโนมัติ)
-            if (scope.OcrTextTools) {
-                const check = scope.OcrTextTools.check(text);
-
-                if (!check.unavailable && check.issues.length > 0) {
-                    el('dataSpellPanel').hidden = false;
-                    el('dataSpellList').innerHTML = '';
-                    spellQueue = [];
-
-                    check.issues.forEach(addSpellRow);
-                    updateSpellMeta();
-                }
-            }
-
             hideResults();
 
             setSourceStatus(
-                'ปรับข้อความแล้ว (' + engineLabel(engine) + ')' +
-                pageNote + stepNote +
+                'แก้คำผิดแล้ว (' + engineLabel(engine) + ')' +
+                ' · ส่ง ' + response.chunks + ' ' + unitLabel(response.unit) +
                 (warnings.length > 0
-                    ? ' — ' + warnings.length + ' ก้อนใช้ข้อความเดิม'
+                    ? ' — ' + warnings.length + ' หน่วยใช้ข้อความเดิม'
                     : '') +
                 ' · ' + text.length + ' ตัวอักษร'
             );
 
         } catch (error) {
             setSourceStatus(
-                (error && error.message) || 'ปรับข้อความหลัง OCR ไม่สำเร็จ',
+                (error && error.message) || 'แก้คำผิดไม่สำเร็จ',
                 'error'
             );
 
         } finally {
             postOcrBusy = false;
-            layoutBusy = false;
             updateToolsState();
         }
     }
@@ -1472,15 +1102,11 @@
         setSourceStatus('');
         hideResults();
 
-        // เริ่มกล่องใหม่ — ต้องอัปโหลด PDF ใหม่ก่อนใช้ Layout
-        lastPdfFile = null;
-        layoutCache = null;
-        layoutBusy = false;
+        // เริ่มกล่องใหม่ — ข้อความชุดใหม่ยังไม่มีอะไรให้ย้อนกลับ
         postOcrUndo = null;
 
         el('dataPostOcrUndoBtn').hidden = true;
 
-        hideToolPanels();
         updateToolsState();
         refreshPostOcrEngine();
 

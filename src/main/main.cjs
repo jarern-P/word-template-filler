@@ -1964,11 +1964,21 @@ ipcMain.handle(
                     ? input.engine
                     : (saved.postOcr?.engine || "library");
 
+            // หน่วยที่ส่งให้ AI ทีละครั้ง (line | sentence | chunk)
+            // ตั้งได้ที่หน้า ตั้งค่า OCR › หลัง OCR
+            const unit =
+                input.unit === "line" ||
+                input.unit === "sentence" ||
+                input.unit === "chunk"
+                    ? input.unit
+                    : (saved.postOcr?.unit || "line");
+
             const result =
                 await postOcr.processText(
                     input.text,
                     {
                         engine: engine,
+                        unit: unit,
                         apiKey: saved.gemini?.apiKey || "",
                         model: saved.gemini?.model,
                         // คู่ผิด → ถูก ที่ผู้ใช้ฝึกไว้ในหน้า ฝึก OCR
@@ -2227,7 +2237,8 @@ ipcMain.handle(
             const result = ocrTraining.addManual(
                 getDataPath(),
                 input.source,
-                input.input
+                input.input,
+                input.output
             );
 
             return {

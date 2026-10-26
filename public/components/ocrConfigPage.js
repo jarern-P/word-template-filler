@@ -225,9 +225,8 @@
         '        <h2>หลัง OCR — ปรับข้อความ</h2>',
 
         '        <p class="hint">',
-        '            ใช้กับปุ่ม “ปรับข้อความหลัง OCR” ในหน้าดึงข้อมูล ซึ่งทำต่อกันเป็นชุด: ',
-        '            รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ → วิเคราะห์ Layout → จัดลำดับการอ่าน → ',
-        '            ตรวจแก้คำผิด → แบ่งประโยค',
+        '            ใช้กับปุ่ม “แก้คำผิด” ในหน้าดึงข้อมูล — ปุ่มนั้นแก้<b>เฉพาะคำที่ OCR อ่านผิด</b> ',
+        '            ไม่จัด Layout ไม่สลับลำดับ และไม่แบ่งประโยค โครงสร้างบรรทัดเดิมจึงคงอยู่',
         '        </p>',
 
         '        <div class="ocr-mode">',
@@ -237,8 +236,8 @@
         '                <input type="radio" name="postOcrEngine" value="library" id="ocrPostLibrary" checked>',
         '                <span>',
         '                    <strong>ไลบรารีในเครื่อง</strong>',
-        '                    <small>เร็ว ไม่ต้องโหลดโมเดล — ใช้ layout ในเครื่อง + พจนานุกรมไทย ',
-        'แก้คำทีละคำ (ไม่แบ่งประโยคด้วย AI)</small>',
+        '                    <small>ไม่แก้คำ — เก็บข้อความเดิมไว้ (ปุ่มแก้คำผิดจะแจ้งให้เลือก ',
+        'Local AI หรือ AI API เมื่อเลือกตัวนี้)</small>',
         '                </span>',
         '            </label>',
 
@@ -246,8 +245,7 @@
         '                <input type="radio" name="postOcrEngine" value="local" id="ocrPostLocal">',
         '                <span>',
         '                    <strong>Local AI — Qwen2.5-3B-Instruct (ในเครื่อง)</strong>',
-        '                    <small>แก้คำทั้งข้อความและแบ่งประโยคด้วย AI ทำงานออฟไลน์ ',
-        'ครั้งแรกต้องดาวน์โหลดโมเดล ~2 GB</small>',
+        '                    <small>แก้คำผิดด้วย AI ทำงานออฟไลน์ ครั้งแรกต้องดาวน์โหลดโมเดล ~2 GB</small>',
         '                </span>',
         '            </label>',
 
@@ -260,10 +258,21 @@
         '            </label>',
         '        </div>',
 
+        '        <div class="template-meta" style="padding-top:14px">',
+        '            <label for="ocrPostUnit">ส่งให้ Local AI แก้ทีละ</label>',
+        '            <select id="ocrPostUnit">',
+        '                <option value="chunk">หลายบรรทัดรวมกัน (เร็วที่สุด แนะนำ)</option>',
+        '                <option value="line">บรรทัด (ช้าสำหรับเอกสารยาว)</option>',
+        '                <option value="sentence">ประโยค (ช้าที่สุด)</option>',
+        '            </select>',
+        '        </div>',
+
+        '        <p class="hint" id="ocrPostUnitHint"></p>',
+
         '        <p class="hint">',
-        '            เมื่อใช้ AI ระบบจะทำ <b>Vector Few-Shot</b> (เลือกคู่ตัวอย่าง “ผิด → ถูก” ',
-        'ที่ใกล้เคียงที่สุดใส่ prompt) และ <b>Sentence Segmentation</b> ',
-        'ให้พร้อมกันในรอบเดียว',
+        '            ทุกหน่วยจะได้ <b>Vector Few-Shot</b> — คู่ตัวอย่าง “ผิด → ถูก” จากคลัง ',
+        'หน้า ฝึก OCR ที่ใกล้กับหน่วยนั้นที่สุด 3 คู่ ',
+        'ยิ่งหน่วยเล็กลง ตัวอย่างที่ได้ก็ยิ่งตรงกับข้อความตรงหน้า',
         '        </p>',
 
         '        <div id="ocrPostLocalBox">',
@@ -295,7 +304,7 @@
         enabled: true,
         mode: 'auto',
         twoStage: false,
-        postOcr: { engine: 'library' },
+        postOcr: { engine: 'library', unit: 'chunk' },
         gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
         iloveapi: { hasKey: false }
     };
@@ -376,8 +385,17 @@
     function updatePostOcrState() {
         const local = el('ocrPostLocal').checked;
         const apiEngine = el('ocrPostApi').checked;
+        const unitSelect = el('ocrPostUnit');
+        const unitHint = el('ocrPostUnitHint');
 
         el('ocrPostLocalBox').hidden = !local;
+
+        // AI API ส่งทั้งก้อนเสมอ — ตัวเลือกขนาดหน่วยใช้กับ Local AI เท่านั้น
+        unitSelect.disabled = apiEngine;
+
+        unitHint.textContent = apiEngine
+            ? 'AI API (Gemini) ส่งทั้งก้อนเสมอ ไม่แบ่งทีละบรรทัด — เร็วกว่าและเห็นบริบทครบ'
+            : 'หน่วยเล็กลง = ตัวอย่างฝึกตรงขึ้นแต่ช้าลง (Local AI เรียกโมเดลใหม่ทุกหน่วย)';
 
         if (apiEngine && !settings.gemini.hasKey) {
             setStatus(
@@ -400,7 +418,8 @@
             mode: value.mode === 'always' ? 'always' : 'auto',
             twoStage: value.twoStage === true,
             postOcr: {
-                engine: (value.postOcr && value.postOcr.engine) || 'library'
+                engine: (value.postOcr && value.postOcr.engine) || 'library',
+                unit: (value.postOcr && value.postOcr.unit) || 'chunk'
             },
             gemini: {
                 model: (value.gemini && value.gemini.model) || DEFAULT_GEMINI_MODEL,
@@ -419,6 +438,7 @@
         el('ocrPostLibrary').checked = settings.postOcr.engine === 'library';
         el('ocrPostLocal').checked = settings.postOcr.engine === 'local';
         el('ocrPostApi').checked = settings.postOcr.engine === 'api';
+        el('ocrPostUnit').value = settings.postOcr.unit;
         el('ocrModeAuto').checked = settings.mode !== 'always';
         el('ocrModeAlways').checked = settings.mode === 'always';
 
@@ -464,7 +484,8 @@
             postOcr: {
                 engine: el('ocrPostLibrary').checked
                     ? 'library'
-                    : (el('ocrPostLocal').checked ? 'local' : 'api')
+                    : (el('ocrPostLocal').checked ? 'local' : 'api'),
+                unit: el('ocrPostUnit').value
             },
             gemini: {
                 apiKey: el('ocrGeminiKey').value,

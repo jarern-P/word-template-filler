@@ -138,6 +138,77 @@ test('remove ลบบรรทัดออกจากคลัง', function (
     });
 });
 
+test('addManual บันทึกทั้ง target และคำที่ต้องการเป็นคู่ฝึกทันที', function () {
+    withTempDir(function (dir) {
+        const result = training.addManual(
+            dir,
+            'เอกสารระเบียบฯ',
+            ' จา นวนเงนิ  4,000.00 บาท ',
+            'จำนวนเงิน 4,000.00 บาท'
+        );
+
+        assert.strictEqual(result.added, 1);
+        assert.strictEqual(result.updated, 0);
+
+        const line = training.load(dir).lines[0];
+
+        assert.strictEqual(line.input, 'จา นวนเงนิ 4,000.00 บาท');
+        assert.strictEqual(line.output, 'จำนวนเงิน 4,000.00 บาท');
+        assert.strictEqual(line.status, 'trained');
+        assert.strictEqual(line.source, 'เอกสารระเบียบฯ');
+
+        assert.deepStrictEqual(training.examples(dir), [
+            {
+                input: 'จา นวนเงนิ 4,000.00 บาท',
+                output: 'จำนวนเงิน 4,000.00 บาท'
+            }
+        ]);
+    });
+});
+
+test('addManual ไม่ใส่คำที่ต้องการ = เข้าคิวรอตรวจ, และเติมทีหลังได้', function () {
+    withTempDir(function (dir) {
+        training.addManual(dir, '', 'ผตู้ รวจสอบ');
+
+        const pending = training.load(dir).lines[0];
+
+        assert.strictEqual(pending.status, 'new');
+        assert.strictEqual(pending.output, '');
+        assert.strictEqual(pending.source, 'เพิ่มเอง');
+        assert.deepStrictEqual(training.examples(dir), []);
+
+        // ใส่ target เดิมพร้อมคำที่ต้องการ = อัปเดตคู่นั้น ไม่เพิ่มซ้ำ
+        const result = training.addManual(
+            dir,
+            '',
+            'ผตู้ รวจสอบ',
+            'ผู้ตรวจสอบ'
+        );
+
+        assert.strictEqual(result.added, 0);
+        assert.strictEqual(result.updated, 1);
+        assert.strictEqual(training.load(dir).lines.length, 1);
+        assert.strictEqual(
+            training.list(dir, { status: 'trained' }).lines[0].output,
+            'ผู้ตรวจสอบ'
+        );
+    });
+});
+
+test('addManual ปฏิเสธข้อความสั้นและคำที่ต้องการที่เหมือนต้นฉบับ', function () {
+    withTempDir(function (dir) {
+        assert.throws(function () {
+            training.addManual(dir, '', 'ab', 'เอบี');
+        }, /สั้นเกินไป/);
+
+        assert.throws(function () {
+            training.addManual(dir, '', 'จา นวนเงนิ', 'จา นวนเงนิ');
+        }, /เหมือนต้นฉบับ/);
+
+        assert.strictEqual(training.load(dir).lines.length, 0);
+    });
+});
+
 test('list กรองตามสถานะ ค้นหา และจำกัดจำนวน', function () {
     withTempDir(function (dir) {
         training.addLines(dir, 'invoice.pdf', ['จา นวนเงนิ', 'วันที่']);

@@ -14,8 +14,10 @@
 //     "twoStage": false,             // ตัวเลือกย่อยของ PaddleOCR:
 //                                    // true = Two-Stage Localized OCR
 //     "postOcr": {
-//       "engine": "library"          // library | local | api
-//                                    // ตัวเลือกของปุ่ม "ปรับข้อความหลัง OCR"
+//       "engine": "library",         // library | local | api
+//                                    // ตัวเลือกของปุ่ม "แก้คำผิด"
+//       "unit": "chunk"             // line | sentence | chunk
+//                                    // ขนาดหน่วยที่ส่งให้ AI ทีละครั้ง
 //     },
 //     "gemini": {
 //       "model": "gemini-2.5-flash",
@@ -39,6 +41,10 @@ const PROVIDERS = ['paddle', 'paddleVL', 'gemini', 'iloveapi'];
 const MODES = ['auto', 'always'];
 const POST_OCR_ENGINES = ['library', 'local', 'api'];
 
+// หน่วยที่ส่งให้ AI ทีละครั้ง — line = ทีละบรรทัด, sentence = ทีละประโยค,
+// chunk = หลายบรรทัดรวมกัน (~1200 ตัวอักษร)
+const POST_OCR_UNITS = ['line', 'sentence', 'chunk'];
+
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 // อนุญาตเฉพาะชื่อโมเดลที่ใช้ใน URL ได้ (กันการพิมพ์ผิด/แทรก path)
@@ -52,7 +58,8 @@ function defaultConfig() {
         mode: 'auto',
         twoStage: false,
         postOcr: {
-            engine: 'library'
+            engine: 'library',
+            unit: 'chunk'
         },
         gemini: {
             apiKey: '',
@@ -191,7 +198,8 @@ function normalizeRaw(input) {
         mode: mode,
         twoStage: source.twoStage === true,
         postOcr: {
-            engine: pick(postOcr.engine, POST_OCR_ENGINES, 'library')
+            engine: pick(postOcr.engine, POST_OCR_ENGINES, 'library'),
+            unit: pick(postOcr.unit, POST_OCR_UNITS, 'chunk')
         },
         gemini: {
             apiKey: typeof gemini.apiKey === 'string' ? gemini.apiKey : '',
@@ -298,6 +306,11 @@ function save(dataPath, payload) {
                 postOcrInput.engine,
                 POST_OCR_ENGINES,
                 current.postOcr.engine
+            ),
+            unit: pick(
+                postOcrInput.unit,
+                POST_OCR_UNITS,
+                current.postOcr.unit
             )
         },
         gemini: {
@@ -329,6 +342,7 @@ module.exports = {
     PROVIDERS,
     MODES,
     POST_OCR_ENGINES,
+    POST_OCR_UNITS,
     DEFAULT_MODEL,
     read,
     readSecrets,

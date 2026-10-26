@@ -1,16 +1,20 @@
-// Post-OCR text improvement (แก้คำผิด + แบ่งประโยค)
+// Post-OCR text improvement (แก้คำผิดอย่างเดียว)
 //
 // ตัวเลือกเอนจิน (ตั้งค่าที่หน้า ตั้งค่า OCR):
-//   - library = ใช้พจนานุกรม/layout ในเครื่อง (จัดการฝั่งหน้าจอ)
+//   - library = ไม่แก้คำ (เก็บข้อความเดิม)
 //   - local   = Qwen2.5-3B-Instruct ผ่าน llama.cpp ในเครื่อง
 //   - api     = Gemini API (ใช้ key เดิมของ OCR)
 //
 // หลักการ:
-//   - แบ่งข้อความเป็นก้อน (chunk) ตามบรรทัด เพื่อไม่ให้ prompt ยาวเกิน context
+//   - แก้เฉพาะคำที่ OCR อ่านผิด — ไม่แบ่งประโยค ไม่จัด layout ไม่สลับลำดับ
+//     โครงสร้างบรรทัด/ย่อหน้าของเดิมจึงคงอยู่
+//   - ส่งให้โมเดลทีละหน่วยตามที่ตั้งไว้ (postOcr.unit):
+//       line     = ทีละบรรทัด (ค่าเริ่มต้น)
+//       sentence = ทีละประโยค (แบ่งประโยคไทยด้วย Intl.Segmenter)
+//       chunk    = หลายบรรทัดรวมกันจนครบ ~1200 ตัวอักษร
 //   - เลือกตัวอย่าง few-shot ที่ใกล้เคียงที่สุดด้วย vector (char n-gram)
 //     หรือ embedding ของโมเดล local ถ้าใช้ได้ แล้วใส่ใน prompt
-//   - ให้โมเดลตอบเฉพาะข้อความที่แก้แล้ว แบ่งประโยคละบรรทัด
-//   - ตรวจคำตอบ (sanitize) ก่อนใช้ — ถ้าผิดรูปเกินไปจะเก็บข้อความเดิมของก้อนนั้น
+//   - ตรวจคำตอบ (sanitize) ก่อนใช้ — ถ้าผิดรูปเกินไปจะเก็บข้อความเดิมของหน่วยนั้น
 'use strict';
 
 const fs = require('fs');
@@ -20,6 +24,13 @@ const EXAMPLES_FILE = path.join(__dirname, 'post-ocr-examples.json');
 
 // ขนาดก้อนข้อความต่อครั้ง — พอดีกับ context 8k ของ Qwen และลดโอกาสตอบขาด
 const CHUNK_CHARS = 1200;
+
+// หน่วยที่ส่งให้โมเดลทีละครั้ง (ตั้งได้ที่หน้า ตั้งค่า OCR)
+const UNITS = ['line', 'sentence', 'chunk'];
+const DEFAULT_UNIT = 'chunk';
+
+// AI API (Gemini) รับ context ใหญ่ — ส่งทั้งก้อนเสมอเพื่อลดจำนวนคำขอ
+const API_CHUNK_CHARS = 3500;
 
 // จำนวนตัวอย่าง few-shot ที่ใส่ใน prompt
 const FEW_SHOT_COUNT = 3;
@@ -35,13 +46,17 @@ const GEMINI_TIMEOUT_MS = 180 * 1000;
 const SYSTEM_PROMPT = [
     'คุณเป็นตัวแก้ไขข้อความจาก OCR ภาษาไทย',
     '',
-    'งาน:',
-    '1. แก้คำที่ OCR อ่านผิดให้เป็นคำไทยที่ถูกต้อง (สระ/วรรณยุกต์ที่แยกจากพยัญชนะ ตัวอักษรใกล้เคียง คำที่ติดกัน) เช่น เงนิ → เงิน, วนั ที่ → วันที่',
-    '2. ต้องเก็บเนื้อความของทุกบรรทัดไว้ครบ ห้ามตัดบรรทัด ห้ามข้ามข้อความ ห้ามย่อความ',
-    '3. รักษาตัวเลข วันที่ เลขบัญชี รหัส ชื่อเฉพาะ และรูปแบบเดิมไว้ทุกตัวอักษร',
-    '4. แบ่งประโยค: ให้แต่ละประโยคขึ้นบรรทัดใหม่ (แม้ต้นฉบับจะไม่มีจุดหรือเว้นวรรค)',
-    '5. ห้ามเพิ่มข้อมูลใหม่ ห้ามอธิบาย ห้ามใส่ markdown',
-    '6. ตอบเฉพาะข้อความที่แก้ไขแล้วเท่านั้น'
+    'งาน: แก้เฉพาะ "คำที่ OCR อ่านผิด" ให้เป็นคำไทยที่ถูกต้อง',
+    '(สระ/วรรณยุกต์ที่แยกจากพยัญชนะ ตัวอักษรใกล้เคียง คำที่ติดกัน)',
+    'เช่น เงนิ → เงิน, วนั ที่ → วันที่, จา นวนเงนิ → จำนวนเงิน',
+    '',
+    'กฎ:',
+    '1. แก้เฉพาะคำที่ผิด คำที่ถูกอยู่แล้วห้ามเปลี่ยน ห้ามเขียนใหม่ ห้ามสรุป ห้ามเพิ่มหรือลบเนื้อหา',
+    '2. ห้ามแบ่งประโยค ห้ามย่อหน้า ห้ามสลับลำดับ — คงจำนวนบรรทัดและรูปแบบเดิมไว้ทุกบรรทัด',
+    '   ถ้าบรรทัดใดถูกอยู่แล้ว ให้คัดลอกบรรทัดนั้นมาทั้งบรรทัดโดยไม่ต้องแก้อะไร',
+    '3. รักษาตัวเลข วันที่ เลขบัญชี รหัส ชื่อเฉพาะ และเครื่องหมายวรรคตอนเดิมไว้ทุกตัวอักษร',
+    '4. ห้ามอธิบาย ห้ามใส่ markdown',
+    '5. ตอบเฉพาะข้อความที่แก้ไขแล้วเท่านั้น'
 ].join('\n');
 
 function loadExamples() {
@@ -183,6 +198,203 @@ function selectExamples(text, examples, count, opts) {
 // Prompt / chunk
 // ------------------------------------------------------------------
 
+function normalizeUnit(unit) {
+    return UNITS.indexOf(unit) === -1 ? DEFAULT_UNIT : unit;
+}
+
+// หน่วยที่ใช้จริงตามเอนจิน — AI API ส่งทั้งก้อนเสมอ (เร็วกว่าและเห็นบริบทครบ)
+function resolveUnit(engine, unit) {
+    if (engine === 'api') return 'chunk';
+
+    return normalizeUnit(unit);
+}
+
+// นับเฉพาะบรรทัดที่มีข้อความ (ใช้ตรวจว่าโมเดลไม่ยุบ/ไม่แยกบรรทัด)
+function nonEmptyLineCount(text) {
+    return String(text == null ? '' : text)
+        .split('\n')
+        .filter(function (line) {
+            return line.trim() !== '';
+        })
+        .length;
+}
+
+// ──────────────────────────────────────────────────────────────
+// แบ่งข้อความเป็นหน่วยงาน (ทีละบรรทัด / ทีละประโยค / ก้อน)
+//
+// ทุกโหมดคืน parts ที่ต่อกันแล้วได้ข้อความเดิมเป๊ะ โดยแต่ละ part
+// เป็นข้อความคงเดิม (ช่องว่าง/บรรทัดว่าง/ตัวคั่น) หรือตัวแทนหน่วยที่
+// ต้องส่งโมเดล (part.unit = index ใน units)
+// ──────────────────────────────────────────────────────────────
+
+let sentenceSegmenter = null;
+
+function getSentenceSegmenter() {
+    if (sentenceSegmenter !== null) return sentenceSegmenter;
+
+    sentenceSegmenter = false;
+
+    try {
+        if (
+            typeof Intl !== 'undefined' &&
+            typeof Intl.Segmenter === 'function'
+        ) {
+            sentenceSegmenter = new Intl.Segmenter('th', {
+                granularity: 'sentence'
+            });
+        }
+
+    } catch (error) {
+        sentenceSegmenter = false;
+    }
+
+    return sentenceSegmenter;
+}
+
+// แบ่งข้อความหนึ่งบรรทัดเป็นประโยค — ชิ้นที่ต่อกันแล้วได้ข้อความเดิมเป๊ะ
+function splitSentences(line) {
+    const text = String(line == null ? '' : line);
+
+    if (text === '') return [];
+
+    const segmenter = getSentenceSegmenter();
+
+    if (!segmenter) {
+        // ไม่มี Intl.Segmenter = ตัดที่เครื่องหมายจบประโยค
+        const parts = [];
+        let start = 0;
+
+        for (let index = 0; index < text.length; index++) {
+            if ('.!?ฯ'.indexOf(text[index]) === -1) continue;
+
+            parts.push(text.slice(start, index + 1));
+            start = index + 1;
+        }
+
+        if (start < text.length) parts.push(text.slice(start));
+
+        return parts.length > 0 ? parts : [text];
+    }
+
+    const parts = [];
+
+    for (const item of segmenter.segment(text)) {
+        if (item.segment !== '') parts.push(item.segment);
+    }
+
+    return parts.length > 0 ? parts : [text];
+}
+
+// ตัดข้อความยาวมากเป็นชิ้นละไม่เกิน limit ตัวอักษร
+function splitByLength(text, maxChars) {
+    const limit = Number(maxChars) > 0 ? Number(maxChars) : CHUNK_CHARS;
+
+    if (text.length <= limit) return [text];
+
+    const pieces = [];
+
+    for (let index = 0; index < text.length; index += limit) {
+        pieces.push(text.slice(index, index + limit));
+    }
+
+    return pieces;
+}
+
+// คืน { unit, units, parts }
+function buildUnits(text, unit, maxChars) {
+    const mode = normalizeUnit(unit);
+    const limit = Number(maxChars) > 0 ? Number(maxChars) : CHUNK_CHARS;
+    const source = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    const units = [];
+    const parts = [];
+
+    function pushText(value) {
+        if (value === '') return;
+
+        const last = parts[parts.length - 1];
+
+        if (last && last.unit === undefined) {
+            last.text += value;
+            return;
+        }
+
+        parts.push({ text: value });
+    }
+
+    function pushUnit(value) {
+        parts.push({ unit: units.length });
+        units.push(value);
+    }
+
+    if (mode === 'chunk') {
+        const chunks = chunkText(source, limit);
+
+        chunks.forEach(function (chunk, index) {
+            if (index > 0) pushText('\n');
+            pushUnit(chunk);
+        });
+
+        return { unit: mode, units: units, parts: parts };
+    }
+
+    source.split('\n').forEach(function (line, index) {
+        if (index > 0) pushText('\n');
+
+        const core = line.trim();
+
+        if (core === '') {
+            pushText(line);
+            return;
+        }
+
+        // เก็บช่องว่างหัว/ท้ายบรรทัดไว้เหมือนเดิม
+        const lead = line.slice(0, line.indexOf(core));
+        const tail = line.slice(lead.length + core.length);
+
+        pushText(lead);
+
+        if (mode === 'sentence') {
+            splitSentences(core).forEach(function (sentence) {
+                const body = sentence.trim();
+
+                if (body === '') {
+                    pushText(sentence);
+                    return;
+                }
+
+                const innerLead = sentence.slice(0, sentence.indexOf(body));
+                const innerTail = sentence.slice(
+                    innerLead.length + body.length
+                );
+
+                pushText(innerLead);
+                splitByLength(body, limit).forEach(pushUnit);
+                pushText(innerTail);
+            });
+
+        } else {
+            splitByLength(core, limit).forEach(pushUnit);
+        }
+
+        pushText(tail);
+    });
+
+    return { unit: mode, units: units, parts: parts };
+}
+
+// ต่อข้อความกลับจาก parts โดยเอาคำตอบของแต่ละหน่วยมาใส่
+function assemble(parts, outputs) {
+    return parts.map(function (part) {
+        if (part.unit === undefined) return part.text;
+
+        const value = outputs[part.unit];
+
+        return value === undefined || value === null
+            ? ''
+            : String(value);
+    }).join('');
+}
+
 function chunkText(text, maxChars) {
     const limit = Number(maxChars) > 0 ? Number(maxChars) : CHUNK_CHARS;
 
@@ -244,7 +456,8 @@ function buildMessages(chunk, examples, options) {
     (examples || []).forEach(function (example) {
         messages.push({
             role: 'user',
-            content: 'แก้ข้อความ OCR นี้:\n' + example.input
+            content: 'แก้เฉพาะคำผิดในข้อความ OCR นี้ (คงบรรทัดเดิม):\n' +
+                example.input
         });
 
         messages.push({
@@ -255,13 +468,14 @@ function buildMessages(chunk, examples, options) {
 
     // รอบสอง (strict): เน้นย้ำเมื่อรอบแรกทำตัวเลข/วันที่หาย
     const strictNote = opts.strict === true
-        ? 'คำเตือน: ต้องเก็บทุกบรรทัดและตัวเลข/วันที่/รหัสให้ครบทุกตัว ' +
-          'ห้ามตัดหรือข้ามข้อความ\n\n'
+        ? 'คำเตือน: จำนวนบรรทัดต้องเท่าเดิม ต้องเก็บทุกบรรทัดและ ' +
+          'ตัวเลข/วันที่/รหัสให้ครบทุกตัว ห้ามตัดหรือข้ามข้อความ\n\n'
         : '';
 
     messages.push({
         role: 'user',
-        content: strictNote + 'แก้ข้อความ OCR นี้:\n' + chunk
+        content: strictNote +
+            'แก้เฉพาะคำผิดในข้อความ OCR นี้ (คงบรรทัดเดิม):\n' + chunk
     });
 
     return messages;
@@ -508,9 +722,41 @@ async function geminiChunk(messages, options) {
 // ตัวประสานงาน
 // ------------------------------------------------------------------
 
+const UNIT_LABELS = {
+    line: 'บรรทัด',
+    sentence: 'ประโยค',
+    chunk: 'ก้อน'
+};
+
+function unitLabel(unit) {
+    return UNIT_LABELS[normalizeUnit(unit)] || UNIT_LABELS.line;
+}
+
+// ทำคำตอบของหนึ่งหน่วยให้พร้อมใช้ — หนึ่งหน่วยต้องเหลือบรรทัดเดียว
+function cleanUnitOutput(raw, original, unit) {
+    const clean = sanitizeOutput(raw, original);
+
+    if (clean === null) return null;
+    if (normalizeUnit(unit) === 'chunk') return clean;
+
+    // โมเดลอาจเผลอขึ้นบรรทัดใหม่ (เช่นแยกประโยค) — ต่อกลับเป็นบรรทัดเดียว
+    return clean.replace(/\s*\n\s*/g, ' ').replace(/[ \t]+/g, ' ').trim();
+}
+
+// คำตอบใช้ได้หรือไม่ — ก้อนต้องมีจำนวนบรรทัดเท่าเดิม (ไม่ถูกยุบ/แยกเพิ่ม)
+function isAcceptableOutput(clean, original, unit) {
+    if (clean === null) return false;
+    if (normalizeUnit(unit) !== 'chunk') return true;
+
+    return nonEmptyLineCount(clean) === nonEmptyLineCount(original);
+}
+
 async function runChunks(text, options) {
     const opts = options || {};
-    const chunks = chunkText(text, opts.chunkChars);
+    const prepared = buildUnits(text, opts.unit, opts.chunkChars);
+    const unit = prepared.unit;
+    const units = prepared.units;
+    const chunks = units;
 
     // ตัวอย่างที่ผู้ใช้ฝึกเอง (หน้า ฝึก OCR) มาก่อน แล้วต่อด้วยชุดเริ่มต้น
     const trained = Array.isArray(opts.examples)
@@ -557,6 +803,7 @@ async function runChunks(text, options) {
         if (typeof opts.onProgress === 'function') {
             opts.onProgress({
                 stage: 'chunk',
+                unit: unit,
                 index: index + 1,
                 total: chunks.length,
                 percent: Math.round((index / chunks.length) * 100)
@@ -588,28 +835,33 @@ async function runChunks(text, options) {
             selected = selectExamples(chunk, examples, FEW_SHOT_COUNT);
         }
 
+        const label = unitLabel(unit) + 'ที่ ' + (index + 1);
+
         try {
             const raw = await opts.call(chunk, buildMessages(chunk, selected));
-            let clean = sanitizeOutput(raw, chunk);
+            let clean = cleanUnitOutput(raw, chunk, unit);
 
-            // คำตอบผิดรูป หรือตัวเลข/วันที่/รหัสหายไป = ใช้ไม่ได้ ลองใหม่หนึ่งครั้งแบบเข้มงวด
-            if (clean === null || missingNumbers(chunk, clean).length > 0) {
+            // คำตอบผิดรูป/บรรทัดไม่เท่าเดิม/ตัวเลขหาย = ใช้ไม่ได้ ลองใหม่หนึ่งครั้งแบบเข้มงวด
+            if (
+                !isAcceptableOutput(clean, chunk, unit) ||
+                missingNumbers(chunk, clean).length > 0
+            ) {
                 const retryRaw = await opts.call(
                     chunk,
                     buildMessages(chunk, selected, { strict: true })
                 );
 
-                const retry = sanitizeOutput(retryRaw, chunk);
+                const retry = cleanUnitOutput(retryRaw, chunk, unit);
 
-                clean = retry !== null && missingNumbers(chunk, retry).length === 0
+                clean = isAcceptableOutput(retry, chunk, unit) &&
+                    missingNumbers(chunk, retry).length === 0
                     ? retry
                     : null;
             }
 
             if (clean === null) {
                 warnings.push(
-                    'ก้อนที่ ' + (index + 1) +
-                    ' คำตอบไม่ครบ/ผิดรูป — ใช้ข้อความเดิม'
+                    label + ' คำตอบไม่ครบ/ผิดรูป — ใช้ข้อความเดิม'
                 );
                 outputs.push(chunk);
             } else {
@@ -618,7 +870,7 @@ async function runChunks(text, options) {
 
         } catch (error) {
             warnings.push(
-                'ก้อนที่ ' + (index + 1) + ': ' +
+                label + ': ' +
                 ((error && error.message) || 'ประมวลผลไม่สำเร็จ')
             );
 
@@ -629,13 +881,14 @@ async function runChunks(text, options) {
     if (typeof opts.onProgress === 'function') {
         opts.onProgress({
             stage: 'done',
+            unit: unit,
             index: chunks.length,
             total: chunks.length,
             percent: 100
         });
     }
 
-    const resultText = outputs.join('\n').trim();
+    const resultText = assemble(prepared.parts, outputs).trim();
 
     if (resultText === '') {
         throw new Error('ไม่มีข้อความให้ปรับ — ตรวจข้อความต้นทางอีกครั้ง');
@@ -648,6 +901,7 @@ async function runChunks(text, options) {
 
     return {
         text: resultText,
+        unit: unit,
         chunks: chunks.length,
         sentences: countSentences(resultText),
         warnings: warnings
@@ -658,6 +912,7 @@ async function processWithGemini(text, options) {
     const opts = options || {};
 
     const result = await runChunks(text, {
+        unit: opts.unit,
         chunkChars: opts.chunkChars,
         examples: opts.examples,
         onProgress: opts.onProgress,
@@ -679,6 +934,7 @@ async function processWithLocal(text, options) {
     const local = require('./post-ocr-local.cjs');
 
     const result = await runChunks(text, {
+        unit: opts.unit,
         chunkChars: opts.chunkChars,
         examples: opts.examples,
         onProgress: opts.onProgress,
@@ -707,17 +963,31 @@ async function processText(text, options) {
         throw new Error('ไม่มีข้อความให้ปรับ');
     }
 
+    const unit = resolveUnit(opts.engine, opts.unit);
+
     if (opts.engine === 'local') {
-        return processWithLocal(source, opts);
+        return processWithLocal(
+            source,
+            Object.assign({}, opts, { unit: unit })
+        );
     }
 
     if (opts.engine === 'api') {
-        return processWithGemini(source, opts);
+        // ส่งทั้งก้อน (หลายบรรทัดรวมกัน) เสมอ — ลดจำนวนคำขอและได้บริบทครบ
+        return processWithGemini(
+            source,
+            Object.assign({}, opts, {
+                unit: unit,
+                chunkChars: opts.chunkChars || API_CHUNK_CHARS
+            })
+        );
     }
 
+    // library = ไม่แก้คำ — คืนข้อความเดิมพร้อมจำนวนบรรทัด
     return {
         text: source,
         engine: 'library',
+        unit: unit,
         chunks: 0,
         sentences: countSentences(source),
         warnings: []
@@ -726,13 +996,25 @@ async function processText(text, options) {
 
 module.exports = {
     CHUNK_CHARS,
+    API_CHUNK_CHARS,
     FEW_SHOT_COUNT,
     SYSTEM_PROMPT,
+    UNITS,
+    DEFAULT_UNIT,
+    resolveUnit,
+    nonEmptyLineCount,
+    isAcceptableOutput,
+    runChunks,
     loadExamples,
     charNgramVector,
     cosine,
     selectExamples,
     chunkText,
+    normalizeUnit,
+    splitSentences,
+    buildUnits,
+    assemble,
+    cleanUnitOutput,
     buildMessages,
     toGeminiBody,
     sanitizeOutput,

@@ -21,6 +21,12 @@
         '    </p>',
 
         '    <p class="hint">',
+        '        กด “เพิ่มเอง” เพื่อสร้างคู่ ผิด → ถูก เองได้เลย — ',
+        '        ใส่เป็นบรรทัดที่ OCR อ่านผิด (target) พร้อมคำที่ต้องการ ',
+        '        ถ้ายังไม่รู้คำที่ต้องการ เว้นว่างไว้แล้วค่อยมาเติมในรายการ',
+        '    </p>',
+
+        '    <p class="hint">',
         '        ถ้าเลือก AI API (Gemini) ตัวอย่างที่ฝึกไว้จะถูกส่งไปพร้อมคำขอด้วย — ',
         '        ถ้าเลือก Local AI ทุกอย่างอยู่ในเครื่อง',
         '    </p>',
@@ -165,7 +171,7 @@
             const empty = document.createElement('li');
             empty.className = 'empty';
             empty.textContent = filter === 'new' && search === ''
-                ? 'ยังไม่มีบรรทัดให้ตรวจ — อัปโหลด PDF หรือ .docx ในหน้าดึงข้อมูลก่อน'
+                ? 'ยังไม่มีบรรทัดให้ตรวจ — อัปโหลด PDF หรือ .docx ในหน้าดึงข้อมูลก่อน หรือกด “เพิ่มเอง” เพื่อสร้างคู่ฝึกเอง'
                 : 'ไม่พบรายการตามเงื่อนไขที่เลือก';
 
             list.appendChild(empty);
@@ -411,7 +417,7 @@
             loadList();
         },
 
-        openAddManualDialog: function () {
+        openAddManualDialog: async function () {
             if (busy) return;
 
             const electron = api();
@@ -426,44 +432,102 @@
                 return;
             }
 
-            const input = scope.AppDialog.prompt(
-                'เพิ่มบรรทัดใหม่ด้วยตนเอง',
+            const values = await scope.AppDialog.prompt(
+                'เพิ่มคู่ฝึกเอง',
                 [
-                    { label: 'บรรทัดที่อ่านผิด (OCR)', id: 'manualInput', type: 'text', required: true, placeholder: 'เช่น วิทยาลัยทักษิณ' },
-                    { label: 'คำอธิบาย (ไม่จำเป็น)', id: 'manualSource', type: 'text', required: false, placeholder: 'เช่น เอกสารระเบียบฯ' }
-                ]
+                    {
+                        label: 'บรรทัดที่ OCR อ่านผิด (target)',
+                        id: 'manualInput',
+                        type: 'textarea',
+                        required: true,
+                        placeholder: 'เช่น จา นวนเงนิ 4,000.00 บาท'
+                    },
+                    {
+                        label: 'คำที่ต้องการ (ข้อความที่ถูกต้อง)',
+                        id: 'manualOutput',
+                        type: 'textarea',
+                        required: false,
+                        placeholder: 'เช่น จำนวนเงิน 4,000.00 บาท'
+                    },
+                    {
+                        label: 'แหล่งที่มา / คำอธิบาย (ไม่จำเป็น)',
+                        id: 'manualSource',
+                        type: 'text',
+                        required: false,
+                        placeholder: 'เช่น เอกสารระเบียบฯ'
+                    }
+                ],
+                {
+                    okText: 'บันทึก'
+                }
             );
 
-            if (!input) return;
+            // ยกเลิกกล่อง = false
+            if (!values) return;
 
-            const text = String(input.manualInput || '').trim();
-            const source = String(input.manualSource || '').trim();
+            const text = String(values.manualInput || '').trim();
+            const output = String(values.manualOutput || '').trim();
+            const source = String(values.manualSource || '').trim();
 
             if (text.length < 3) {
-                setStatus('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร', 'error');
+                setStatus(
+                    'บรรทัดที่ OCR อ่านผิดสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร',
+                    'error'
+                );
+                return;
+            }
+
+            if (output !== '' && output === text) {
+                setStatus(
+                    'คำที่ต้องการเหมือนต้นฉบับ — แก้จุดที่ OCR อ่านผิดก่อนบันทึก',
+                    'error'
+                );
                 return;
             }
 
             busy = true;
             setStatus('กำลังเพิ่ม...', 'ok');
 
-            electron.ocrTrainingAddManual({ source: source || undefined, input: text })
-                .then(function (result) {
-                    if (!result || result.ok === false) {
-                        throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
-                    }
-
-                    setStatus('เพิ่มบรรทัดแล้ว — "' + text + '"', 'ok');
-                    loadList();
-                })
-                .catch(function (error) {
-                    setStatus(
-                        (error && error.message) || 'เพิ่มไม่สำเร็จ',
-                        'error'
-                    );
+            try {
+                const result = await electron.ocrTrainingAddManual({
+                    source: source || undefined,
+                    input: text,
+                    output: output || undefined
                 });
 
-            busy = false;
+                if (!result || result.ok === false) {
+                    throw new Error((result && result.error) || 'เพิ่มไม่สำเร็จ');
+                }
+
+                if (result.updated) {
+                    setStatus(
+                        'อัปเดตคำที่ต้องการของบรรทัดที่มีอยู่แล้ว — "' + output + '"',
+                        'ok'
+                    );
+                } else if (output === '') {
+                    setStatus(
+                        'เพิ่มบรรทัดรอตรวจแล้ว — ใส่คำที่ต้องการในรายการเมื่อพร้อม',
+                        'ok'
+                    );
+                } else if (filter === 'new') {
+                    setStatus(
+                        'เพิ่มคู่ฝึกแล้ว — ดูได้ที่ตัวกรอง “ฝึกแล้ว”',
+                        'ok'
+                    );
+                } else {
+                    setStatus('เพิ่มคู่ฝึกแล้ว — AI จะใช้คู่นี้ครั้งต่อไป', 'ok');
+                }
+
+                await loadList();
+
+            } catch (error) {
+                setStatus(
+                    (error && error.message) || 'เพิ่มไม่สำเร็จ',
+                    'error'
+                );
+            } finally {
+                busy = false;
+            }
         }
     };
 

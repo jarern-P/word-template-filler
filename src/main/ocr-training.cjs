@@ -180,46 +180,6 @@ function addLines(dataPath, source, lines) {
     };
 }
 
-// เพิ่มบรรทัดใหม่ด้วยตนเอง — payload = { source?, input }
-function addManual(dataPath, source, input) {
-    const store = load(dataPath);
-    const key = dedupeKey(input);
-
-    const now = new Date().toISOString();
-
-    if (store.lines.some(function (item) {
-        return item.source === (source || '') && item.input === input;
-    })) {
-        return {
-            ok: true,
-            added: 0,
-            duplicates: 1,
-            skipped: 0,
-            total: store.lines.length
-        };
-    }
-
-    store.lines.push({
-        id: crypto.randomUUID(),
-        source: cleanLine(source).slice(0, 260),
-        input: input,
-        output: '',
-        status: 'new',
-        createdAt: now,
-        updatedAt: now
-    });
-
-    save(dataPath, store);
-
-    return {
-        ok: true,
-        added: 1,
-        duplicates: 0,
-        skipped: 0,
-        total: store.lines.length
-    };
-}
-
 function findLine(store, id) {
     const target = String(id == null ? '' : id);
 
@@ -373,34 +333,70 @@ function list(dataPath, options) {
 }
 
 // เพิ่มบรรทัดใหม่ด้วยตนเองจากหน้าฝึก OCR (และแหล่งอื่นที่ต้องการระบุ source)
-function addManual(dataPath, source, input) {
+// payload = { source?, input, output? }
+//   input  = บรรทัดที่ OCR อ่านผิด (target)
+//   output = คำที่ต้องการ — ถ้าใส่มาจะเป็นคู่ "ผิด → ถูก" ที่ใช้ฝึกได้ทันที
+//            ถ้าไม่ใส่ บรรทัดจะไปรออยู่ในสถานะ "รอตรวจ"
+function addManual(dataPath, source, input, output) {
     const cleanSource = cleanLine(source || '').slice(0, 260);
     const cleanInput = cleanLine(input);
+    const cleanOutput = cleanLine(output);
 
     if (cleanInput.length < 3) {
-        throw new Error('ข้อความเข้าสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร');
+        throw new Error(
+            'บรรทัดที่ OCR อ่านผิดสั้นเกินไป — ต้องอย่างน้อย 3 ตัวอักษร'
+        );
+    }
+
+    if (cleanOutput !== '' && cleanOutput === cleanInput) {
+        throw new Error(
+            'คำที่ต้องการเหมือนต้นฉบับ — แก้จุดที่ OCR อ่านผิดก่อนบันทึก'
+        );
     }
 
     const store = load(dataPath);
 
-    // กันไว้แล้วไม่เพิ่มซ้ำ
+    // บรรทัดเดิมที่มีอยู่แล้ว: ใส่คำที่ต้องการเข้ามาก็อัปเดตเป็นคู่ฝึกได้เลย
     const key = dedupeKey(cleanInput);
-
-    if (store.lines.some(function (item) { return dedupeKey(item.input) === key; })) {
-        throw new Error('ข้อความนี้มีอยู่แล้วในคลัง — ไม่เพิ่มซ้ำ');
-    }
+    const existing = store.lines.find(function (item) {
+        return dedupeKey(item.input) === key;
+    });
 
     const now = new Date().toISOString();
 
-    store.lines.push({
+    if (existing) {
+        if (cleanOutput === '') {
+            throw new Error(
+                'บรรทัดนี้มีอยู่แล้วในคลัง — ใส่คำที่ต้องการเพื่ออัปเดตคู่นั้น'
+            );
+        }
+
+        existing.output = cleanOutput;
+        existing.status = 'trained';
+        existing.updatedAt = now;
+        if (cleanSource !== '') existing.source = cleanSource;
+
+        save(dataPath, store);
+
+        return {
+            id: existing.id,
+            added: 0,
+            updated: 1,
+            total: store.lines.length
+        };
+    }
+
+    const line = {
         id: crypto.randomUUID(),
         source: cleanSource || 'เพิ่มเอง',
         input: cleanInput,
-        output: '',
-        status: 'new',
+        output: cleanOutput,
+        status: cleanOutput === '' ? 'new' : 'trained',
         createdAt: now,
         updatedAt: now
-    });
+    };
+
+    store.lines.push(line);
 
     if (store.lines.length > MAX_LINES) {
         store.lines = store.lines.slice(store.lines.length - MAX_LINES);
@@ -409,7 +405,9 @@ function addManual(dataPath, source, input) {
     save(dataPath, store);
 
     return {
-        id: store.lines[store.lines.length - 1].id,
+        id: line.id,
+        added: 1,
+        updated: 0,
         total: store.lines.length
     };
 }

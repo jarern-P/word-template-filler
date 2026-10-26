@@ -4216,25 +4216,6 @@ body.table-ratio-dragging .table-ratio-handle {
     gap: 6px;
 }
 
-/* ── สวิตช์รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ใช้กับ PDF) ── */
-.data-source-options {
-    margin: 4px 0 2px;
-}
-
-.data-join-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--ink-faint);
-    cursor: pointer;
-    user-select: none;
-}
-
-.data-join-toggle input {
-    margin: 0;
-}
-
 .data-source-actions button {
     margin-top: 0;
 }
@@ -4341,119 +4322,6 @@ body.table-ratio-dragging .table-ratio-handle {
 .data-tools-hint {
     margin: 6px 0 0;
     font-size: 12px;
-}
-
-.data-tool-panel {
-    margin-top: 12px;
-    overflow: hidden;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-}
-
-.data-tool-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--line-soft);
-}
-
-.data-tool-head strong {
-    font-size: 14px;
-}
-
-.data-tool-head .hint {
-    flex: 1;
-    min-width: 150px;
-    margin: 0;
-}
-
-.data-tool-actions {
-    display: flex;
-    gap: 6px;
-}
-
-.data-tool-actions button {
-    margin-top: 0;
-}
-
-.data-tool-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-height: 260px;
-    padding: 10px 12px;
-    overflow-y: auto;
-}
-
-.data-tool-list .hint {
-    margin: 0;
-}
-
-/* ตรวจคำผิด */
-
-.data-spell-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding-bottom: 8px;
-    border-bottom: 1px dashed var(--line-soft);
-}
-
-.data-spell-row:last-child {
-    padding-bottom: 0;
-    border-bottom: 0;
-}
-
-.data-spell-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 8px;
-}
-
-.data-spell-word {
-    font-weight: 600;
-    color: var(--danger);
-    background: var(--danger-soft);
-    border-radius: var(--radius-sm);
-    padding: 1px 6px;
-}
-
-.data-spell-context {
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-    color: var(--ink-faint);
-}
-
-.data-spell-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-}
-
-.data-spell-actions button {
-    margin-top: 0;
-}
-
-.data-spell-suggest {
-    color: var(--pink-700);
-    background: var(--surface-alt, var(--line-soft));
-    font-weight: 600;
-}
-
-/* บอกช่องของฟอร์มที่เจอคำ (แผงตรวจคำในหน้ารายงาน) */
-.report-spell-field {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink-faint);
 }
 
 /* โครงสร้างเอกสาร */
@@ -4614,6 +4482,57 @@ body.table-ratio-dragging .table-ratio-handle {
 
 .app-dialog-message.empty {
     display: none;
+}
+
+/* ช่องกรอกของกล่องหลายช่อง (prompt-multi) */
+.app-dialog-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.app-dialog-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.app-dialog-field label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+}
+
+.app-dialog-required {
+    color: var(--pink-500);
+}
+
+.app-dialog-field input,
+.app-dialog-field textarea,
+.app-dialog-input {
+    width: 100%;
+    padding: 9px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line-input);
+    border-radius: 12px;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.app-dialog-field input:focus,
+.app-dialog-field textarea:focus,
+.app-dialog-input:focus {
+    outline: none;
+    border-color: var(--pink-400);
+    box-shadow: var(--focus-ring);
+}
+
+.app-dialog-field textarea {
+    min-height: 62px;
+    line-height: 1.45;
+    resize: vertical;
 }
 
 .app-dialog-buttons {

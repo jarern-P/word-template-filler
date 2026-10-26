@@ -227,8 +227,9 @@ contextBridge.exposeInMainWorld(
         postOcrRemove: () =>
             ipcRenderer.invoke("post-ocr:remove"),
 
-        // payload = { text, engine? } — engine ไม่ส่ง = ใช้ค่าที่บันทึกไว้
-        // คืน { ok, text, engine, chunks, sentences, warnings }
+        // payload = { text, engine?, unit? } — ไม่ส่ง = ใช้ค่าที่บันทึกไว้
+        //   unit = line | sentence | chunk (ขนาดหน่วยที่ส่งให้ AI ทีละครั้ง)
+        // คืน { ok, text, engine, unit, chunks, sentences, warnings }
         postOcrProcess: (payload) =>
             ipcRenderer.invoke(
                 "post-ocr:process",
@@ -277,7 +278,10 @@ contextBridge.exposeInMainWorld(
             ),
 
         // เพิ่มบรรทัดใหม่ด้วยตนเอง (หน้าฝึก OCR — ปุ่ม "เพิ่มเอง")
-        // payload = { source, input } — source ถ้าไม่ใส่จะใช้ "เพิ่มเอง"
+        // payload = { source, input, output }
+        //   input  = บรรทัดที่ OCR อ่านผิด (target)
+        //   output = คำที่ต้องการ — ใส่แล้วจะเป็นคู่ฝึกที่ใช้ได้ทันที
+        //   source ถ้าไม่ใส่จะใช้ "เพิ่มเอง"
         ocrTrainingAddManual: (payload) =>
             ipcRenderer.invoke(
                 "ocr-training:add-manual",
