@@ -13,8 +13,6 @@
 //                                    // always = ทุกหน้า
 //     "twoStage": false,             // ตัวเลือกย่อยของ PaddleOCR:
 //                                    // true = Two-Stage Localized OCR
-//     "cropPaddingY": 16,            // ระยะเว้นขอบบน/ล่างตอนครอปภาพให้ OCR
-//                                    // (พิกเซลที่ ~200 DPI, 0-48) ป้องกันสระ/วรรณยุกต์ถูกตัด
 //     "improve": {
 //       "prompt": ""                 // prompt ของปุ่ม "ปรับปรุง" (ว่าง = ค่าเริ่มต้น)
 //     },
@@ -46,13 +44,6 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
 // ความยาวสูงสุดของ prompt ที่แก้เองในหน้า ตั้งค่า OCR
 const MAX_PROMPT_LENGTH = 8000;
 
-// ระยะเว้นขอบบน/ล่างตอนครอปภาพให้ OCR (หน่วย: พิกเซลที่ ~200 DPI)
-// ยิ่งมากยิ่งไม่เสี่ยงตัดสระบน/วรรณยุกต์และสระล่าง
-// แต่มากเกินไปจะดูดบรรทัดข้างเคียงเข้ามาในภาพครอปจนอ่านซ้ำได้
-const DEFAULT_CROP_PADDING_Y = 16;
-const MIN_CROP_PADDING_Y = 0;
-const MAX_CROP_PADDING_Y = 48;
-
 // อนุญาตเฉพาะชื่อโมเดลที่ใช้ใน URL ได้ (กันการพิมพ์ผิด/แทรก path)
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 
@@ -63,7 +54,6 @@ function defaultConfig() {
         enabled: true,
         mode: 'auto',
         twoStage: false,
-        cropPaddingY: DEFAULT_CROP_PADDING_Y,
         improve: {
             prompt: ''
         },
@@ -102,25 +92,6 @@ function sanitizePrompt(value) {
     return text.length > MAX_PROMPT_LENGTH
         ? text.slice(0, MAX_PROMPT_LENGTH).trim()
         : text;
-}
-
-// ระยะเว้นขอบแนวตั้ง: จำนวนเต็มพิกเซลในช่วง 0-48 (ค่าผิดรูป/ไม่มี = ค่าเริ่มต้น)
-function sanitizeCropPaddingY(value) {
-    // ไม่ได้ส่งค่ามา (undefined/null/ว่างเปล่า) = ใช้ค่าเริ่มต้น
-    if (value === undefined || value === null || value === '') {
-        return DEFAULT_CROP_PADDING_Y;
-    }
-
-    const number = Number(value);
-
-    if (!Number.isFinite(number)) {
-        return DEFAULT_CROP_PADDING_Y;
-    }
-
-    return Math.min(
-        MAX_CROP_PADDING_Y,
-        Math.max(MIN_CROP_PADDING_Y, Math.round(number))
-    );
 }
 
 // ------------------------------------------------------------------
@@ -239,7 +210,6 @@ function normalizeRaw(input) {
         enabled: enabled,
         mode: mode,
         twoStage: source.twoStage === true,
-        cropPaddingY: sanitizeCropPaddingY(source.cropPaddingY),
         improve: {
             prompt: sanitizePrompt(improveInput.prompt)
         },
@@ -261,7 +231,6 @@ function toPublic(raw) {
         enabled: raw.enabled,
         mode: raw.mode,
         twoStage: raw.twoStage,
-        cropPaddingY: raw.cropPaddingY,
         improve: {
             prompt: raw.improve.prompt,
             // prompt เริ่มต้นมาพร้อมกัน เพื่อให้หน้าจอแสดง/แก้ไขได้
@@ -295,7 +264,6 @@ function readSecrets(dataPath) {
         enabled: raw.enabled,
         mode: raw.mode,
         twoStage: raw.twoStage,
-        cropPaddingY: raw.cropPaddingY,
         improve: {
             prompt: raw.improve.prompt
         },
@@ -351,9 +319,6 @@ function save(dataPath, payload) {
         twoStage: typeof input.twoStage === 'boolean'
             ? input.twoStage
             : current.twoStage,
-        cropPaddingY: input.cropPaddingY === undefined
-            ? current.cropPaddingY
-            : sanitizeCropPaddingY(input.cropPaddingY),
         improve: {
             prompt: improveInput.prompt === undefined
                 ? current.improve.prompt
@@ -389,10 +354,6 @@ module.exports = {
     MODES,
     DEFAULT_MODEL,
     MAX_PROMPT_LENGTH,
-    DEFAULT_CROP_PADDING_Y,
-    MIN_CROP_PADDING_Y,
-    MAX_CROP_PADDING_Y,
-    sanitizeCropPaddingY,
     read,
     readSecrets,
     save,

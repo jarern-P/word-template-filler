@@ -690,37 +690,20 @@ function assignLines(regions, lines) {
     });
 }
 
-// ค่าเริ่มต้นของระยะเว้นขอบแนวตั้ง (พิกเซลที่ ~200 DPI = ความละเอียดที่เรนเดอร์หน้า)
-// ปรับได้จากหน้า ตั้งค่า OCR → cropPaddingY (ช่วง 0-48)
-const DEFAULT_PADDING_Y = 16;
-
-function verticalPaddingY(value) {
-    // ไม่ได้ส่งค่ามา (undefined/null/ว่างเปล่า) = ใช้ค่าเริ่มต้น
-    if (value === undefined || value === null || value === '') {
-        return DEFAULT_PADDING_Y;
-    }
-
-    const number = Number(value);
-
-    if (!Number.isFinite(number)) return DEFAULT_PADDING_Y;
-
-    return Math.min(48, Math.max(0, Math.round(number)));
-}
-
 // ตัดภาพเฉพาะบล็อกออกมาให้ OCR (เว้นขอบเล็กน้อยกันตัวอักษรถูกตัด)
-function cropRegion(canvasModule, image, region, pageWidth, pageHeight, paddingY) {
+function cropRegion(canvasModule, image, region, pageWidth, pageHeight) {
     // เว้นขอบแนวนอนกันตัวอักษรหัว/ท้ายบรรทัดถูกตัด
     const paddingX = 8;
 
     // เว้นขอบแนวตั้งให้พอสำหรับสระบน/วรรณยุกต์และสระล่างของบรรทัดแรก/สุดท้าย
     // ในบล็อก (เคยตั้งเป็น 1px จนสระลอยถูกตัดหาย) — 16px ที่ ~200 DPI ≈ 5.8pt
     // ยังน้อยกว่าช่องว่างระหว่างบรรทั้ง จึงไม่ดูดบรรทัดข้างเคียงเข้ามาในบล็อก
-    const verticalPadding = verticalPaddingY(paddingY);
+    const paddingY = 16;
 
     const left = Math.max(0, Math.floor(region.x - paddingX));
-    const top = Math.max(0, Math.floor(region.y - verticalPadding));
+    const top = Math.max(0, Math.floor(region.y - paddingY));
     const right = Math.min(pageWidth, Math.ceil(region.x + region.width + paddingX));
-    const bottom = Math.min(pageHeight, Math.ceil(region.y + region.height + verticalPadding));
+    const bottom = Math.min(pageHeight, Math.ceil(region.y + region.height + paddingY));
 
     const width = right - left;
     const height = bottom - top;
@@ -754,9 +737,6 @@ async function analyzePdf(data, options) {
 
     // รวมบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ภายในแต่ละบล็อก (ใช้กับปุ่มปรับข้อความหลัง OCR)
     const joinLines = opts.joinLines === true;
-
-    // ระยะเว้นขอบบน/ล่างตอนตัดภาพ (px ที่ ~200 DPI) จากหน้า ตั้งค่า OCR
-    const paddingY = verticalPaddingY(opts.paddingY);
 
     if (!dataPath) {
         throw new Error('ไม่ได้ระบุตำแหน่งข้อมูลสำหรับวิเคราะห์ Layout');
@@ -906,8 +886,7 @@ async function analyzePdf(data, options) {
                                     image,
                                     region,
                                     pageWidth,
-                                    pageHeight,
-                                    paddingY
+                                    pageHeight
                                 );
 
                                 if (!crop) {
@@ -1053,8 +1032,5 @@ module.exports = {
     MODEL_SIZE,
     status,
     analyzePdf,
-    stop,
-    // ใช้ทดสอบการแปลงค่าจากหน้า ตั้งค่า OCR
-    verticalPaddingY,
-    DEFAULT_PADDING_Y
+    stop
 };
