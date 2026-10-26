@@ -1923,7 +1923,7 @@ async function buildContextRawText() {
         const parts = [];
 
         // รวมข้อมูลหลัก
-        if (masterList && masterList.ok && Array.isArray(masterList.result)) {
+        if (masterList && Array.isArray(masterList.result)) {
             const masters = masterList.result;
             if (masters.length > 0) {
                 parts.push('--- ข้อมูลหลัก (Master Data) ---');
@@ -1931,29 +1931,25 @@ async function buildContextRawText() {
                     const codeGroup = m.code_group || '';
                     const subGroup = m.sub_group || '';
                     const name = m.name || '';
-                    const created = m.created_at || '';
-                    const updated = m.updated_at || '';
-                    parts.push(`${codeGroup}${subGroup ? ' / ' + subGroup : ''} | ${name} | created: ${created} | updated: ${updated}`);
+                    parts.push(`${codeGroup}${subGroup ? ' / ' + subGroup : ''} | ${name}`);
                 }
                 parts.push('');
             }
         }
 
         // รวมคลังคำ
-        if (wordList && wordList.ok && Array.isArray(wordList.result)) {
+        if (wordList && Array.isArray(wordList.result)) {
             const words = wordList.result;
             if (words.length > 0) {
                 parts.push('--- คลังคำ (Word Dictionary) ---');
                 for (const w of words) {
                     const word = w.word || '';
-                    const created = w.created_at || '';
-                    const updated = w.updated_at || '';
-                    parts.push(`${word} | created: ${created} | updated: ${updated}`);
+                    parts.push(word);
                 }
                 parts.push('');
             }
         }
-
+        
         return parts.join('\n').trim();
 
     } catch (error) {
