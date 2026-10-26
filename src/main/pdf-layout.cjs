@@ -693,9 +693,12 @@ function assignLines(regions, lines) {
 // ตัดภาพเฉพาะบล็อกออกมาให้ OCR (เว้นขอบเล็กน้อยกันตัวอักษรถูกตัด)
 function cropRegion(canvasModule, image, region, pageWidth, pageHeight) {
     // เว้นขอบแนวนอนกันตัวอักษรหัว/ท้ายบรรทัดถูกตัด
-    // แต่ไม่เว้นแนวตั้ง — ไม่เช่นนั้นวรรณยุกต์ของบรรทัดข้างเคียงจะติดเข้ามา
     const paddingX = 8;
-    const paddingY = 1;
+
+    // เว้นขอบแนวตั้งให้พอสำหรับสระบน/วรรณยุกต์และสระล่างของบรรทัดแรก/สุดท้าย
+    // ในบล็อก (เคยตั้งเป็น 1px จนสระลอยถูกตัดหาย) — 16px ที่ ~200 DPI ≈ 5.8pt
+    // ยังน้อยกว่าช่องว่างระหว่างบรรทั้ง จึงไม่ดูดบรรทัดข้างเคียงเข้ามาในบล็อก
+    const paddingY = 16;
 
     const left = Math.max(0, Math.floor(region.x - paddingX));
     const top = Math.max(0, Math.floor(region.y - paddingY));
