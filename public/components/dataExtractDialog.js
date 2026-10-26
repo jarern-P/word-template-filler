@@ -58,18 +58,6 @@
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
-        '            <div class="data-tools">',
-        '                <button id="dataPostOcrBtn" type="button" title="แก้เฉพาะคำที่ OCR อ่านผิด — ไม่จัด Layout ไม่สลับลำดับ ไม่แบ่งประโยค (เลือก Local AI / AI API ที่ ตั้งค่า OCR)">แก้คำผิด</button>',
-        '                <button id="dataPostOcrUndoBtn" type="button" class="plain" hidden>ย้อนกลับ</button>',
-        '            </div>',
-        '            <p class="hint data-tools-hint">',
-        '                แก้เฉพาะคำที่ OCR อ่านผิด — ไม่แตะ Layout ไม่สลับลำดับ ไม่แบ่งประโยค ',
-        '                บรรทัดเดิมจึงคงอยู่',
-        '                <br>Local AI ส่งตามขนาดหน่วยที่ตั้งไว้ · AI API ส่งทั้งก้อนเสมอ ',
-        '                พร้อมคู่ตัวอย่างจากคลัง ฝึก OCR',
-        '                <br>วิธีประมวลผลเลือกได้ที่ ตั้งค่า OCR › หลัง OCR: ',
-        '                <span id="dataPostOcrEngine" class="data-engine-badge">ไลบรารีในเครื่อง</span>',
-        '            </p>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -156,41 +144,8 @@
             el('dataPdfInput').click();
         });
 
-        // ── ปุ่มเดียว: แก้คำผิด ──
-        el('dataPostOcrBtn').addEventListener('click', function () {
-            runPostOcr();
-        });
-
-        el('dataPostOcrUndoBtn').addEventListener('click', undoPostOcr);
-
-        refreshPostOcrEngine();
-
-        el('dataSourceText').addEventListener('input', updateToolsState);
-
         // ข้อความที่วาง/พิมพ์เอง (ไม่ใช่ไฟล์) เก็บลงคลังฝึก OCR ด้วย — ดู capturePastedLines
         el('dataSourceText').addEventListener('input', schedulePasteCapture);
-
-        // ความคืบหน้าระหว่างแก้คำผิด (Local AI / AI API)
-        if (window.electronAPI && window.electronAPI.onPostOcrProgress) {
-            window.electronAPI.onPostOcrProgress(function (progress) {
-                if (!postOcrBusy || !progress) return;
-
-                if (progress.stage === 'download') {
-                    setSourceStatus(
-                        'กำลังดาวน์โหลดโมเดล Qwen2.5-3B... ' +
-                        (Number(progress.percent) || 0) + '%'
-                    );
-                    return;
-                }
-
-                if (progress.stage === 'chunk') {
-                    setSourceStatus(
-                        'กำลังแก้คำผิดด้วย AI ' + unitLabel(progress.unit) +
-                        'ที่ ' + progress.index + '/' + progress.total + '...'
-                    );
-                }
-            });
-        }
 
         // ความคืบหน้าจาก main process ระหว่างอ่าน PDF
         if (window.electronAPI && window.electronAPI.onPdfExtractProgress) {
@@ -253,8 +208,6 @@
 
         overlay.classList.remove('open');
 
-        el('dataPostOcrUndoBtn').hidden = true;
-        postOcrUndo = null;
     }
 
     // จำนวน field ที่มี regex (ไม่นับ field ที่เป็นตาราง)
@@ -427,8 +380,6 @@
 
             textarea.value = text;
 
-            updateToolsState();
-
             const ocrPages =
                 result && Array.isArray(result.ocrPages)
                     ? result.ocrPages
@@ -467,8 +418,6 @@
 
         } catch (error) {
             console.error(error);
-
-            updateToolsState();
 
             setSourceStatus(
                 error && error.expected ? error.message : 'อ่านไฟล์ไม่สำเร็จ',
@@ -530,182 +479,6 @@
         }).catch(function () {
             // เก็บไม่ได้ก็ไม่เป็นไร — การอ่านไฟล์ต้องทำงานต่อได้
         });
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    // เครื่องมือหลัง OCR: แก้คำผิดอย่างเดียว
-    // ──────────────────────────────────────────────────────────────
-
-    // เปิด/ปิดปุ่มตามข้อมูลที่มีอยู่ — และปิดระหว่างทำงาน
-    function updateToolsState() {
-        const textarea = el('dataSourceText');
-        const hasText = Boolean(textarea && textarea.value.trim() !== '');
-
-        el('dataPostOcrBtn').disabled = !hasText || postOcrBusy;
-    }
-
-    const POST_OCR_ENGINE_LABELS = {
-        library: 'ไม่แก้คำ (ไลบรารี)',
-        local: 'Local AI (Qwen2.5-3B)',
-        api: 'AI API (Gemini)'
-    };
-
-    const POST_OCR_UNIT_LABELS = {
-        line: 'บรรทัด',
-        sentence: 'ประโยค',
-        chunk: 'ก้อน'
-    };
-
-    function unitLabel(unit) {
-        return POST_OCR_UNIT_LABELS[unit] || POST_OCR_UNIT_LABELS.line;
-    }
-
-    let postOcrBusy = false;
-    let postOcrUndo = null;
-
-    function engineLabel(engine) {
-        return POST_OCR_ENGINE_LABELS[engine] || POST_OCR_ENGINE_LABELS.library;
-    }
-
-    // อ่าน engine + ขนาดหน่วยที่เลือกไว้ในหน้า ตั้งค่า OCR มาแสดงบนปุ่ม
-    async function refreshPostOcrEngine() {
-        let engine = 'library';
-        let unit = 'line';
-
-        try {
-            const response =
-                window.electronAPI && window.electronAPI.ocrGetConfig
-                    ? await window.electronAPI.ocrGetConfig()
-                    : null;
-
-            const config = response && response.config
-                ? response.config
-                : response;
-            const postOcr = (config && config.postOcr) || {};
-
-            engine = postOcr.engine || 'library';
-            unit = postOcr.unit || 'line';
-
-        } catch (error) {
-            engine = 'library';
-        }
-
-        const badge = el('dataPostOcrEngine');
-
-        if (badge) {
-            // AI API ส่งทั้งก้อนเสมอ (ดู main process)
-            const effectiveUnit = engine === 'api' ? 'chunk' : unit;
-
-            badge.textContent = engine === 'api'
-                ? engineLabel(engine) + ' · ส่งทั้งก้อน'
-                : engineLabel(engine) + ' · แก้ทีละ' + unitLabel(effectiveUnit);
-            badge.title =
-                'เลือกวิธีประมวลผลและขนาดหน่วยได้ที่หน้า ตั้งค่า OCR';
-        }
-
-        return engine;
-    }
-
-    function undoPostOcr() {
-        if (postOcrUndo === null) return;
-
-        el('dataSourceText').value = postOcrUndo;
-        postOcrUndo = null;
-
-        el('dataPostOcrUndoBtn').hidden = true;
-
-        hideResults();
-        updateToolsState();
-
-        setSourceStatus('ย้อนกลับข้อความก่อนแก้คำแล้ว');
-    }
-
-    // แก้คำผิดอย่างเดียว — ไม่จัด Layout ไม่สลับลำดับ ไม่แบ่งประโยค
-    // แต่ละหน่วย (บรรทัด/ประโยค/ก้อน) ได้คู่ตัวอย่างจากคลัง ฝึก OCR เป็น few-shot
-    async function runPostOcr() {
-        if (postOcrBusy) return;
-
-        const textarea = el('dataSourceText');
-        const original = textarea.value;
-
-        if (original.trim() === '') {
-            await scope.AppDialog.alert(
-                'วางข้อความหรืออัปโหลดไฟล์ .pdf / .docx ก่อนใช้ปุ่มนี้'
-            );
-            return;
-        }
-
-        const engine = await refreshPostOcrEngine();
-
-        if (engine !== 'local' && engine !== 'api') {
-            await scope.AppDialog.alert(
-                'ยังไม่ได้เลือก AI สำหรับแก้คำ\n\n' +
-                'ไปที่ ตั้งค่า OCR › หลัง OCR แล้วเลือก Local AI (Qwen) ' +
-                'หรือ AI API (Gemini) ก่อน'
-            );
-            return;
-        }
-
-        if (!window.electronAPI || !window.electronAPI.postOcrProcess) {
-            await scope.AppDialog.alert(
-                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ AI แก้คำ'
-            );
-            return;
-        }
-
-        postOcrBusy = true;
-        updateToolsState();
-
-        hideResults();
-
-        postOcrUndo = original;
-        el('dataPostOcrUndoBtn').hidden = false;
-
-        try {
-            setSourceStatus(
-                'กำลังแก้คำผิดด้วย ' + engineLabel(engine) + '...'
-            );
-
-            const response = await window.electronAPI.postOcrProcess({
-                text: original,
-                engine: engine
-            });
-
-            if (!response || response.ok === false) {
-                throw new Error(
-                    (response && response.error) || 'แก้คำผิดไม่สำเร็จ'
-                );
-            }
-
-            const text = String(response.text || original);
-            const warnings = Array.isArray(response.warnings)
-                ? response.warnings
-                : [];
-
-            textarea.value = text;
-            updateToolsState();
-
-            hideResults();
-
-            setSourceStatus(
-                'แก้คำผิดแล้ว (' + engineLabel(engine) + ')' +
-                ' · ส่ง ' + response.chunks + ' ' + unitLabel(response.unit) +
-                (warnings.length > 0
-                    ? ' — ' + warnings.length + ' หน่วยใช้ข้อความเดิม'
-                    : '') +
-                ' · ' + text.length + ' ตัวอักษร'
-            );
-
-        } catch (error) {
-            setSourceStatus(
-                (error && error.message) || 'แก้คำผิดไม่สำเร็จ',
-                'error'
-            );
-
-        } finally {
-            postOcrBusy = false;
-            updateToolsState();
-        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1101,14 +874,6 @@
         el('dataSourceText').value = '';
         setSourceStatus('');
         hideResults();
-
-        // เริ่มกล่องใหม่ — ข้อความชุดใหม่ยังไม่มีอะไรให้ย้อนกลับ
-        postOcrUndo = null;
-
-        el('dataPostOcrUndoBtn').hidden = true;
-
-        updateToolsState();
-        refreshPostOcrEngine();
 
         overlay.classList.add('open');
 

@@ -10,9 +10,6 @@ data/ocr/
 # โมเดล PP-DocLayoutV2 สำหรับวิเคราะห์โครงสร้างเอกสาร (~213 MB)
 data/layout/
 
-# โมเดล Qwen2.5-3B-Instruct สำหรับปรับข้อความหลัง OCR (~2 GB)
-data/post-ocr/
-
 # Logs
 logs
 *.log

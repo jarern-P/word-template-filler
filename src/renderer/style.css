@@ -4300,30 +4300,6 @@ body.table-ratio-dragging .table-ratio-handle {
     gap: 8px;
 }
 
-/* ── เครื่องมือหลัง OCR: ปุ่มเดียว + engine ที่ใช้ ── */
-
-.data-engine-badge {
-    font-weight: 600;
-    color: var(--text);
-    white-space: nowrap;
-}
-
-.data-tools {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 10px;
-}
-
-.data-tools button {
-    margin-top: 0;
-}
-
-.data-tools-hint {
-    margin: 6px 0 0;
-    font-size: 12px;
-}
-
 /* โครงสร้างเอกสาร */
 
 .data-layout-page {
