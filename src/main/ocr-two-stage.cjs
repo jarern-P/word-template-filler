@@ -29,10 +29,44 @@ const DETECT_MAX_SIDE = 2400;
 
 // ขอบที่เว้นเพิ่มรอบกล่องข้อความ — ต้องเผื่อแนวตั้งพอลำหรับวรรณยุกต์/ตัวห้อย
 // (detection มักตัดขอบบน-ล่างของกล่องจนชิดตัวอักษรเกินไป)
-// แนวตั้งเผื่อมากกว่าแนวนอน: 16px ที่ 300 DPI ≈ 3.8pt พอสำหรับสระบน/ล่าง
-// (เผื่อมากกว่านี้จะเริ่มดูดบรรทัดข้างเคียงเข้ามาในครอป)
 const CROP_PADDING_X = 8;
-const CROP_PADDING_Y = 16;
+
+// ระยะเว้นขอบแนวตั้งตั้งค่าได้จากหน้า ตั้งค่า OCR → cropPaddingY
+// ค่าที่ผู้ใช้ตั้งเป็น "พิกเซลที่ ~200 DPI" แต่ภาพของโหมดนี้ที่ ~300 DPI
+// จึงต้องคูณด้วย 300/200 ก่อนใช้ (เผื่อมากเกินไปจะดูดบรรทัดข้างเคียงเข้ามาอ่านซ้ำ)
+const BASE_CROP_PADDING_Y = 16;         // ค่าเริ่มต้น (px ที่ ~200 DPI)
+const DPI_RATIO = 300 / 200;
+const BASE_DETECT_PADDING_Y = 0.45;     // สัดส่วนขอบกล่อง detection ของค่าเริ่มต้น
+
+// แปลงค่าจากหน้าจอเป็นค่าที่ใช้จริงในโหมดนี้
+function resolvePaddingY(value) {
+    // ไม่ได้ส่งค่ามา (undefined/null/ว่างเปล่า) = ใช้ค่าเริ่มต้น
+    const px200 = (value === undefined || value === null || value === '')
+        ? BASE_CROP_PADDING_Y
+        : clampPaddingY(Number(value));
+
+    return {
+        // ขอบครอป = พิกเซลจริงของภาพ ~300 DPI
+        cropPx: Math.round(px200 * DPI_RATIO),
+        // ขอบกล่อง detection = สัดส่วนของความสูงกล่อง (ขยายทั้งบนและล่าง)
+        detectFraction: Math.min(
+            1,
+            Math.round(
+                BASE_DETECT_PADDING_Y * (px200 / BASE_CROP_PADDING_Y) * 1000
+            ) / 1000
+        )
+    };
+}
+
+function clampPaddingY(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) return BASE_CROP_PADDING_Y;
+
+    return Math.min(48, Math.max(0, Math.round(number)));
+}
+
+const DEFAULT_CROP_PX = Math.round(BASE_CROP_PADDING_Y * DPI_RATIO);
 
 // กล่องที่เล็กกว่านี้ถือเป็นสัญญาณรบกวน (เส้นตาราง จุด ฯลฯ)
 const MIN_BOX_SIDE = 6;
@@ -136,11 +170,16 @@ function toRegion(box) {
 // ครอปบริเวณข้อความจากภาพหน้า
 // ------------------------------------------------------------------
 
-function cropRegion(canvasModule, image, region, pageWidth, pageHeight) {
+function cropRegion(canvasModule, image, region, pageWidth, pageHeight, paddingY) {
+    // paddingY = พิกเซลของภาพ ~300 DPI (มาจาก resolvePaddingY)
+    const verticalPadding = Number.isFinite(Number(paddingY))
+        ? Math.max(0, Math.round(Number(paddingY)))
+        : DEFAULT_CROP_PX;
+
     const left = Math.max(0, Math.floor(region.left - CROP_PADDING_X));
-    const top = Math.max(0, Math.floor(region.top - CROP_PADDING_Y));
+    const top = Math.max(0, Math.floor(region.top - verticalPadding));
     const right = Math.min(pageWidth, Math.ceil(region.right + CROP_PADDING_X));
-    const bottom = Math.min(pageHeight, Math.ceil(region.bottom + CROP_PADDING_Y));
+    const bottom = Math.min(pageHeight, Math.ceil(region.bottom + verticalPadding));
 
     const width = right - left;
     const height = bottom - top;
@@ -320,7 +359,8 @@ function median(values) {
 // ------------------------------------------------------------------
 
 // อ่านภาพหน้า (PNG) ด้วยวิธีสองระยะ — แยกออกมาเพื่อทดสอบได้โดยไม่ต้องมี PDF
-async function ocrPng(png) {
+async function ocrPng(png, options) {
+    const padding = resolvePaddingY((options || {}).paddingY);
     const canvasModule = require('@napi-rs/canvas');
 
     let image;
@@ -342,7 +382,7 @@ async function ocrPng(png) {
         maxSideLength: DETECT_MAX_SIDE,
         // เผื่อขอบบน/ล่างของกล่อง — ค่าเริ่มต้นของที่นี่เคยต่ำกว่าค่าเริ่มต้น
         // ของไลบรารี (0.25 < 0.4) ทำให้สระลอย/วรรณยุกต์ถูกตัด
-        paddingVertical: 0.45,
+        paddingVertical: padding.detectFraction,
         // เผื่อขอบข้างมากพอ — detection มักตัดขอบตัวอักษรหัวบรรทัดจนหาย
         paddingHorizontal: 0.12
     });
@@ -374,7 +414,8 @@ async function ocrPng(png) {
             image,
             region,
             pageWidth,
-            pageHeight
+            pageHeight,
+            padding.cropPx
         );
 
         if (!crop) continue;
@@ -476,11 +517,13 @@ async function ocrPage(page, options) {
         opts.scale || TWO_STAGE_SCALE
     );
 
-    return ocrPng(png);
+    return ocrPng(png, opts);
 }
 
 module.exports = {
     TWO_STAGE_SCALE,
+    // ใช้ทดสอบการแปลงค่าจากหน้า ตั้งค่า OCR
+    resolvePaddingY,
     // ใช้ทดสอบโดยไม่ต้องโหลดโมเดล OCR
     cleanText,
     isNoiseLine,

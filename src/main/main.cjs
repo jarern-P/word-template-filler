@@ -2183,6 +2183,8 @@ ipcMain.handle(
                         dataPath: getDataPath(),
                         joinLines:
                             Boolean(payload && payload.joinLines),
+                        // ระยะเว้นขอบบน/ล่างตอนตัดภาพ (หน้า ตั้งค่า OCR → cropPaddingY)
+                        paddingY: ocrConfig.read(getDataPath()).cropPaddingY,
                         onProgress: function (progress) {
                             if (event.sender.isDestroyed()) {
                                 return;
@@ -2254,6 +2256,10 @@ ipcMain.handle(
             // ค่าตั้ง OCR ของเครื่องนี้ (พร้อม API key สำหรับผู้ให้บริการที่เลือก)
             const settings =
                 ocrConfig.readSecrets(getDataPath());
+
+            // ระยะเว้นขอบบน/ล่างตอนครอปภาพให้ OCR (หน้า ตั้งค่า OCR → cropPaddingY)
+            // ต้องตั้งก่อนเริ่ม OCR เพราะมีผลกับโมเดลตรวจจับของ PaddleOCR
+            ocrPaddle.setCropPaddingY(settings.cropPaddingY);
 
             const useOcr =
                 settings.enabled === true &&
@@ -2381,7 +2387,9 @@ ipcMain.handle(
 
                 ocrPage = function (page) {
 
-                    return ocrTwoStage.ocrPage(page);
+                    return ocrTwoStage.ocrPage(page, {
+                        paddingY: settings.cropPaddingY
+                    });
                 };
             }
 

@@ -132,6 +132,17 @@
         '            หลังจากนั้น OCR จะทำงานออฟไลน์ได้',
         '        </p>',
 
+        '        <div class="field">',
+        '            <label for="ocrCropPaddingY">ระยะเว้นขอบบน/ล่าง (px)</label>',
+        '            <input type="number" id="ocrCropPaddingY" min="0" max="48" step="1"',
+        '                   inputmode="numeric" placeholder="16">',
+        '            <p class="hint">',
+        '                เผื่อที่ว่างเหนือ/ใต้กล่องข้อความก่อนส่งให้ OCR เพื่อกันสระบน วรรณยุกต์ ',
+        '                และสระล่างถูกตัด (นับเป็นพิกเซลที่ ~200 DPI, ค่าเริ่มต้น 16, ช่วง 0-48) — ',
+        '                มากเกินไปอาจดึงบรรทัดข้างเคียงเข้ามาอ่านซ้ำ น้อยเกินไปสระอาจหาย',
+        '            </p>',
+        '        </div>',
+
         '        <div class="ocr-status-box" id="ocrStatusBox">',
         '            <p class="ocr-status-head" id="ocrStatusTitle">กำลังตรวจสอบสถานะ...</p>',
         '            <p class="hint" id="ocrStatusDetail"></p>',
@@ -262,6 +273,7 @@
         enabled: true,
         mode: 'auto',
         twoStage: false,
+        cropPaddingY: 16,
         improve: { prompt: '', defaultPrompt: '' },
         gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
         iloveapi: { hasKey: false }
@@ -351,6 +363,9 @@
             enabled: value.enabled !== false,
             mode: value.mode === 'always' ? 'always' : 'auto',
             twoStage: value.twoStage === true,
+            cropPaddingY: Number.isFinite(Number(value.cropPaddingY))
+                ? Number(value.cropPaddingY)
+                : 16,
             improve: {
                 prompt: (value.improve && value.improve.prompt) || '',
                 defaultPrompt: (value.improve && value.improve.defaultPrompt) || ''
@@ -368,6 +383,7 @@
 
         el('ocrEnabled').checked = settings.enabled;
         el('ocrTwoStage').checked = settings.twoStage;
+        el('ocrCropPaddingY').value = settings.cropPaddingY;
 
         el('ocrModeAuto').checked = settings.mode !== 'always';
         el('ocrModeAlways').checked = settings.mode === 'always';
@@ -425,11 +441,19 @@
     }
 
     function currentPayload() {
+        // ช่องว่างว่างเปล่า = ค่าเริ่มต้น (ไม่ใช่ 0 = ไม่เว้นขอบเลย)
+        const rawPadding = el('ocrCropPaddingY').value.trim();
+        const padding = rawPadding === '' ? NaN : Number(rawPadding);
+        const cropPaddingY = Number.isFinite(padding)
+            ? Math.min(48, Math.max(0, Math.round(padding)))
+            : 16;
+
         return {
             provider: selectedProvider(),
             enabled: el('ocrEnabled').checked,
             mode: el('ocrModeAlways').checked ? 'always' : 'auto',
             twoStage: el('ocrTwoStage').checked,
+            cropPaddingY: cropPaddingY,
             improve: {
                 // แก้กลับเป็นข้อความเริ่มต้น = เก็บเป็นว่าง (ใช้ค่าเริ่มต้นของโปรแกรม)
                 prompt: el('ocrImprovePrompt').value.trim() ===

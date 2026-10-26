@@ -56,6 +56,68 @@ const SERVICE_OPTIONS = {
 let servicePromise = null;
 let serviceModule = null;
 
+// จำนวนงานที่กำลังใช้ service อยู่ — กันการลบ service ระหว่างมี OCR วิ่ง
+let activeCalls = 0;
+
+// ───────────────────────────────────────────────────────────────
+// ระยะเว้นขอบบน/ล่าง (ตั้งค่าได้จากหน้า ตั้งค่า OCR → cropPaddingY)
+// ───────────────────────────────────────────────────────────────
+//
+// ค่าที่ตั้งเป็น "พิกเซลที่ ~200 DPI" แต่โมเดลตรวจจับรับค่าเป็นสัดส่วนของ
+// ความสูงกล่องข้อความ จึงแปลงด้วยค่าอ้างอิงดังนี้ (ค่าเริ่มต้น 16px = 0.6)
+const BASE_CROP_PADDING_Y = 16;
+const BASE_VERTICAL_PADDING = 0.6;
+const MAX_VERTICAL_PADDING = 1.0;
+
+// แปลง px (ที่ ~200 DPI) → สัดส่วนของความสูงกล่อง (ใช้ทั้งด้านบนและด้านล่าง)
+function verticalPaddingFor(paddingY) {
+    // ไม่ได้ส่งค่ามา (undefined/null/ว่างเปล่า) = ใช้ค่าเริ่มต้น
+    if (paddingY === undefined || paddingY === null || paddingY === '') {
+        return BASE_VERTICAL_PADDING;
+    }
+
+    const number = Number(paddingY);
+    const px = Number.isFinite(number)
+        ? Math.min(48, Math.max(0, number))
+        : BASE_CROP_PADDING_Y;
+
+    const fraction = BASE_VERTICAL_PADDING * (px / BASE_CROP_PADDING_Y);
+
+    return Math.round(
+        Math.min(MAX_VERTICAL_PADDING, fraction) * 1000
+    ) / 1000;
+}
+
+// เรียกจาก main process ทุกครั้งก่อนเริ่ม OCR ด้วยค่าจาก data/ocr-config.json
+// ค่าเปลี่ยน = สร้าง service ใหม่ครั้งถัดไป (โมเดลยังอยู่ในแคช ไม่ต้องโหลดใหม่)
+function setCropPaddingY(paddingY) {
+    const fraction = verticalPaddingFor(paddingY);
+
+    if (SERVICE_OPTIONS.detection.paddingVertical === fraction) return;
+
+    SERVICE_OPTIONS.detection.paddingVertical = fraction;
+
+    const previous = servicePromise;
+
+    servicePromise = null;
+
+    if (!previous) return;
+
+    previous.then(function (service) {
+        // ยังมีงานวิ่งอยู่ = ปล่อย service เดิมไว้ (ค้างหน่วยความจำเล็กน้อย
+        // ดีกว่าปล่อยงาน OCR ที่กำลังทำอยู่พังกลางทาง)
+        if (activeCalls > 0) return;
+
+        return service.destroy();
+    }).catch(function () {
+        // ปล่อยให้ service เดิมถูกเก็บกวาดโดย GC ไม่ทำให้การตั้งค่าล้มเหลว
+    });
+}
+
+function currentVerticalPadding() {
+    return SERVICE_OPTIONS.detection.paddingVertical;
+}
+
 // ------------------------------------------------------------------
 // ตรวจสอบ/เตรียมความพร้อม
 // ------------------------------------------------------------------
@@ -204,7 +266,14 @@ function getService() {
 // เริ่ม service ล่วงหน้า (ดาวน์โหลดโมเดลถ้ายังไม่มี)
 // ใช้กับปุ่ม "เตรียมโมเดล" ในหน้า ตั้งค่า OCR
 async function prepare() {
-    await getService();
+    activeCalls += 1;
+
+    try {
+        await getService();
+
+    } finally {
+        activeCalls -= 1;
+    }
 
     return status();
 }
@@ -363,6 +432,8 @@ async function recognizePng(png) {
 
     let result;
 
+    activeCalls += 1;
+
     try {
         result = await service.recognize(buffer);
 
@@ -370,6 +441,9 @@ async function recognizePng(png) {
         const friendly = friendlyError(error);
         friendly.cause = error;
         throw friendly;
+
+    } finally {
+        activeCalls -= 1;
     }
 
     const lines = toPositionedLines(result);
@@ -395,6 +469,8 @@ async function detectPng(png, options) {
 
     let result;
 
+    activeCalls += 1;
+
     try {
         result = await service.detect(buffer, options || {});
 
@@ -402,6 +478,9 @@ async function detectPng(png, options) {
         const friendly = friendlyError(error);
         friendly.cause = error;
         throw friendly;
+
+    } finally {
+        activeCalls -= 1;
     }
 
     return Array.isArray(result && result.boxes) ? result.boxes : [];
@@ -423,5 +502,9 @@ module.exports = {
     ocrPage,
     recognizePng,
     detectPng,
-    renderPageToPng
+    renderPageToPng,
+    // ตั้งระยะเว้นขอบแนวตั้งจากค่าในหน้า ตั้งค่า OCR (ใช้ทดสอบด้วย)
+    setCropPaddingY,
+    verticalPaddingFor,
+    currentVerticalPadding
 };
