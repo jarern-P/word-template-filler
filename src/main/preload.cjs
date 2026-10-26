@@ -212,6 +212,31 @@ contextBridge.exposeInMainWorld(
         },
 
         // ─────────────────────────────
+        // Improve Text (ปรับปรุงข้อความ — ตรวจคำผิด + จัดเป็น Key-Value)
+        // ─────────────────────────────
+
+        // payload = { text } — ใช้ API key + โมเดลของ Gemini ที่บันทึกไว้ในหน้า ตั้งค่า OCR
+        // คืน { ok, text, model, chunks }
+        ocrImproveText: (payload) =>
+            ipcRenderer.invoke("ocr:improve", payload),
+
+        // ความคืบหน้าเมื่อข้อความยาวและถูกแบ่งเป็นก้อน { stage, index, total }
+        onImproveProgress: (callback) => {
+            if (typeof callback !== "function") return;
+
+            ipcRenderer.on(
+                "ocr:improve-progress",
+                (event, progress) => callback(progress)
+            );
+        },
+
+        offImproveProgress: () => {
+            ipcRenderer.removeAllListeners(
+                "ocr:improve-progress"
+            );
+        },
+
+        // ─────────────────────────────
         // OCR Training (หน้า ฝึก OCR)
         // ─────────────────────────────
 

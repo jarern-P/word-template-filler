@@ -26,6 +26,9 @@ const pdfLayout =
 const ocrTraining =
     require("./ocr-training.cjs");
 
+const ocrImprove =
+    require("./ocr-improve.cjs");
+
 
 // ============================================================
 // Locale
@@ -1800,6 +1803,76 @@ ipcMain.handle(
 
             console.error(
                 "ocr:vl-remove error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+// ============================================================
+// Improve Text (ปรับปรุงข้อความ — ตรวจคำผิด + จัดเป็น Key-Value)
+// ============================================================
+//
+// ปุ่ม "ปรับปรุง" ในกล่องใส่ข้อมูล: ส่งข้อความที่อ่านได้ให้ Gemini
+// เพื่อแก้คำที่ OCR อ่านผิด แล้วจัดใหม่เป็น "ชื่อฟิลด์: ค่า" ทีละบรรทัด
+// ใช้ API key + โมเดลเดียวกับที่บันทึกไว้ในหน้า ตั้งค่า OCR
+
+ipcMain.handle(
+    "ocr:improve",
+    async function (event, payload) {
+
+        try {
+
+            const text =
+                payload && typeof payload.text === "string"
+                    ? payload.text
+                    : "";
+
+            if (text.trim() === "") {
+                throw new Error("ไม่มีข้อความให้ปรับปรุง");
+            }
+
+            // key จริงอยู่ใน main process เท่านั้น
+            const saved = ocrConfig.readSecrets(getDataPath());
+
+            const result =
+                await ocrImprove.improveText(
+                    text,
+                    {
+                        apiKey: saved.gemini?.apiKey || "",
+                        model: saved.gemini?.model,
+                        onProgress: function (progress) {
+
+                            if (event.sender.isDestroyed()) {
+                                return;
+                            }
+
+                            event.sender.send(
+                                "ocr:improve-progress",
+                                progress
+                            );
+                        }
+                    }
+                );
+
+            return {
+                ok: true,
+                ...result
+            };
+
+        } catch (error) {
+
+            console.error(
+                "ocr:improve error:",
                 error
             );
 

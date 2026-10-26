@@ -58,6 +58,14 @@
         '            <p id="dataSourceStatus" class="hint data-source-status"></p>',
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
+        '            <div class="data-tools">',
+        '                <button id="dataImproveBtn" type="button" title="ให้ Gemini ตรวจคำผิดและจัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด (ใช้ API key จาก ตั้งค่า OCR)">ปรับปรุง</button>',
+        '                <button id="dataImproveUndoBtn" type="button" class="plain" hidden>ย้อนกลับ</button>',
+        '            </div>',
+        '            <p class="hint data-tools-hint">',
+        '                ตรวจคำผิดและจัดข้อความใหม่เป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด ',
+        '                ด้วย Gemini — ใช้ API key และโมเดลจาก ตั้งค่า OCR',
+        '            </p>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -144,6 +152,24 @@
             el('dataPdfInput').click();
         });
 
+        // ── ปรับปรุงข้อความด้วย AI (Gemini) ──
+        el('dataImproveBtn').addEventListener('click', runImprove);
+        el('dataImproveUndoBtn').addEventListener('click', undoImprove);
+
+        el('dataSourceText').addEventListener('input', updateImproveState);
+
+        // ความคืบหน้าเมื่อข้อความยาวและถูกแบ่งเป็นก้อน
+        if (window.electronAPI && window.electronAPI.onImproveProgress) {
+            window.electronAPI.onImproveProgress(function (progress) {
+                if (!improveBusy || !progress) return;
+
+                setSourceStatus(
+                    'กำลังปรับปรุงข้อความด้วย AI ก้อนที่ ' +
+                    progress.index + '/' + progress.total + '...'
+                );
+            });
+        }
+
         // ข้อความที่วาง/พิมพ์เอง (ไม่ใช่ไฟล์) เก็บลงคลังฝึก OCR ด้วย — ดู capturePastedLines
         el('dataSourceText').addEventListener('input', schedulePasteCapture);
 
@@ -207,6 +233,9 @@
         }
 
         overlay.classList.remove('open');
+
+        el('dataImproveUndoBtn').hidden = true;
+        improveUndo = null;
 
     }
 
@@ -380,6 +409,12 @@
 
             textarea.value = text;
 
+            // ข้อความชุดใหม่ — ย้อนกลับไปชุดก่อนหน้าไม่ได้แล้ว
+            improveUndo = null;
+            el('dataImproveUndoBtn').hidden = true;
+
+            updateImproveState();
+
             const ocrPages =
                 result && Array.isArray(result.ocrPages)
                     ? result.ocrPages
@@ -479,6 +514,136 @@
         }).catch(function () {
             // เก็บไม่ได้ก็ไม่เป็นไร — การอ่านไฟล์ต้องทำงานต่อได้
         });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // ปรับปรุงข้อความด้วย AI: ตรวจคำผิด + จัดเป็น Key-Value
+    // ──────────────────────────────────────────────────────────────
+
+    let improveBusy = false;
+    let improveUndo = null;
+
+    // เปิด/ปิดปุ่มตามข้อมูลที่มีอยู่ — และปิดระหว่างทำงาน
+    function updateImproveState() {
+        const textarea = el('dataSourceText');
+        const hasText = Boolean(textarea && textarea.value.trim() !== '');
+
+        el('dataImproveBtn').disabled = !hasText || improveBusy;
+    }
+
+    function undoImprove() {
+        if (improveUndo === null) return;
+
+        el('dataSourceText').value = improveUndo;
+        improveUndo = null;
+
+        el('dataImproveUndoBtn').hidden = true;
+
+        hideResults();
+        updateImproveState();
+
+        setSourceStatus('ย้อนกลับข้อความก่อนปรับปรุงแล้ว');
+    }
+
+    // มี key ของ Gemini เก็บไว้แล้วหรือยัง (key จริงอยู่ใน main process)
+    async function geminiReady() {
+        try {
+            const response =
+                window.electronAPI && window.electronAPI.ocrGetConfig
+                    ? await window.electronAPI.ocrGetConfig()
+                    : null;
+
+            const config = response && response.config
+                ? response.config
+                : response;
+
+            return Boolean(config && config.gemini && config.gemini.hasKey);
+
+        } catch (error) {
+            // ตรวจไม่ได้ = ปล่อยให้ main process เป็นผู้แจ้ง error
+            return true;
+        }
+    }
+
+    // ส่งข้อความให้ Gemini ตรวจคำผิดและจัดเป็น "ชื่อฟิลด์: ค่า" ทีละบรรทัด
+    async function runImprove() {
+        if (improveBusy) return;
+
+        const textarea = el('dataSourceText');
+        const original = textarea.value;
+
+        if (original.trim() === '') {
+            await scope.AppDialog.alert(
+                'วางข้อความหรืออัปโหลดไฟล์ .pdf / .docx ก่อนใช้ปุ่มนี้'
+            );
+            return;
+        }
+
+        if (!window.electronAPI || !window.electronAPI.ocrImproveText) {
+            await scope.AppDialog.alert(
+                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ AI ปรับปรุงข้อความ'
+            );
+            return;
+        }
+
+        // ล็อกปุ่มทันที — การตรวจ API key เป็น async ผู้ใช้จึงกดซ้ำระหว่างรอไม่ได้
+        improveBusy = true;
+        updateImproveState();
+        hideResults();
+
+        try {
+            if (!(await geminiReady())) {
+                await scope.AppDialog.alert(
+                    'ยังไม่ได้ใส่ API key ของ Gemini\n\n' +
+                    'ไปที่ ตั้งค่า OCR › Gemini API แล้วบันทึก key ก่อน'
+                );
+                return;
+            }
+
+            setSourceStatus('กำลังให้ AI ตรวจคำผิดและจัดเป็น key-value...');
+
+            const response = await window.electronAPI.ocrImproveText({
+                text: original
+            });
+
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'ปรับปรุงข้อความไม่สำเร็จ'
+                );
+            }
+
+            const improved = String(response.text || '');
+
+            if (improved.trim() === '') {
+                throw new Error('AI ไม่ได้ส่งข้อความกลับมา');
+            }
+
+            improveUndo = original;
+            el('dataImproveUndoBtn').hidden = false;
+
+            textarea.value = improved;
+            updateImproveState();
+
+            hideResults();
+
+            setSourceStatus(
+                'ปรับปรุงแล้ว · ' + improved.split('\n').length + ' บรรทัด' +
+                ' · ' + (response.model || 'Gemini') +
+                (Number(response.chunks) > 1
+                    ? ' · ' + response.chunks + ' ก้อน'
+                    : '')
+            );
+
+        } catch (error) {
+            setSourceStatus(
+                (error && error.message) || 'ปรับปรุงข้อความไม่สำเร็จ',
+                'error'
+            );
+
+        } finally {
+            improveBusy = false;
+            updateImproveState();
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -875,6 +1040,10 @@
         setSourceStatus('');
         hideResults();
 
+        improveUndo = null;
+        el('dataImproveUndoBtn').hidden = true;
+
+        updateImproveState();
         overlay.classList.add('open');
 
         const focusTarget = isConfig
