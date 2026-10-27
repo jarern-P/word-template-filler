@@ -95,6 +95,13 @@ contextBridge.exposeInMainWorld(
         privacyPreview: (payload) =>
             ipcRenderer.invoke("privacy:preview", payload),
 
+        // ตรวจว่าจะถูกปกปิดอะไรบ้างก่อนกด "ปรับปรุง" — payload = { text }
+        // สแกนข้อความ + ข้อมูลอ้างอิงจากฐานข้อมูล ไม่เรียก AI
+        // คืน { ok, result: { text, context, count, contextCount, placeholders,
+        //                     items: [{ placeholder, value }], unmatched, errors } }
+        privacyInspect: (payload) =>
+            ipcRenderer.invoke("privacy:inspect", payload),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),

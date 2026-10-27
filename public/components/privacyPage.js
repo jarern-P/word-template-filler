@@ -580,10 +580,13 @@
                 output.classList.toggle('empty', masked === '');
             }
 
+            // เตือนว่าที่นี่ทดสอบกับ "ทุกรายการ" รวมที่ยังไม่เปิดใช้
+            // ส่วนปุ่ม "ตรวจคำเฉพาะ" ในกล่องใส่ข้อมูลใช้เฉพาะที่เปิดใช้จริง
             setStatus(
                 status,
                 'ปกปิด ' + Number(result.count || 0) + ' จุด' +
                     ' · ตัวแปร ' + Number(result.placeholders || 0) + ' ตัว' +
+                    ' · ทดสอบกับทุกรายการในลิสต์ (รวมที่ยังไม่เปิดใช้)' +
                     (errors.length > 0
                         ? ' · ใช้ไม่ได้ ' + errors.length + ' รายการ: ' +
                             errors.map(function (item) {

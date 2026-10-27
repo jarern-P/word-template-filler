@@ -185,6 +185,117 @@ test('mask ไม่แก้ค่าข้อความที่รับเ
     assert.strictEqual(source, 'จำนวนเงิน 4,000.00 บาท');
 });
 
+test('masker บอกชื่อตัวแปรที่เปิดใช้และตัวที่เจอค่าจริง', function () {
+    const masker = privacy.createMasker([
+        enabled(MONEY),
+        enabled(NUMBER),
+        enabled(NAME)
+    ]);
+
+    assert.deepStrictEqual(masker.names, ['MONEY', 'NUMBER', 'NAME']);
+    assert.deepStrictEqual(masker.matched, []);
+
+    masker.mask('จำนวนเงิน 4,000.00 บาท');
+    assert.deepStrictEqual(masker.matched, ['MONEY']);
+
+    masker.mask('เลขที่ 1234');
+    assert.deepStrictEqual(masker.matched, ['MONEY', 'NUMBER']);
+
+    // ชื่อตัวแปรที่เปิดใช้แต่ไม่เจออะไร = รายการที่ยังไม่ครอบคลุมข้อความนี้
+    const names = Array.from(new Set(masker.names));
+
+    assert.deepStrictEqual(
+        names.filter(function (name) {
+            return masker.matched.indexOf(name) === -1;
+        }),
+        ['NAME']
+    );
+});
+
+test('นับจำนวนจุดแยกได้ระหว่างข้อความกับบริบท (ปุ่มตรวจคำเฉพาะ)', function () {
+    const masker = privacy.createMasker([
+        enabled(MONEY)
+    ]);
+
+    const text = masker.mask('รวม 4,000.00 บาท');
+    const textCount = masker.count;
+    const context = masker.mask('ลูกค้า: 4,000.00 บาท');
+
+    assert.strictEqual(textCount, 1);
+    assert.strictEqual(masker.count - textCount, 1);
+    // ค่าเดียวกันยังได้ตัวแปรเดียวกัน ไม่ว่าจะอยู่ก้อนไหน
+    assert.strictEqual(masker.used, 1);
+    assert.ok(text.includes('[[MONEY_1]]'));
+    assert.ok(context.includes('[[MONEY_1]]'));
+});
+
+test('inspect สแกนหลายก้อนด้วยตัวปกปิดเดียวกันและสรุปผลให้ตรงกัน', function () {
+    const report = privacy.inspect([
+        enabled(MONEY),
+        enabled(NUMBER),
+        enabled(NAME)
+    ], [
+        'จำนวนเงิน 4,000.00 บาท',
+        'ลูกค้า: 4,000.00 บาท เลขที่ 1234'
+    ]);
+
+    assert.deepStrictEqual(report.counts, [1, 2]);
+    assert.strictEqual(report.count, 3);
+    // ค่าเดียวกันได้ตัวแปรเดียวกันแม้อยู่อยู่คนละก้อน
+    assert.strictEqual(report.placeholders, 2);
+    assert.strictEqual(report.masked[0], 'จำนวนเงิน [[MONEY_1]]');
+    assert.ok(report.masked[1].includes('[[MONEY_1]]'));
+    assert.ok(report.masked[1].includes('[[NUMBER_1]]'));
+    assert.deepStrictEqual(report.items.map(function (item) {
+        return item.placeholder;
+    }), ['[[MONEY_1]]', '[[NUMBER_1]]']);
+    assert.deepStrictEqual(report.unmatched, ['NAME']);
+    assert.strictEqual(report.enabled, 3);
+    assert.strictEqual(report.total, 3);
+    assert.strictEqual(report.restore(report.masked[0]), 'จำนวนเงิน 4,000.00 บาท');
+});
+
+test('inspect รายงานจำนวนรายการที่เปิดใช้ และยังไม่ปกปิดเมื่อไม่มีรายการที่เปิด', function () {
+    const report = privacy.inspect([
+        enabled(MONEY),
+        { name: 'OFF', kind: 'text', pattern: 'ปิดอยู่', enabled: 0 }
+    ], ['4,000.00 บาท ปิดอยู่']);
+
+    assert.strictEqual(report.enabled, 1);
+    assert.strictEqual(report.total, 2);
+    assert.strictEqual(report.masked[0], '[[MONEY_1]] ปิดอยู่');
+
+    const none = privacy.inspect(
+        [{ name: 'OFF', kind: 'text', pattern: 'ปิดอยู่', enabled: 0 }],
+        ['ปิดอยู่']
+    );
+
+    assert.strictEqual(none.enabled, 0);
+    assert.strictEqual(none.count, 0);
+    assert.strictEqual(none.placeholders, 0);
+    assert.strictEqual(none.masked[0], 'ปิดอยู่');
+    assert.deepStrictEqual(none.unmatched, []);
+});
+
+test('findPlaceholders หาตัวแปรที่ยังค้างหลังแทนค่าคืน', function () {
+    assert.deepStrictEqual(
+        privacy.findPlaceholders('จำนวนเงิน: 4,000.00 บาท'),
+        []
+    );
+
+    assert.deepStrictEqual(
+        privacy.findPlaceholders('เลขที่ [[NUMBER_1]] และ [[NUMBER_1]] อีกครั้ง'),
+        ['[[NUMBER_1]]']
+    );
+
+    assert.deepStrictEqual(
+        privacy.findPlaceholders('a [[ MONEY_1 ]] b [[COMP_1]]'),
+        ['[[ MONEY_1 ]]', '[[COMP_1]]']
+    );
+
+    assert.deepStrictEqual(privacy.findPlaceholders(null), []);
+});
+
 test('sanitizeName เก็บเฉพาะ A-Z 0-9 _ และมีค่าสำรอง', function () {
     assert.strictEqual(privacy.sanitizeName('money key'), 'MONEY_KEY');
     assert.strictEqual(privacy.sanitizeName('  ชื่อ-นามสกุล  '), 'TERM');

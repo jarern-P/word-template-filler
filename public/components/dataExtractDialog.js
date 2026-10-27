@@ -59,6 +59,7 @@
         '            <textarea id="dataSourceText" class="data-source-text" rows="8"',
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
         '            <div class="data-tools">',
+        '                <button id="dataPrivacyCheckBtn" type="button" class="plain" title="ตรวจว่าคำ/ตัวเลขส่วนไหนจะถูกแทนด้วยตัวแปรก่อนส่งให้ AI — ใช้รายการจากหน้า คำเฉพาะ และไม่ส่งข้อมูลออกไป">ตรวจคำเฉพาะ</button>',
         '                <button id="dataImproveBtn" type="button" title="ให้ Gemini ตรวจคำผิดและจัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด (ใช้ API key จาก ตั้งค่า OCR)">ปรับปรุง</button>',
         '                <button id="dataImproveUndoBtn" type="button" class="plain" hidden>ย้อนกลับ</button>',
         '            </div>',
@@ -66,6 +67,27 @@
         '                ตรวจคำผิดและจัดข้อความใหม่เป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด ',
         '                ด้วย Gemini — ใช้ API key และโมเดลจาก ตั้งค่า OCR',
         '            </p>',
+
+        // ── ผลการตรวจคำเฉพาะ (ยังไม่ส่งให้ AI) ──
+        '            <div id="dataPrivacyResult" class="data-privacy" hidden>',
+        '                <div class="data-privacy-head">',
+        '                    <strong id="dataPrivacyTitle">คำเฉพาะที่จะถูกปกปิด</strong>',
+        '                    <button id="dataPrivacyHideBtn" type="button" class="plain">ซ่อน</button>',
+        '                </div>',
+
+        '                <p id="dataPrivacySummary" class="hint"></p>',
+        '                <ul id="dataPrivacyList" class="data-privacy-list"></ul>',
+
+        '                <p class="hint data-privacy-label">ข้อความที่ AI จะเห็น (ค่าจริงถูกแทนด้วยตัวแปร)</p>',
+        '                <pre id="dataPrivacyMasked" class="data-privacy-masked"></pre>',
+
+        '                <details id="dataPrivacyContextWrap" hidden>',
+        '                    <summary>ข้อมูลอ้างอิงจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) ที่ AI จะเห็น</summary>',
+        '                    <pre id="dataPrivacyContext" class="data-privacy-masked"></pre>',
+        '                </details>',
+
+        '                <p id="dataPrivacyNote" class="hint data-privacy-note"></p>',
+        '            </div>',
         '        </section>',
         '        <section class="data-results">',
         '            <h3>ผลการจับข้อมูล</h3>',
@@ -155,6 +177,10 @@
         // ── ปรับปรุงข้อความด้วย AI (Gemini) ──
         el('dataImproveBtn').addEventListener('click', runImprove);
         el('dataImproveUndoBtn').addEventListener('click', undoImprove);
+
+        // ── ตรวจคำเฉพาะก่อนส่ง (ไม่เรียก AI) ──
+        el('dataPrivacyCheckBtn').addEventListener('click', runPrivacyCheck);
+        el('dataPrivacyHideBtn').addEventListener('click', hidePrivacyResult);
 
         el('dataSourceText').addEventListener('input', updateImproveState);
 
@@ -523,12 +549,31 @@
     let improveBusy = false;
     let improveUndo = null;
 
+    // กำลังตรวจคำเฉพาะอยู่หรือไม่ (ปุ่มตรวจแยกจากปุ่มปรับปรุง)
+    let privacyBusy = false;
+
     // เปิด/ปิดปุ่มตามข้อมูลที่มีอยู่ — และปิดระหว่างทำงาน
     function updateImproveState() {
         const textarea = el('dataSourceText');
         const hasText = Boolean(textarea && textarea.value.trim() !== '');
 
         el('dataImproveBtn').disabled = !hasText || improveBusy;
+
+        updatePrivacyState();
+
+        // ข้อความเปลี่ยน = ผลตรวจคำเฉพาะเดิมไม่จริงแล้ว
+        hidePrivacyResult();
+    }
+
+    // เปิด/ปิดปุ่ม "ตรวจคำเฉพาะ" ตามข้อความที่มีอยู่
+    function updatePrivacyState() {
+        const textarea = el('dataSourceText');
+        const hasText = Boolean(textarea && textarea.value.trim() !== '');
+        const button = el('dataPrivacyCheckBtn');
+
+        if (button) {
+            button.disabled = !hasText || privacyBusy || improveBusy;
+        }
     }
 
     function undoImprove() {
@@ -626,6 +671,19 @@
 
             hideResults();
 
+            // แสดงว่าข้อมูลชุดนี้ถูกปกปิดอะไรก่อนส่งจริง (ตรวจจนจบขั้นตอน)
+            renderPrivacyResult({
+                text: response.textMasked,
+                count: response.textCount,
+                contextCount: response.contextCount,
+                items: response.items,
+                unmatched: response.unmatched,
+                leftover: response.leftover,
+                errors: [],
+                enabled: response.enabled,
+                total: response.total
+            }, 'sent');
+
             setSourceStatus(
                 'ปรับปรุงแล้ว · ' + improved.split('\n').length + ' บรรทัด' +
                 ' · ' + (response.model || 'Gemini') +
@@ -635,7 +693,15 @@
                 // คำเฉพาะที่ถูกแทนด้วยตัวแปรก่อนส่ง (ดูหน้า "คำเฉพาะ")
                 (Number(response.masked) > 0
                     ? ' · ปกปิดคำเฉพาะ ' + response.masked + ' จุด'
-                    : '')
+                    : '') +
+                // ตัวแปรที่ AI ไม่ได้คัดลอกกลับมา = ค่านั้นกู้คืนไม่ได้ ต้องเตือน
+                (Array.isArray(response.leftover) && response.leftover.length > 0
+                    ? ' · แทนค่าคืนไม่ได้ ' + response.leftover.length +
+                        ' ตัวแปร: ' + response.leftover.join(' ')
+                    : ''),
+                Array.isArray(response.leftover) && response.leftover.length > 0
+                    ? 'error'
+                    : ''
             );
 
         } catch (error) {
@@ -651,10 +717,195 @@
     }
 
     // ──────────────────────────────────────────────────────────────
+    // ตรวจคำเฉพาะ (ก่อนกดปรับปรุง)
+    //
+    // ใช้รายการจากหน้า "คำเฉพาะ" สแกนข้อความในช่อง + ข้อมูลอ้างอิงจาก
+    // ฐานข้อมูล แล้วแสดงว่าอะไรจะถูกแทนด้วยตัวแปร — ไม่เรียก AI
+    // (ตัวเลข/คำที่ควรถูกปกปิดแต่ไม่ขึ้นในรายการ = pattern ยังไม่ครอบคลุม)
+    // ──────────────────────────────────────────────────────────────
+
+    function hidePrivacyResult() {
+        const panel = el('dataPrivacyResult');
+
+        if (panel) {
+            panel.hidden = true;
+        }
+    }
+
+    // mode = 'check' (ตรวจก่อนส่ง) หรือ 'sent' (สรุปของรอบที่ส่งไปแล้ว)
+    function renderPrivacyResult(result, mode) {
+        const panel = el('dataPrivacyResult');
+        const title = el('dataPrivacyTitle');
+        const summary = el('dataPrivacySummary');
+        const list = el('dataPrivacyList');
+        const masked = el('dataPrivacyMasked');
+        const contextWrap = el('dataPrivacyContextWrap');
+        const context = el('dataPrivacyContext');
+        const note = el('dataPrivacyNote');
+
+        if (!panel) return;
+
+        const items = Array.isArray(result.items) ? result.items : [];
+        const unmatched = Array.isArray(result.unmatched) ? result.unmatched : [];
+        const errors = Array.isArray(result.errors) ? result.errors : [];
+        const count = Number(result.count) || 0;
+        const contextCount = Number(result.contextCount) || 0;
+        const enabled = Number(result.enabled) || 0;
+        const total = Number(result.total) || 0;
+        const leftover = Array.isArray(result.leftover) ? result.leftover : [];
+        const sent = mode === 'sent';
+
+        panel.hidden = false;
+
+        if (title) {
+            title.textContent = sent
+                ? 'คำเฉพาะที่ถูกปกปิด (รอบที่ส่งล่าสุด)'
+                : 'คำเฉพาะที่จะถูกปกปิด';
+        }
+
+        // 0 รายการที่เปิดใช้ = ส่งออกทั้งดุ้น — อธิบายให้ชัด จะได้ไม่คิดว่าปุ่มเสีย
+        if (enabled === 0) {
+            summary.textContent =
+                'ยังไม่มีรายการที่เปิดใช้ในหน้า "คำเฉพาะ" — ' +
+                'ข้อความนี้ไม่ได้ถูกปกปิด';
+
+        } else if (count === 0) {
+            summary.textContent =
+                'ไม่พบค่าที่ตรงกับรายการที่เปิดใช้ (' + enabled + '/' + total +
+                ' รายการ) ในข้อความนี้';
+
+        } else {
+            summary.textContent =
+                (sent ? 'ปกปิดไป ' : 'จะปกปิด ') + count + ' จุด (' + items.length +
+                ' ตัวแปร)' +
+                (contextCount > 0
+                    ? ' · ในข้อมูลอ้างอิงอีก ' + contextCount + ' จุด'
+                    : '');
+        }
+
+        list.innerHTML = '';
+
+        items.forEach(function (item) {
+            const row = document.createElement('li');
+
+            const variable = document.createElement('code');
+            variable.textContent = String(item.placeholder || '');
+
+            const value = document.createElement('span');
+            value.textContent = String(item.value == null ? '' : item.value);
+
+            row.appendChild(variable);
+            row.appendChild(value);
+            list.appendChild(row);
+        });
+
+        if (masked) {
+            masked.textContent = String(result.text || '');
+        }
+
+        // การ์ดของรอบที่ส่งไปแล้วมีเฉพาะจำนวนของบริบท (ข้อความบริบทไม่ได้ถูกส่งกลับมา)
+        const showContextText = !sent && contextCount > 0;
+
+        if (contextWrap) {
+            contextWrap.hidden = !showContextText;
+        }
+
+        if (context) {
+            context.textContent = showContextText
+                ? String(result.context || '')
+                : '';
+        }
+
+        note.textContent = [
+            enabled === 0
+                ? 'เปิดสวิตช์รายการที่ต้องการที่หน้า "คำเฉพาะ" ก่อน แล้วตรวจซ้ำ'
+                : '',
+            enabled > 0 && count === 0
+                ? 'ถ้าคิดว่ามีคำที่ควรถูกปกปิดแต่ไม่ขึ้นที่นี่ ให้ไปที่หน้า "คำเฉพาะ" ' +
+                    'กด "ทดสอบ" เพื่อดูว่า pattern ที่ยังไม่เปิดจับคำแบบไหนได้'
+                : '',
+            unmatched.length > 0
+                ? 'เปิดใช้แต่ไม่พบในข้อความนี้: ' + unmatched.join(', ')
+                : '',
+            leftover.length > 0
+                ? 'AI ไม่ได้คืนค่ามา (แทนคืนไม่ได้): ' + leftover.join(' ')
+                : '',
+            errors.length > 0
+                ? 'pattern ที่ใช้ไม่ได้: ' + errors.map(function (item) {
+                    return item.name + ' (' + item.error + ')';
+                }).join(', ')
+                : ''
+        ].filter(Boolean).join(' · ');
+
+        note.className =
+            'hint data-privacy-note' +
+            (errors.length > 0 || leftover.length > 0 ? ' error' : '');
+    }
+
+    async function runPrivacyCheck() {
+        if (privacyBusy) return;
+
+        const textarea = el('dataSourceText');
+        const text = textarea ? textarea.value : '';
+
+        if (text.trim() === '') {
+            await scope.AppDialog.alert(
+                'วางข้อความหรืออัปโหลดไฟล์ .pdf / .docx ก่อนตรวจคำเฉพาะ'
+            );
+            return;
+        }
+
+        if (!window.electronAPI || !window.electronAPI.privacyInspect) {
+            await scope.AppDialog.alert(
+                'เปิดหน้านี้ในแอป (Electron) เพื่อตรวจคำเฉพาะ'
+            );
+            return;
+        }
+
+        privacyBusy = true;
+        updatePrivacyState();
+
+        setSourceStatus('กำลังตรวจคำเฉพาะ...');
+
+        try {
+            const response = await window.electronAPI.privacyInspect({
+                text: text
+            });
+
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'ตรวจคำเฉพาะไม่สำเร็จ'
+                );
+            }
+
+            renderPrivacyResult(response.result || {});
+
+            setSourceStatus(
+                'ตรวจคำเฉพาะแล้ว — ยังไม่ส่งข้อมูลออกไป (กด "ปรับปรุง" เมื่อพร้อม)'
+            );
+
+        } catch (error) {
+            hidePrivacyResult();
+
+            setSourceStatus(
+                (error && error.message) || 'ตรวจคำเฉพาะไม่สำเร็จ',
+                'error'
+            );
+
+        } finally {
+            privacyBusy = false;
+            updatePrivacyState();
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
     // ทดสอบ / แสดงผล
     // ──────────────────────────────────────────────────────────────
 
     function hideResults() {
+        // ผลตรวจคำเฉพาะเป็นของข้อความชุดเดิม — ล้างพร้อมผลจับข้อมูล
+        hidePrivacyResult();
+
         const body = el('dataResultBody');
 
         if (body) {

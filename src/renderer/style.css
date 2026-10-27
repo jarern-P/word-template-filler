@@ -4318,6 +4318,102 @@ body.table-ratio-dragging .table-ratio-handle {
     font-size: 12px;
 }
 
+/* ── ผลการตรวจคำเฉพาะก่อนส่ง AI (กล่องใส่ข้อมูล) ── */
+
+.data-privacy {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.data-privacy-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.data-privacy-head strong {
+    font-size: 13px;
+}
+
+.data-privacy-head button {
+    margin-top: 0;
+}
+
+.data-privacy-list {
+    max-height: 200px;
+    margin: 6px 0 8px;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+}
+
+.data-privacy-list li {
+    display: flex;
+    gap: 10px;
+    padding: 3px 0;
+    font-size: 13px;
+    border-bottom: 1px dashed var(--line-soft);
+}
+
+.data-privacy-list li:last-child {
+    border-bottom: 0;
+}
+
+.data-privacy-list code {
+    min-width: 130px;
+    font-weight: 600;
+    color: var(--pink-700);
+    overflow-wrap: anywhere;
+}
+
+.data-privacy-list span {
+    min-width: 0;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+}
+
+.data-privacy-label {
+    margin: 8px 0 4px;
+}
+
+.data-privacy-masked {
+    max-height: 220px;
+    margin: 0;
+    padding: 8px 10px;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+}
+
+.data-privacy details {
+    margin-top: 8px;
+}
+
+.data-privacy summary {
+    font-size: 12px;
+    color: var(--ink-faint);
+    cursor: pointer;
+}
+
+.data-privacy-note {
+    margin: 8px 0 0;
+    font-size: 12px;
+}
+
+.data-privacy-note.error {
+    color: var(--danger);
+}
+
 /* โครงสร้างเอกสาร */
 
 .data-layout-page {

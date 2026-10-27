@@ -156,6 +156,7 @@ function createMasker(terms) {
     const byValue = new Map();    // name + ค่า -> placeholder
     const counts = {};            // name -> ลำดับถัดไป
     const map = [];               // [{ placeholder, value }]
+    const matched = new Set();    // ชื่อตัวแปรที่เจอค่าจริงในข้อความชุดนี้
     let count = 0;                // จำนวนจุดที่ถูกแทน
 
     // ช่วงที่ถูกปกปิดใน "ข้อความนั้น" — กันรายการถัดไปทับค่าที่แทนไปแล้ว
@@ -184,6 +185,7 @@ function createMasker(terms) {
 
         byValue.set(key, placeholder);
         map.push({ placeholder: placeholder, value: value });
+        matched.add(name);
 
         return placeholder;
     }
@@ -287,9 +289,78 @@ function createMasker(terms) {
         },
         get errors() {
             return errors;
+        },
+        // ชื่อตัวแปรทั้งหมดที่ "เปิดใช้ + ใช้ได้" (มีซ้ำได้ถ้าตั้งหลายรายการใช้ชื่อเดียวกัน)
+        get names() {
+            return compiled.map(function (term) {
+                return term.name;
+            });
+        },
+        // ชื่อตัวแปรที่เจอค่าจริง — ที่เหลือคือรายการที่เปิดใช้แต่ไม่พบในข้อความชุดนี้
+        get matched() {
+            return Array.from(matched);
         }
     };
 }
+
+// รูปแบบตัวแปรที่เราสร้าง — เทียบกับข้อความที่ได้จาก AI เพื่อดูว่ามีตัวไหนค้างอยู่
+const PLACEHOLDER_PATTERN = /\[\[[^\]\r\n]{1,60}\]\]/g;
+
+// ตัวแปรที่ยังค้างในข้อความหลังแทนค่าคืน (AI อาจแก้/ตัด/เพิ่มตัวแปร)
+// ถ้ามี = ค่านั้นกู้กลับมาไม่ได้ ต้องเตือนผู้ใช้ให้ตรวจข้อความนั้นเอง
+function findPlaceholders(text) {
+    const found = String(text == null ? '' : text).match(PLACEHOLDER_PATTERN);
+
+    return found ? Array.from(new Set(found)) : [];
+}
+
+
+// สแกนหลายก้อนข้อความด้วยตัวปกปิด "ตัวเดียวกัน" แล้วสรุปผลเป็นชุดเดียว
+//
+// ใช้ทั้งตอนส่งจริง (ocr:improve) และตอนตรวจก่อนส่ง (privacy:inspect)
+// ทั้งสองที่จึงได้ผลตรงกันเสมอ — ต่างกันแค่ว่าจะส่งออกหรือไม่ส่งออก
+//
+// chunks = [ข้อความ, (บริบทจากฐานข้อมูล)]
+// คืน {
+//   masked      : ข้อความแต่ละก้อนหลังปกปิด (ลำดับเดียวกับ chunks)
+//   counts      : จำนวนจุดที่ปกปิดของแต่ละก้อน
+//   count/placeholders/items/unmatched/errors/enabled/total
+// }
+function inspect(terms, chunks) {
+    const list = Array.isArray(terms) ? terms : [];
+    const masker = createMasker(list);
+    const masked = [];
+    const counts = [];
+
+    (Array.isArray(chunks) ? chunks : []).forEach(function (chunk) {
+        const before = masker.count;
+
+        masked.push(masker.mask(chunk));
+        counts.push(masker.count - before);
+    });
+
+    const names = Array.from(new Set(masker.names));
+
+    return {
+        masked: masked,
+        counts: counts,
+        count: masker.count,
+        placeholders: masker.used,
+        items: masker.map,
+        names: names,
+        // รายการที่เปิดใช้แต่ไม่เจอค่าจริงในข้อความชุดนี้
+        unmatched: names.filter(function (name) {
+            return masker.matched.indexOf(name) === -1;
+        }),
+        errors: masker.errors,
+        // จำนวนรายการที่เปิดใช้/ทั้งหมด — 0 = ยังไม่มีการปกปิดเลย
+        enabled: list.filter(isEnabled).length,
+        total: list.length,
+        // คืนค่าเดิมได้ด้วย (ตอนส่งจริงใช้แทนค่ากลับในคำตอบของ AI)
+        restore: masker.restore
+    };
+}
+
 
 module.exports = {
     MAX_TERMS,
@@ -302,5 +373,7 @@ module.exports = {
     sanitizeName,
     isEnabled,
     validatePattern,
-    createMasker
+    createMasker,
+    inspect,
+    findPlaceholders
 };

@@ -1855,16 +1855,38 @@ ipcMain.handle(
 
             // ปกปิดคำเฉพาะ (หน้า "คำเฉพาะ") — ทั้งข้อความและบริบทถูกแทนด้วย
             // ตัวแปร [[NAME_1]] ก่อนออกจากเครื่อง และแทนคืนตอนได้ผลลัพธ์
-            const masker =
-                privacyMask.createMasker(
-                    await loadSensitiveTerms()
+            // ใช้ตัวสแกนตัวเดียวกับปุ่ม "ตรวจคำเฉพาะ" — ผลที่เห็นก่อนกดจึงตรงกัน
+            const report =
+                privacyMask.inspect(
+                    await loadSensitiveTerms(),
+                    [text, contextRawText]
                 );
 
             const maskedText =
-                masker.mask(text);
+                report.masked[0];
 
             const maskedContext =
-                masker.mask(contextRawText);
+                report.masked[1];
+
+            // log ไว้ตรวจย้อนหลังได้ว่าตอนส่งจริงปกปิดอะไรไป (ค่าจริงไม่ถูก log)
+            console.log(
+                "[คำเฉพาะ] ส่งให้ Gemini — ปกปิด " + report.count +
+                " จุด (" + report.placeholders + " ตัวแปร) จากรายการที่เปิดใช้ " +
+                report.enabled + "/" + report.total +
+                (report.unmatched.length > 0
+                    ? " · เปิดใช้แต่ไม่พบในข้อความ: " + report.unmatched.join(", ")
+                    : "")
+            );
+
+            if (report.count > 0) {
+                console.log(
+                    "[คำเฉพาะ] ตัวแปรที่ใช้แทน: " + report.items.map(function (item) {
+                        return item.placeholder;
+                    }).join(" ")
+                );
+            }
+
+            console.log("[คำเฉพาะ] ข้อความที่ส่งให้ AI:\n" + maskedText);
 
             const result =
                 await ocrImprove.improveText(
@@ -1876,7 +1898,7 @@ ipcMain.handle(
                         prompt: saved.improve?.prompt || "",
                         contextRawText: maskedContext,
                         // มีการปกปิดจริง = บอก AI ว่าตัวแปรในวงเล็บห้ามแตะ
-                        maskInstruction: masker.count > 0
+                        maskInstruction: report.count > 0
                             ? privacyMask.MASK_INSTRUCTION
                             : "",
                         onProgress: function (progress) {
@@ -1893,12 +1915,42 @@ ipcMain.handle(
                     }
                 );
 
+            console.log(
+                "[คำเฉพาะ] คำตอบจาก AI (ก่อนแทนค่าคืน):\n" + result.text
+            );
+
+            const restored =
+                report.restore(result.text);
+
+            // ตัวแปรที่ AI ไม่ได้คัดลอกกลับมาตรง ๆ = ค่านั้นกู้คืนไม่ได้
+            const leftover =
+                privacyMask.findPlaceholders(restored);
+
+            if (leftover.length > 0) {
+                console.warn(
+                    "[คำเฉพาะ] แทนค่าคืนไม่ได้ " + leftover.length +
+                    " ตัวแปร (AI อาจแก้หรือตัดตัวแปรทิ้ง): " +
+                    leftover.join(" ")
+                );
+            }
+
+            console.log("[คำเฉพาะ] ผลลัพธ์หลังแทนค่าคืน:\n" + restored);
+
             return {
                 ok: true,
                 ...result,
                 // แทนค่าเดิมกลับให้ผู้ใช้เห็น (AI เห็นเฉพาะตัวแปร)
-                text: masker.restore(result.text),
-                masked: masker.count
+                text: restored,
+                masked: report.count,
+                // ข้อมูลสำหรับการ์ด "คำเฉพาะ" ในกล่องใส่ข้อมูล (ตรวจย้อนหลังได้)
+                textMasked: maskedText,
+                textCount: report.counts[0],
+                contextCount: report.counts[1],
+                items: report.items,
+                unmatched: report.unmatched,
+                leftover: leftover,
+                enabled: report.enabled,
+                total: report.total
             };
 
         } catch (error) {
@@ -2170,6 +2222,78 @@ ipcMain.handle(
 
             console.error(
                 "privacy:preview error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
+
+
+// ตรวจว่าจะถูกปกปิดอะไรบ้างก่อนส่งจริง — ไม่เรียก AI และไม่ส่งข้อมูลออก
+//
+// ใช้กับปุ่ม "ตรวจคำเฉพาะ" ในกล่องใส่ข้อมูล: สแกนทั้งข้อความและข้อมูลอ้างอิง
+// จากฐานข้อมูล (อย่างละเอียดเหมือนตอนกด "ปรับปรุง" ทุกอย่าง)
+// แต่คืนเฉพาะผลการตรวจให้ดู — ยังไม่ส่งอะไรให้ Gemini
+ipcMain.handle(
+    "privacy:inspect",
+    async function (event, payload) {
+
+        try {
+
+            const text =
+                payload && typeof payload.text === "string"
+                    ? payload.text
+                    : "";
+
+            if (text.trim() === "") {
+                throw new Error("ไม่มีข้อความให้ตรวจ");
+            }
+
+            // บริบทชุดเดียวกับที่ส่งให้ AI ตอนกด "ปรับปรุง"
+            const contextRawText =
+                await buildContextRawText();
+
+            // ตัวสแกนตัวเดียวกับที่ใช้ตอนส่งจริง (ocr:improve)
+            const report =
+                privacyMask.inspect(
+                    await loadSensitiveTerms(),
+                    [text, contextRawText]
+                );
+
+            console.log(
+                "[คำเฉพาะ] ตรวจก่อนส่ง — ปกปิด " + report.count + " จุด (" +
+                report.placeholders + " ตัวแปร) จากรายการที่เปิดใช้ " +
+                report.enabled + "/" + report.total
+            );
+
+            return {
+                ok: true,
+                result: {
+                    text: report.masked[0],
+                    context: report.masked[1],
+                    count: report.counts[0],
+                    contextCount: report.counts[1],
+                    placeholders: report.placeholders,
+                    items: report.items,
+                    unmatched: report.unmatched,
+                    errors: report.errors,
+                    enabled: report.enabled,
+                    total: report.total
+                }
+            };
+
+        } catch (error) {
+
+            console.error(
+                "privacy:inspect error:",
                 error
             );
 
