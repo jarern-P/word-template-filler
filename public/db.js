@@ -307,6 +307,37 @@
 
         },
 
+        // ── คำเฉพาะ (ปกปิดก่อนส่ง AI) ──
+
+        // คืน [{ id, name, kind, pattern, enabled, created_at, updated_at }]
+        privacyList: function () {
+
+            return dbRequest(
+                'privacyList'
+            );
+
+        },
+
+        // payload = { id, name, kind, pattern, enabled } — id = 0 คือเพิ่มใหม่
+        // ส่งเฉพาะฟิลด์ที่เปลี่ยนก็ได้ (เช่น สลับสวิตช์เปิด/ปิด)
+        privacySave: function (payload) {
+
+            return dbRequest(
+                'privacySave',
+                payload
+            );
+
+        },
+
+        privacyDelete: function (id) {
+
+            return dbRequest(
+                'privacyDelete',
+                id
+            );
+
+        },
+
         // ── ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน) ──
 
         // payload = { templateId, templateName, values, modes, retentionDays }

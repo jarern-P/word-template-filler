@@ -79,23 +79,33 @@ function friendlyError(status, message) {
 // คำสั่งเต็มที่ส่งให้โมเดล (แยกไว้เพื่อทดสอบได้โดยไม่ต้องเรียกเน็ต)
 // prompt ที่ผู้ใช้แก้ในหน้าตั้งค่าจะแทนที่ชุดเริ่มต้น ส่วนข้อความต้นฉบับ
 // ถูกต่อท้ายด้วยรูปแบบเดิมเสมอ เพื่อไม่ให้ตำแหน่งข้อความหายไป
-function buildPrompt(text, prompt, contextRawText) {
+function buildPrompt(text, prompt, contextRawText, maskInstruction) {
     const instructions =
         String(prompt == null ? '' : prompt).trim() || DEFAULT_PROMPT;
 
     const parts = [
-        instructions,
+        instructions
+    ];
+
+    // ปกปิดคำเฉพาะอยู่ = บอก AI ว่าตัวแปรในวงเล็บต้องคัดลอกกลับมาให้ครบ
+    const mask = String(maskInstruction == null ? '' : maskInstruction).trim();
+
+    if (mask !== '') {
+        parts.push('', mask);
+    }
+
+    parts.push(
         '',
         'ข้อความต้นฉบับ:',
         '<<<',
         String(text == null ? '' : text),
         '>>>'
-    ];
+    );
 
     if (contextRawText && contextRawText.trim()) {
         parts.push('', 'ข้อมูลอ้างอิงจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ):', '<<<', contextRawText, '>>>');
     }
-
+    console.log(parts);
     return parts.join('\n');
 }
 
@@ -159,13 +169,13 @@ function splitChunks(text, limit) {
     return chunks;
 }
 
-async function requestChunk(text, apiKey, model, prompt, contextRawText) {
+async function requestChunk(text, apiKey, model, prompt, contextRawText, maskInstruction) {
     const body = {
         contents: [
             {
                 role: 'user',
                 parts: [
-                    { text: buildPrompt(text, prompt, contextRawText) }
+                    { text: buildPrompt(text, prompt, contextRawText, maskInstruction) }
                 ]
             }
         ],
@@ -259,6 +269,7 @@ async function requestChunk(text, apiKey, model, prompt, contextRawText) {
     return text_out;
 }
 
+// opts.maskInstruction = คำสั่งเรื่องตัวแปรที่ใช้แทนคำเฉพาะ (ว่าง = ไม่แนบ)
 // คืน { text, model, chunks } — ถ้าก้อนใดล้มเหลว จะโยน error ทั้งหมด
 // (ไม่คืนข้อความบางส่วน เพื่อไม่ให้ข้อมูลหายเงียบ ๆ)
 async function improveText(text, options) {
@@ -290,7 +301,14 @@ async function improveText(text, options) {
         }
 
         results.push(
-            await requestChunk(chunks[index], apiKey, model, opts.prompt, opts.contextRawText)
+            await requestChunk(
+                chunks[index],
+                apiKey,
+                model,
+                opts.prompt,
+                opts.contextRawText,
+                opts.maskInstruction
+            )
         );
     }
 

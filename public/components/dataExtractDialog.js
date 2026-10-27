@@ -631,6 +631,10 @@
                 ' · ' + (response.model || 'Gemini') +
                 (Number(response.chunks) > 1
                     ? ' · ' + response.chunks + ' ก้อน'
+                    : '') +
+                // คำเฉพาะที่ถูกแทนด้วยตัวแปรก่อนส่ง (ดูหน้า "คำเฉพาะ")
+                (Number(response.masked) > 0
+                    ? ' · ปกปิดคำเฉพาะ ' + response.masked + ' จุด'
                     : '')
             );
 

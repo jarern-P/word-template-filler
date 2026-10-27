@@ -29,6 +29,9 @@ const ocrTraining =
 const ocrImprove =
     require("./ocr-improve.cjs");
 
+const privacyMask =
+    require("./privacy-mask.cjs");
+
 
 // ============================================================
 // Locale
@@ -1850,15 +1853,32 @@ ipcMain.handle(
             // ดึง raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
             const contextRawText = await buildContextRawText();
 
+            // ปกปิดคำเฉพาะ (หน้า "คำเฉพาะ") — ทั้งข้อความและบริบทถูกแทนด้วย
+            // ตัวแปร [[NAME_1]] ก่อนออกจากเครื่อง และแทนคืนตอนได้ผลลัพธ์
+            const masker =
+                privacyMask.createMasker(
+                    await loadSensitiveTerms()
+                );
+
+            const maskedText =
+                masker.mask(text);
+
+            const maskedContext =
+                masker.mask(contextRawText);
+
             const result =
                 await ocrImprove.improveText(
-                    text,
+                    maskedText,
                     {
                         apiKey: saved.gemini?.apiKey || "",
                         model: saved.gemini?.model,
                         // prompt ที่แก้ไว้ในหน้า ตั้งค่า OCR (ว่าง = ค่าเริ่มต้น)
                         prompt: saved.improve?.prompt || "",
-                        contextRawText: contextRawText,
+                        contextRawText: maskedContext,
+                        // มีการปกปิดจริง = บอก AI ว่าตัวแปรในวงเล็บห้ามแตะ
+                        maskInstruction: masker.count > 0
+                            ? privacyMask.MASK_INSTRUCTION
+                            : "",
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -1875,7 +1895,10 @@ ipcMain.handle(
 
             return {
                 ok: true,
-                ...result
+                ...result,
+                // แทนค่าเดิมกลับให้ผู้ใช้เห็น (AI เห็นเฉพาะตัวแปร)
+                text: masker.restore(result.text),
+                masked: masker.count
             };
 
         } catch (error) {
@@ -1957,6 +1980,209 @@ async function buildContextRawText() {
         return '';
     }
 }
+
+
+// ============================================================
+// คำเฉพาะ (หน้า "คำเฉพาะ" — คำ/pattern ที่ปกปิดก่อนส่ง AI)
+// ============================================================
+//
+// รายการที่ "เปิดใช้" อยู่ถูกนำไปแทนค่าด้วยตัวแปรในข้อความทุกครั้งที่
+// ส่งให้ Gemini (ปุ่ม "ปรับปรุง") เพื่อไม่ให้ข้อมูลอ่อนไหวออกนอกเครื่อง
+
+async function loadSensitiveTerms() {
+
+    try {
+
+        await dbReady();
+
+        const result =
+            await dbRequest(
+                "privacy-list",
+                {}
+            );
+
+        return result && Array.isArray(result.result)
+            ? result.result
+            : [];
+
+    } catch (error) {
+
+        // โหลดไม่ได้ = ส่งข้อความตามเดิม (ไม่ให้การปรับปรุงข้อความล้มเหลว)
+        console.error(
+            "โหลดคำเฉพาะไม่สำเร็จ:",
+            error
+        );
+
+        return [];
+    }
+}
+
+
+ipcMain.handle(
+    "privacy:list",
+    async () => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "privacy-list",
+                    {}
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "privacy:save",
+    async (
+        event,
+        payload
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "privacy-save",
+                    payload
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+ipcMain.handle(
+    "privacy:delete",
+    async (
+        event,
+        id
+    ) => {
+
+        try {
+
+            await dbReady();
+
+
+            const result =
+                await dbRequest(
+                    "privacy-delete",
+                    {
+                        id
+                    }
+                );
+
+
+            return result;
+
+        } catch (error) {
+
+            return {
+
+                ok: false,
+
+                error:
+                    error?.message ||
+                    String(error)
+
+            };
+
+        }
+
+    }
+);
+
+
+// ทดสอบว่าข้อความตัวอย่างถูกปกปิดหน้าตาเป็นอย่างไร
+// payload = { text, terms } — terms มาจากหน้าโดยตรง (ยังไม่บันทึกก็ทดสอบได้)
+// ไม่ส่ง terms มา = ใช้รายการที่บันทึกไว้
+ipcMain.handle(
+    "privacy:preview",
+    async function (event, payload) {
+
+        try {
+
+            const text =
+                payload && typeof payload.text === "string"
+                    ? payload.text
+                    : "";
+
+            const terms =
+                payload && Array.isArray(payload.terms)
+                    ? payload.terms
+                    : await loadSensitiveTerms();
+
+            const masker =
+                privacyMask.createMasker(terms);
+
+            return {
+                ok: true,
+                result: {
+                    text: masker.mask(text),
+                    count: masker.count,
+                    placeholders: masker.used,
+                    errors: masker.errors
+                }
+            };
+
+        } catch (error) {
+
+            console.error(
+                "privacy:preview error:",
+                error
+            );
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+
+    }
+);
 
 
 // ============================================================

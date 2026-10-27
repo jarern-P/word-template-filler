@@ -22,6 +22,7 @@
         { key: 'templates', label: 'แม่แบบ' },
         { key: 'master', label: 'ข้อมูลหลัก' },
         { key: 'words', label: 'คำที่เพิ่มเอง' },
+        { key: 'sensitive_terms', label: 'คำเฉพาะ' },
         { key: 'history', label: 'ประวัติการกรอก' }
     ];
 

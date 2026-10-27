@@ -3,6 +3,7 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const privacyMask = require("../privacy-mask.cjs");
 
 // ============================================================
 // Database Path
@@ -103,6 +104,19 @@ const SCHEMA = `
         word       TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    );
+
+    -- คำ/pattern ที่ต้องปกปิดก่อนส่งข้อความให้ AI (หน้า "คำเฉพาะ")
+    -- kind = text (คำธรรมดา) | regex (pattern ที่เขียนเอง)
+    CREATE TABLE IF NOT EXISTS sensitive_terms (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL DEFAULT '',
+        kind       TEXT NOT NULL DEFAULT 'text',
+        pattern    TEXT NOT NULL,
+        enabled    INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(kind, pattern)
     );
 
 `;
@@ -463,6 +477,67 @@ function migrateTemplateListLimits() {
 
 
 // ============================================================
+// Seed: คำเฉพาะที่แถมมาให้
+// ============================================================
+
+// เพิ่ม preset (จำนวนเงิน / ตัวเลข / ชื่อ-นามสกุล) ให้ครั้งเดียวตอนสร้างตาราง
+// ทั้งหมดยัง "ปิด" อยู่ — เปิดใช้เองในหน้า "คำเฉพาะ"
+// ถ้าตารางมีข้อมูลอยู่แล้ว (ผู้ใช้แก้/ลบเอง) จะไม่เติมกลับ
+function seedSensitiveTerms() {
+
+    const total = db.prepare(`
+        SELECT COUNT(*) AS total
+        FROM sensitive_terms
+    `).get().total;
+
+    if (total > 0) {
+        return;
+    }
+
+    const insert = db.prepare(`
+        INSERT OR IGNORE INTO sensitive_terms (
+            name,
+            kind,
+            pattern,
+            enabled,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            @name,
+            @kind,
+            @pattern,
+            @enabled,
+            @created_at,
+            @updated_at
+        )
+    `);
+
+    const now = new Date().toISOString();
+
+    db.transaction(() => {
+
+        privacyMask.DEFAULT_TERMS.forEach(term => {
+
+            insert.run({
+                name: term.name,
+                kind: term.kind,
+                pattern: term.pattern,
+                enabled: term.enabled ? 1 : 0,
+                created_at: now,
+                updated_at: now
+            });
+        });
+
+    })();
+
+    console.log(
+        "Seeded sensitive terms: " + privacyMask.DEFAULT_TERMS.length
+    );
+}
+
+
+// ============================================================
 // Open Database
 // ============================================================
 
@@ -478,9 +553,10 @@ function openDatabase() {
     migrateTemplateTables();
     migrateTemplateListGroups();
     migrateTemplateListLimits();
-    migrateTemplatePatterns();
+    migrateTemplatePatterns();        db.exec(SCHEMA);
 
-    db.exec(SCHEMA);
+    // เติม preset คำเฉพาะให้ฐานข้อมูลใหม่ (ตารางว่างเท่านั้น)
+    seedSensitiveTerms();
 
     // ระบบ OCR ถูกถอดออก — ลบตาราง OCR เดิมทิ้ง (ข้อมูลฝึกเก่าไม่ใช้แล้ว)
     db.exec(`
@@ -2875,6 +2951,7 @@ const COUNTED_TABLES = [
     "templates",
     "master",
     "words",
+    "sensitive_terms",
     "history"
 ];
 
@@ -3547,6 +3624,285 @@ function handleSchema(message) {
 
 
 // ============================================================
+// Sensitive Terms (คำเฉพาะ — ปกปิดก่อนส่ง AI)
+// ============================================================
+
+// เพิ่ม/แก้ไขรายการคำหรือ pattern
+//   - id > 0 = แก้ไขรายการเดิม (ฟิลด์ที่ไม่ส่งมาจะใช้ค่าเดิม)
+//   - id = 0 = เพิ่มรายการใหม่
+// kind: text = คำธรรมดา, regex = pattern ที่เขียนเอง
+// enabled ที่เก็บเป็น 0/1 (หน้า "คำเฉพาะ" สลับสวิตช์แล้วส่งมาเฉพาะฟิลด์นี้)
+function handlePrivacySave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+
+        const id =
+            Number(payload.id) || 0;
+
+        const current = id > 0
+            ? db.prepare(`
+                SELECT
+                    id,
+                    name,
+                    kind,
+                    pattern,
+                    enabled
+                FROM sensitive_terms
+                WHERE id = ?
+            `).get(id)
+            : null;
+
+        if (id > 0 && !current) {
+            throw new Error(`ไม่พบรายการคำเฉพาะ id=${id}`);
+        }
+
+        const kind =
+            (payload.kind === undefined ? (current ? current.kind : "text") : payload.kind) === "regex"
+                ? "regex"
+                : "text";
+
+        const rawPattern =
+            payload.pattern === undefined
+                ? (current ? current.pattern : "")
+                : payload.pattern;
+
+        const pattern =
+            String(rawPattern == null ? "" : rawPattern).trim();
+
+        if (!pattern) {
+            throw new Error("กรุณาระบุคำหรือ pattern");
+        }
+
+        const checked =
+            privacyMask.validatePattern(kind, pattern);
+
+        if (!checked.ok) {
+            throw new Error(checked.error);
+        }
+
+        // ชื่อตัวแปรที่ใช้ใน placeholder — อักขระที่ใช้ไม่ได้ถูกแทนด้วย _
+        const rawName =
+            payload.name === undefined
+                ? (current ? current.name : "")
+                : payload.name;
+
+        const name =
+            privacyMask.sanitizeName(rawName);
+
+        const rawEnabled =
+            payload.enabled === undefined
+                ? (current ? current.enabled : 0)
+                : payload.enabled;
+
+        const enabled =
+            (rawEnabled === true || Number(rawEnabled) === 1) ? 1 : 0;
+
+        // pattern ซ้ำ (ชนิดเดียวกัน) จะใช้ตัวแปรคนละชื่อไม่ได้ เพราะแทนค่าพร้อมกัน
+        const duplicate =
+            db.prepare(`
+                SELECT
+                    id
+                FROM sensitive_terms
+                WHERE kind = ?
+                  AND pattern = ?
+                  AND id <> ?
+            `).get(kind, pattern, id);
+
+        if (duplicate) {
+            throw new Error("มีคำ/pattern นี้อยู่แล้ว");
+        }
+
+        const now =
+            new Date().toISOString();
+
+        let resultId;
+
+        if (id > 0) {
+
+            db.prepare(`
+                UPDATE sensitive_terms
+                SET
+                    name = @name,
+                    kind = @kind,
+                    pattern = @pattern,
+                    enabled = @enabled,
+                    updated_at = @updated_at
+                WHERE id = @id
+            `).run({
+                id: id,
+                name: name,
+                kind: kind,
+                pattern: pattern,
+                enabled: enabled,
+                updated_at: now
+            });
+
+            resultId = id;
+
+        } else {
+
+            const result =
+                db.prepare(`
+                    INSERT INTO sensitive_terms (
+                        name,
+                        kind,
+                        pattern,
+                        enabled,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        @name,
+                        @kind,
+                        @pattern,
+                        @enabled,
+                        @created_at,
+                        @updated_at
+                    )
+                `).run({
+                    name: name,
+                    kind: kind,
+                    pattern: pattern,
+                    enabled: enabled,
+                    created_at: now,
+                    updated_at: now
+                });
+
+            resultId =
+                Number(result.lastInsertRowid);
+        }
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                id: resultId
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "handlePrivacySave error:",
+            error
+        );
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Sensitive Terms List
+// ============================================================
+
+function handlePrivacyList(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const rows =
+            db.prepare(`
+                SELECT
+                    id,
+                    name,
+                    kind,
+                    pattern,
+                    enabled,
+                    created_at,
+                    updated_at
+                FROM sensitive_terms
+                ORDER BY id ASC
+            `).all();
+
+        send({
+            id: message.id,
+            ok: true,
+            result: rows.map(row => ({
+                id: row.id,
+                name: row.name,
+                kind: row.kind === "regex" ? "regex" : "text",
+                pattern: row.pattern,
+                enabled: Number(row.enabled) === 1 ? 1 : 0,
+                created_at: row.created_at,
+                updated_at: row.updated_at
+            }))
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Sensitive Terms Delete
+// ============================================================
+
+function handlePrivacyDelete(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const id =
+            Number(message.payload.id);
+
+        const result =
+            db.prepare(`
+                DELETE FROM sensitive_terms
+                WHERE id = ?
+            `).run(id);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                deleted: result.changes > 0
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
 // Message Loop
 // ============================================================
 
@@ -3764,6 +4120,33 @@ parentPort.on("message", (message) => {
             case "word-delete":
 
                 handleWordDelete(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // Sensitive Terms (คำเฉพาะ)
+            // ------------------------------------------------
+
+            case "privacy-save":
+
+                handlePrivacySave(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "privacy-list":
+
+                handlePrivacyList(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "privacy-delete":
+
+                handlePrivacyDelete(message);
 
                 break;
 

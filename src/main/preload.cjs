@@ -76,6 +76,25 @@ contextBridge.exposeInMainWorld(
         dbWordDelete: (id) =>
             ipcRenderer.invoke("db:word-delete", id),
 
+        // ── คำเฉพาะ (ปกปิดก่อนส่ง AI) ──
+
+        // รายการคำ/pattern ที่ตั้งไว้ในหน้า "คำเฉพาะ"
+        privacyList: () =>
+            ipcRenderer.invoke("privacy:list"),
+
+        // payload = { id, name, kind, pattern, enabled } — id = 0 คือเพิ่มใหม่
+        // ส่งมาเฉพาะฟิลด์ที่เปลี่ยนก็ได้ ที่เหลือใช้ค่าเดิมของรายการนั้น
+        privacySave: (payload) =>
+            ipcRenderer.invoke("privacy:save", payload),
+
+        privacyDelete: (id) =>
+            ipcRenderer.invoke("privacy:delete", id),
+
+        // ทดสอบการปกปิดกับข้อความตัวอย่าง — payload = { text, terms }
+        // คืน { ok, result: { text, count, placeholders, errors } }
+        privacyPreview: (payload) =>
+            ipcRenderer.invoke("privacy:preview", payload),
+
         // ประวัติการกรอก (ใช้กดใช้ซ้ำในหน้ารายงาน)
         dbHistoryAdd: (payload) =>
             ipcRenderer.invoke("db:history-add", payload),
@@ -220,6 +239,9 @@ contextBridge.exposeInMainWorld(
         //
         // นอกจากนี้ยังส่ง context raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
         // ไปพร้อมกับ prompt อัตโนมัติ (ไม่ต้องทำอะไรที่ฝั่ง renderer)
+        //
+        // คำเฉพาะที่เปิดใช้ในหน้า "คำเฉพาะ" ถูกแทนด้วยตัวแปรก่อนส่ง
+        // และถูกแทนคืนในคำตอบ — จำนวนจุดที่ปกปิดมาที่ response.masked
         ocrImproveText: (payload) =>
             ipcRenderer.invoke("ocr:improve", payload),
 

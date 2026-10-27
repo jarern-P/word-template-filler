@@ -34,6 +34,7 @@
         'ocr-training': 'OcrTrainingPage',
         'master-data': 'MasterDataPage',
         'word-suggest': 'WordSuggestPage',
+        'privacy-terms': 'PrivacyPage',
         'history': 'HistoryPage',
         'regex': 'RegexPage',
         'query': 'QueryPage',
