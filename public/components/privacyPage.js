@@ -64,8 +64,8 @@
         '    <section class="suggest-settings">',
         '        <h2>ทดสอบกับข้อความ</h2>',
         '        <p class="hint">',
-        '            ทดสอบกับทุกรายการในรายการด้านบน (รวมรายการที่ยังไม่เปิดใช้)',
-        '            เพื่อดูผลของ pattern ก่อนเปิดใช้จริง',
+        '            ทดสอบกับรายการที่ <b>เปิดใช้</b> เท่านั้น — ผลที่ได้จึงตรงกับตอนกด "ปรับปรุง"',
+        '            (ถ้าต้องการทดลอง pattern ที่ยังไม่เปิด ให้เปิดสวิตช์รายการนั้นก่อนทดสอบ)',
         '        </p>',
 
         '        <div class="field">',
@@ -124,7 +124,7 @@
         '                <p class="hint">',
         '                    คำจะถูกแทนทั้งคำตามที่พิมพ์ ส่วน regex ใช้กับข้อความแบบ',
         '                    ค้นหาทุกจุดที่พบ (g) — ทดสอบกับข้อความจริงได้ในส่วน "ทดสอบกับข้อความ"',
-        '                    ด้านบนก่อนเปิดใช้',
+        '                    ด้านบน โดยทดสอบเฉพาะรายการที่เปิดใช้ (สวิตช์ "เปิดใช้เมื่อส่ง AI")',
         '                </p>',
 
         '                <div class="form-actions">',
@@ -550,15 +550,20 @@
         setStatus(status, 'กำลังทดสอบ...');
 
         try {
-            // ทดสอบกับทุกรายการในลิสต์ (รวมที่ยังไม่เปิดใช้) — ยังไม่ต้องเปิดก่อนทดสอบ
+            // ทดสอบตามสถานะเปิด/ปิดจริงของแต่ละรายการ — ผลที่ได้จะตรงกับตอนส่งจริง
+            // (รายการที่ยังไม่เปิดจะไม่ถูกนำมาแทนค่า)
             const terms = records.map(function (record) {
                 return {
                     name: record.name,
                     kind: record.kind,
                     pattern: record.pattern,
-                    enabled: 1
+                    enabled: Number(record.enabled) === 1 ? 1 : 0
                 };
             });
+
+            const enabledCount = terms.filter(function (term) {
+                return term.enabled === 1;
+            }).length;
 
             const response = await window.electronAPI.privacyPreview({
                 text: text,
@@ -580,19 +585,22 @@
                 output.classList.toggle('empty', masked === '');
             }
 
-            // เตือนว่าที่นี่ทดสอบกับ "ทุกรายการ" รวมที่ยังไม่เปิดใช้
-            // ส่วนปุ่ม "ตรวจคำเฉพาะ" ในกล่องใส่ข้อมูลใช้เฉพาะที่เปิดใช้จริง
+            // ผลที่ได้ตรงกับตอนส่งจริง เพราะทดสอบเฉพาะรายการที่เปิดใช้
             setStatus(
                 status,
                 'ปกปิด ' + Number(result.count || 0) + ' จุด' +
                     ' · ตัวแปร ' + Number(result.placeholders || 0) + ' ตัว' +
-                    ' · ทดสอบกับทุกรายการในลิสต์ (รวมที่ยังไม่เปิดใช้)' +
+                    ' · ใช้ ' + enabledCount + ' รายการที่เปิดใช้' +
+                    (enabledCount === 0
+                        ? ' (ยังไม่มีรายการที่เปิดใช้ — ตอนส่งจริงจะไม่มีการปกปิด)'
+                        : '') +
                     (errors.length > 0
                         ? ' · ใช้ไม่ได้ ' + errors.length + ' รายการ: ' +
                             errors.map(function (item) {
                                 return item.name + ' (' + item.error + ')';
                             }).join(', ')
-                        : '')
+                        : ''),
+                enabledCount === 0 ? 'error' : ''
             );
 
         } catch (error) {
