@@ -81,11 +81,6 @@
         '                <p class="hint data-privacy-label">ข้อความที่ AI จะเห็น (ค่าจริงถูกแทนด้วยตัวแปร)</p>',
         '                <pre id="dataPrivacyMasked" class="data-privacy-masked"></pre>',
 
-        '                <details id="dataPrivacyContextWrap" hidden>',
-        '                    <summary>ข้อมูลอ้างอิงจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) ที่ AI จะเห็น</summary>',
-        '                    <pre id="dataPrivacyContext" class="data-privacy-masked"></pre>',
-        '                </details>',
-
         '                <p id="dataPrivacyNote" class="hint data-privacy-note"></p>',
         '            </div>',
         '        </section>',
@@ -739,8 +734,6 @@
         const summary = el('dataPrivacySummary');
         const list = el('dataPrivacyList');
         const masked = el('dataPrivacyMasked');
-        const contextWrap = el('dataPrivacyContextWrap');
-        const context = el('dataPrivacyContext');
         const note = el('dataPrivacyNote');
 
         if (!panel) return;
@@ -801,19 +794,6 @@
 
         if (masked) {
             masked.textContent = String(result.text || '');
-        }
-
-        // การ์ดของรอบที่ส่งไปแล้วมีเฉพาะจำนวนของบริบท (ข้อความบริบทไม่ได้ถูกส่งกลับมา)
-        const showContextText = !sent && contextCount > 0;
-
-        if (contextWrap) {
-            contextWrap.hidden = !showContextText;
-        }
-
-        if (context) {
-            context.textContent = showContextText
-                ? String(result.context || '')
-                : '';
         }
 
         note.textContent = [

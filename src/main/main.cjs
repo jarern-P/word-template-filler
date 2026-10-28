@@ -1853,8 +1853,11 @@ ipcMain.handle(
             // ดึง raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
             const contextRawText = await buildContextRawText();
 
-            // ปกปิดคำเฉพาะ (หน้า "คำเฉพาะ") — ทั้งข้อความและบริบทถูกแทนด้วย
-            // ตัวแปร [[NAME_1]] ก่อนออกจากเครื่อง และแทนคืนตอนได้ผลลัพธ์
+            // ปกปิดคำเฉพาะ (หน้า "คำเฉพาะ") — แทนด้วยตัวแปร [[NAME_1]] เฉพาะ
+            // "ข้อความต้นฉบับ" และแทนคืนตอนได้ผลลัพธ์
+            //
+            // ข้อมูลอ้างอิงจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) ส่งตามเดิม ไม่ถูกแทน
+            // ด้วยตัวแปร — เป็นคำที่ผู้ใช้ตั้งไว้เองและ AI ต้องเห็นเพื่อเทียบคำ
             // ใช้ตัวสแกนตัวเดียวกับปุ่ม "ตรวจคำเฉพาะ" — ผลที่เห็นก่อนกดจึงตรงกัน
             const terms =
                 await loadSensitiveTerms();
@@ -1862,15 +1865,12 @@ ipcMain.handle(
             const report =
                 privacyMask.inspect(
                     terms,
-                    [text, contextRawText],
+                    [text],
                     await buildPrivacyMaskOptions(terms)
                 );
 
             const maskedText =
                 report.masked[0];
-
-            const maskedContext =
-                report.masked[1];
 
             // log ไว้ตรวจย้อนหลังได้ว่าตอนส่งจริงปกปิดอะไรไป (ค่าจริงไม่ถูก log)
             console.log(
@@ -1900,7 +1900,7 @@ ipcMain.handle(
                         model: saved.gemini?.model,
                         // prompt ที่แก้ไว้ในหน้า ตั้งค่า OCR (ว่าง = ค่าเริ่มต้น)
                         prompt: saved.improve?.prompt || "",
-                        contextRawText: maskedContext,
+                        contextRawText: contextRawText,
                         // มีการปกปิดจริง = บอก AI ว่าตัวแปรในวงเล็บห้ามแตะ
                         maskInstruction: report.count > 0
                             ? privacyMask.MASK_INSTRUCTION
@@ -1949,7 +1949,8 @@ ipcMain.handle(
                 // ข้อมูลสำหรับการ์ด "คำเฉพาะ" ในกล่องใส่ข้อมูล (ตรวจย้อนหลังได้)
                 textMasked: maskedText,
                 textCount: report.counts[0],
-                contextCount: report.counts[1],
+                // ข้อมูลอ้างอิงไม่ถูกปกปิด — ไม่มีจุดที่ถูกแทนในบริบท
+                contextCount: 0,
                 items: report.items,
                 unmatched: report.unmatched,
                 leftover: leftover,
@@ -2447,8 +2448,8 @@ ipcMain.handle(
 
 // ตรวจว่าจะถูกปกปิดอะไรบ้างก่อนส่งจริง — ไม่เรียก AI และไม่ส่งข้อมูลออก
 //
-// ใช้กับปุ่ม "ตรวจคำเฉพาะ" ในกล่องใส่ข้อมูล: สแกนทั้งข้อความและข้อมูลอ้างอิง
-// จากฐานข้อมูล (อย่างละเอียดเหมือนตอนกด "ปรับปรุง" ทุกอย่าง)
+// ใช้กับปุ่ม "ตรวจคำเฉพาะ" ในกล่องใส่ข้อมูล: สแกน "ข้อความต้นฉบับ"
+// ด้วยรายการเดียวกับตอนกด "ปรับปรุง" (ข้อมูลอ้างอิงจากฐานข้อมูลไม่ถูกปกปิด)
 // แต่คืนเฉพาะผลการตรวจให้ดู — ยังไม่ส่งอะไรให้ Gemini
 ipcMain.handle(
     "privacy:inspect",
@@ -2476,23 +2477,25 @@ ipcMain.handle(
             const report =
                 privacyMask.inspect(
                     terms,
-                    [text, contextRawText],
+                    [text],
                     await buildPrivacyMaskOptions(terms)
                 );
 
             console.log(
                 "[คำเฉพาะ] ตรวจก่อนส่ง — ปกปิด " + report.count + " จุด (" +
                 report.placeholders + " ตัวแปร) จากรายการที่เปิดใช้ " +
-                report.enabled + "/" + report.total
+                report.enabled + "/" + report.total +
+                " · ข้อมูลอ้างอิงไม่ถูกปกปิด"
             );
 
             return {
                 ok: true,
                 result: {
                     text: report.masked[0],
-                    context: report.masked[1],
+                    // บริบทที่ AI เห็นตอนส่งจริง — ไม่ถูกปกปิด
+                    context: contextRawText,
                     count: report.counts[0],
-                    contextCount: report.counts[1],
+                    contextCount: 0,
                     placeholders: report.placeholders,
                     items: report.items,
                     unmatched: report.unmatched,
