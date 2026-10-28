@@ -243,7 +243,10 @@ function createMasker(terms, options) {
         compiled.push({
             name: name,
             regex: parsed.regex,
-            requireKnown: isRequireKnown(term)
+            requireKnown: isRequireKnown(term),
+            // เก็บชนิด/pattern ไว้บอก AI ว่าตัวแปรแต่ละตัวหมายถึงอะไร
+            kind: term.kind === 'regex' ? 'regex' : 'text',
+            pattern: String(term.pattern == null ? '' : term.pattern).trim()
         });
     });
 
@@ -252,6 +255,24 @@ function createMasker(terms, options) {
     const map = [];               // [{ placeholder, value }]
     const matched = new Set();    // ชื่อตัวแปรที่เจอค่าจริงในข้อความชุดนี้
     let count = 0;                // จำนวนจุดที่ถูกแทน
+
+    // รายละเอียดของตัวแปรที่ถูกใช้จริง: name -> [{ kind, pattern }]
+    // (ใช้สร้างคำอธิบายความหมายของตัวแปรที่แนบไปกับ prompt)
+    const definitions = new Map();
+
+    function rememberDefinition(term) {
+        const list = definitions.get(term.name) || [];
+
+        const duplicate = list.some(function (item) {
+            return item.kind === term.kind && item.pattern === term.pattern;
+        });
+
+        if (!duplicate) {
+            list.push({ kind: term.kind, pattern: term.pattern });
+        }
+
+        definitions.set(term.name, list);
+    }
 
     // คำในระบบที่ใกล้ที่สุดของค่าที่ regex จับได้ — null = ไม่มีคำที่ผ่านเกณฑ์
     //
@@ -375,6 +396,8 @@ function createMasker(terms, options) {
                     value = known;
                 }
 
+                rememberDefinition(term);
+
                 ranges.push([start, end]);
                 replacements.push({
                     start: start,
@@ -451,6 +474,22 @@ function createMasker(terms, options) {
         get matched() {
             return Array.from(matched);
         },
+        // ตัวแปรที่ถูกใช้จริงพร้อมชนิด/pattern — เรียงตามลำดับที่เจอครั้งแรก
+        get definitions() {
+            const list = [];
+
+            definitions.forEach(function (items, name) {
+                items.forEach(function (item) {
+                    list.push({
+                        name: name,
+                        kind: item.kind,
+                        pattern: item.pattern
+                    });
+                });
+            });
+
+            return list;
+        },
         // เกณฑ์/จำนวนคำในระบบที่ใช้เทียบ (หน้า "คำเฉพาะ" แสดงให้เห็น)
         get minSimilarity() {
             return minSimilarity;
@@ -459,6 +498,41 @@ function createMasker(terms, options) {
             return knownWords.length;
         }
     };
+}
+
+// คำอธิบายความหมายของตัวแปรที่แนบไปกับ prompt — AI จะได้รู้ว่า [[MONEY_n]] คืออะไร
+//
+// ชนิด regex = ส่ง pattern ตามที่ผู้ใช้ตั้งไว้
+// ชนิด text  = ไม่ส่งคำจริง (คำนั้นคือข้อมูลที่ต้องปกปิด) บอกแค่ประเภท
+function formatLegend(definitions) {
+    const list = Array.isArray(definitions) ? definitions : [];
+
+    if (list.length === 0) {
+        return '';
+    }
+
+    const lines = [
+        'ตัวแปรที่พบในข้อความนี้ (ดูจากชื่อหน้าตัวแปร เช่น [[MONEY_1]] คือ MONEY):'
+    ];
+
+    list.forEach(function (item) {
+        lines.push(
+            item.kind === 'regex'
+                ? '- ชื่อตัวแปร ' + item.name + ' = ค่าที่ตรงกับ pattern: ' + item.pattern
+                : '- ชื่อตัวแปร ' + item.name + ' = คำเฉพาะที่ตั้งไว้ (ชนิดคำ)'
+        );
+    });
+
+    return lines.join('\n');
+}
+
+// คำสั่งเรื่องตัวแปร + คำอธิบายความหมาย (ใช้แนบไปกับ prompt ตอนส่งจริง)
+function buildMaskInstruction(definitions) {
+    const legend = formatLegend(definitions);
+
+    return legend === ''
+        ? MASK_INSTRUCTION
+        : MASK_INSTRUCTION + '\n\n' + legend;
 }
 
 // รูปแบบตัวแปรที่เราสร้าง — เทียบกับข้อความที่ได้จาก AI เพื่อดูว่ามีตัวไหนค้างอยู่
@@ -521,6 +595,8 @@ function inspect(terms, chunks, options) {
         }).length,
         minSimilarity: masker.minSimilarity,
         knownWords: masker.knownWords,
+        // ตัวแปรที่ถูกใช้จริง + ชนิด/pattern (main ใช้สร้างคำอธิบายใน prompt)
+        definitions: masker.definitions,
         // คืนค่าเดิมได้ด้วย (ตอนส่งจริงใช้แทนค่ากลับในคำตอบของ AI)
         restore: masker.restore
     };
@@ -543,6 +619,8 @@ module.exports = {
     normalizeForCompare,
     similarityPercent,
     sanitizeMinSimilarity,
+    formatLegend,
+    buildMaskInstruction,
     validatePattern,
     createMasker,
     inspect,

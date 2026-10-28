@@ -1872,6 +1872,16 @@ ipcMain.handle(
             const maskedText =
                 report.masked[0];
 
+            // คำอธิบายว่าตัวแปรแต่ละตัวหมายถึงอะไร — แนบตามสวิตช์ในหน้า "คำเฉพาะ"
+            // (ปิดสวิตช์ = ส่งแค่คำสั่งห้ามแก้ตัวแปร ไม่มี pattern ติดไป)
+            let maskInstruction = "";
+
+            if (report.count > 0) {
+                maskInstruction = await loadPrivacySendPatterns()
+                    ? privacyMask.buildMaskInstruction(report.definitions)
+                    : privacyMask.MASK_INSTRUCTION;
+            }
+
             // log ไว้ตรวจย้อนหลังได้ว่าตอนส่งจริงปกปิดอะไรไป (ค่าจริงไม่ถูก log)
             console.log(
                 "[คำเฉพาะ] ส่งให้ Gemini — ปกปิด " + report.count +
@@ -1902,9 +1912,8 @@ ipcMain.handle(
                         prompt: saved.improve?.prompt || "",
                         contextRawText: contextRawText,
                         // มีการปกปิดจริง = บอก AI ว่าตัวแปรในวงเล็บห้ามแตะ
-                        maskInstruction: report.count > 0
-                            ? privacyMask.MASK_INSTRUCTION
-                            : "",
+                        // (มีคำอธิบาย pattern ต่อท้ายเมื่อเปิดสวิตช์ในหน้า "คำเฉพาะ")
+                        maskInstruction: maskInstruction,
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {
@@ -2078,6 +2087,9 @@ async function loadSensitiveTerms() {
 // key ในตาราง app_settings ของ % ความคล้ายขั้นต่ำ (ใช้ร่วมกันทุกรายการ)
 const PRIVACY_MIN_SIMILARITY_KEY = "privacyMinSimilarity";
 
+// key ของสวิตช์ "ส่ง pattern ของตัวแปรไปใน prompt"
+const PRIVACY_SEND_PATTERNS_KEY = "privacySendPatterns";
+
 
 // % ความคล้ายขั้นต่ำที่ใช้เทียบกับคำในระบบ (ยังไม่เคยตั้ง = ค่าเริ่มต้น)
 async function loadPrivacyMinSimilarity() {
@@ -2109,6 +2121,39 @@ async function loadPrivacyMinSimilarity() {
         );
 
         return privacyMask.DEFAULT_MIN_SIMILARITY;
+    }
+}
+
+
+// สวิตช์ "ส่ง pattern ของตัวแปรไปใน prompt" (หน้า "คำเฉพาะ")
+// ยังไม่เคยตั้ง = เปิดไว้ (ตรงกับพฤติกรรมก่อนมีสวิตช์)
+async function loadPrivacySendPatterns() {
+
+    try {
+
+        await dbReady();
+
+        const result =
+            await dbRequest(
+                "setting-get",
+                { key: PRIVACY_SEND_PATTERNS_KEY }
+            );
+
+        const stored =
+            result && result.result ? result.result.value : null;
+
+        if (stored === null || stored === "") return true;
+
+        return stored === "1" || stored === "true";
+
+    } catch (error) {
+
+        console.error(
+            "โหลดค่าตั้งการส่ง pattern ไม่สำเร็จ:",
+            error
+        );
+
+        return true;
     }
 }
 
@@ -2305,7 +2350,7 @@ ipcMain.handle(
 );
 
 
-// ค่าตั้งของหน้า "คำเฉพาะ" — % ขั้นต่ำ + จำนวนคำในระบบที่โหลดมาเทียบ
+// ค่าตั้งของหน้า "คำเฉพาะ" — % ขั้นต่ำ · สวิตช์ส่ง pattern · จำนวนคำในระบบ
 ipcMain.handle(
     "privacy:settings-get",
     async function () {
@@ -2321,6 +2366,9 @@ ipcMain.handle(
                     await loadPrivacyMinSimilarity(),
                 defaultMinSimilarity:
                     privacyMask.DEFAULT_MIN_SIMILARITY,
+                // ส่ง pattern ของตัวแปรไปใน prompt หรือไม่
+                sendPatterns:
+                    await loadPrivacySendPatterns(),
                 knownWords: countKnownWords(knownWords)
             };
 
@@ -2337,7 +2385,8 @@ ipcMain.handle(
 );
 
 
-// บันทึก % ขั้นต่ำ (ใช้ร่วมกันทุกรายการที่ตั้ง "ต้องมีคำในระบบเท่านั้น")
+// บันทึกค่าตั้งของหน้า "คำเฉพาะ" — ส่งมาเฉพาะฟิลด์ที่เปลี่ยนก็ได้
+// payload = { minSimilarity, sendPatterns }
 ipcMain.handle(
     "privacy:settings-save",
     async function (event, payload) {
@@ -2346,29 +2395,63 @@ ipcMain.handle(
 
             await dbReady();
 
-            const minSimilarity =
-                privacyMask.sanitizeMinSimilarity(
-                    payload && payload.minSimilarity
-                );
+            const input =
+                payload && typeof payload === "object" ? payload : {};
 
-            const saved =
-                await dbRequest(
-                    "setting-save",
-                    {
-                        key: PRIVACY_MIN_SIMILARITY_KEY,
-                        value: String(minSimilarity)
-                    }
-                );
+            const hasMinSimilarity =
+                input.minSimilarity !== undefined;
 
-            if (!saved || saved.ok === false) {
-                throw new Error(
-                    (saved && saved.error) || "บันทึก % ขั้นต่ำไม่สำเร็จ"
-                );
+            const hasSendPatterns =
+                input.sendPatterns !== undefined;
+
+            const minSimilarity = hasMinSimilarity
+                ? privacyMask.sanitizeMinSimilarity(input.minSimilarity)
+                : await loadPrivacyMinSimilarity();
+
+            const sendPatterns = hasSendPatterns
+                ? (input.sendPatterns === true || Number(input.sendPatterns) === 1)
+                : await loadPrivacySendPatterns();
+
+            if (hasMinSimilarity) {
+
+                const saved =
+                    await dbRequest(
+                        "setting-save",
+                        {
+                            key: PRIVACY_MIN_SIMILARITY_KEY,
+                            value: String(minSimilarity)
+                        }
+                    );
+
+                if (!saved || saved.ok === false) {
+                    throw new Error(
+                        (saved && saved.error) || "บันทึก % ขั้นต่ำไม่สำเร็จ"
+                    );
+                }
+            }
+
+            if (hasSendPatterns) {
+
+                const saved =
+                    await dbRequest(
+                        "setting-save",
+                        {
+                            key: PRIVACY_SEND_PATTERNS_KEY,
+                            value: sendPatterns ? "1" : "0"
+                        }
+                    );
+
+                if (!saved || saved.ok === false) {
+                    throw new Error(
+                        (saved && saved.error) || "บันทึกค่าส่ง pattern ไม่สำเร็จ"
+                    );
+                }
             }
 
             return {
                 ok: true,
-                minSimilarity: minSimilarity
+                minSimilarity: minSimilarity,
+                sendPatterns: sendPatterns
             };
 
         } catch (error) {

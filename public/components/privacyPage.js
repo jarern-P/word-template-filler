@@ -43,6 +43,12 @@
         '        (ข้อมูลหลัก + คลังคำ) ที่ส่งให้ AI เพิ่มเติมจะไม่ถูกแทนด้วยตัวแปร',
         '    </p>',
 
+        '    <p class="hint">',
+        '        pattern ของรายการชนิด regex ที่ถูกใช้จริงจะถูกแนบไปใน prompt ด้วยเมื่อเปิด',
+        '        สวิตช์ด้านล่าง เพื่อให้ AI รู้ว่าตัวแปรแต่ละตัวหมายถึงอะไร (ส่วนรายการชนิดคำ',
+        '        จะบอกแค่ว่าเป็นคำเฉพาะ โดยไม่ส่งคำจริงออกไป)',
+        '    </p>',
+
         // ── สรุปสถานะ ──
         '    <section class="suggest-settings">',
         '        <h2>การปกปิด</h2>',
@@ -63,8 +69,19 @@
         '            ตั้งแต่ % นี้ขึ้นไปจะถูกแทนด้วยคำในระบบ (คำที่สะกดถูก) ก่อนแปลงเป็นตัวแปร',
         '        </p>',
 
+        '        <label class="switch-toggle" for="privacySendPatterns">',
+        '            <input type="checkbox" id="privacySendPatterns">',
+        '            <span class="switch-box" aria-hidden="true"></span>',
+        '            <span class="switch-text">ส่ง pattern ของตัวแปรไปใน prompt</span>',
+        '        </label>',
+
+        '        <p class="hint">',
+        '            เปิด = AI เห็นว่าตัวแปรชื่อต่าง ๆ ตรงกับ pattern อะไร · ปิด = ส่งแค่คำสั่ง',
+        '            ห้ามแก้ตัวแปร (ไม่มี pattern ติดไปกับ prompt)',
+        '        </p>',
+
         '        <div class="form-actions">',
-        '            <button id="privacyMinSimilaritySaveBtn" type="button" class="plain">บันทึก % ขั้นต่ำ</button>',
+        '            <button id="privacyMinSimilaritySaveBtn" type="button" class="plain">บันทึกค่าตั้ง</button>',
         '        </div>',
 
         '        <p id="privacySettingsStatus" class="db-status"></p>',
@@ -187,6 +204,7 @@
     let previewBusy = false;
     let minSimilarity = 80; // % ขั้นต่ำของการเทียบกับคำในระบบ (ใช้ร่วมกันทุกรายการ)
     let knownWords = 0;     // จำนวนคำในระบบ (คลังคำศัพท์ + ข้อมูลหลัก)
+    let sendPatterns = true; // ส่ง pattern ของตัวแปรไปใน prompt หรือไม่
 
     // ค่าที่พิมพ์ไว้ — จำข้ามการเปลี่ยนหน้า (DOM ถูกวาดใหม่ทุกครั้ง)
     const state = {
@@ -433,8 +451,12 @@
 
             minSimilarity = Number(response.minSimilarity);
             knownWords = Number(response.knownWords) || 0;
+            sendPatterns = response.sendPatterns !== false;
 
             if (input) input.value = String(minSimilarity);
+
+            const toggle = el('privacySendPatterns');
+            if (toggle) toggle.checked = sendPatterns;
 
             setStatus(status, '');
             updateKnownWordsText();
@@ -465,13 +487,18 @@
             return;
         }
 
+        const toggle = el('privacySendPatterns');
+        const sendPatternsValue = toggle ? toggle.checked : sendPatterns;
+
         if (button) button.disabled = true;
+        if (toggle) toggle.disabled = true;
 
         setStatus(status, 'กำลังบันทึก...');
 
         try {
             const response = await window.electronAPI.privacySettingsSave({
-                minSimilarity: value
+                minSimilarity: value,
+                sendPatterns: sendPatternsValue
             });
 
             if (!response || response.ok === false) {
@@ -481,22 +508,30 @@
             }
 
             minSimilarity = Number(response.minSimilarity);
+            sendPatterns = response.sendPatterns !== false;
 
             if (input) input.value = String(minSimilarity);
+            if (toggle) toggle.checked = sendPatterns;
 
             renderList();
 
             setStatus(
                 status,
-                'บันทึก % ขั้นต่ำแล้ว: ' + minSimilarity + '%',
+                'บันทึกค่าตั้งแล้ว · เกณฑ์ ≥ ' + minSimilarity + '%' +
+                    ' · ส่ง pattern ' + (sendPatterns ? 'เปิด' : 'ปิด'),
                 'ok'
             );
 
         } catch (error) {
-            setStatus(status, 'บันทึกไม่สำเร็จ: ' + error.message, 'error');
+            const message = 'บันทึกไม่สำเร็จ: ' + error.message;
+
+            // ค่าจริงในฐานข้อมูลไม่เปลี่ยน — โหลดค่าที่บันทึกไว้กลับมาให้ตรงก่อน
+            await loadSettings();
+            setStatus(status, message, 'error');
 
         } finally {
             if (button) button.disabled = false;
+            if (toggle) toggle.disabled = false;
         }
     }
 
@@ -802,6 +837,7 @@
         const previewBtn = el('privacyPreviewBtn');
         const sample = el('privacySample');
         const settingsSaveBtn = el('privacyMinSimilaritySaveBtn');
+        const sendPatternsToggle = el('privacySendPatterns');
 
         if (!list) return;
 
@@ -865,6 +901,13 @@
 
         if (settingsSaveBtn) {
             settingsSaveBtn.addEventListener('click', saveSettings);
+        }
+
+        // สวิตช์บันทึกทันที (เหมือนสวิตช์เปิด/ปิดรายการในหน้านี้)
+        if (sendPatternsToggle) {
+            sendPatternsToggle.addEventListener('change', function () {
+                saveSettings();
+            });
         }
 
         if (sample) {

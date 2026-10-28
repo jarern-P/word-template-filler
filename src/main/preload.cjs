@@ -90,12 +90,13 @@ contextBridge.exposeInMainWorld(
         privacyDelete: (id) =>
             ipcRenderer.invoke("privacy:delete", id),
 
-        // ค่าตั้งที่ใช้ร่วมกัน: % ความคล้ายขั้นต่ำ + จำนวนคำในระบบ (คลังคำ + ข้อมูลหลัก)
-        // คืน { ok, minSimilarity, defaultMinSimilarity, knownWords }
+        // ค่าตั้งที่ใช้ร่วมกัน: % ความคล้ายขั้นต่ำ · สวิตช์ส่ง pattern · จำนวนคำในระบบ
+        // คืน { ok, minSimilarity, defaultMinSimilarity, sendPatterns, knownWords }
         privacySettingsGet: () =>
             ipcRenderer.invoke("privacy:settings-get"),
 
-        // payload = { minSimilarity } — 0–100 (ค่าเริ่มต้น 80)
+        // payload = { minSimilarity?, sendPatterns? } — ส่งเฉพาะฟิลด์ที่เปลี่ยน
+        // คืน { ok, minSimilarity, sendPatterns }
         privacySettingsSave: (payload) =>
             ipcRenderer.invoke("privacy:settings-save", payload),
 

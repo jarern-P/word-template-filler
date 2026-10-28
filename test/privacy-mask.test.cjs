@@ -412,6 +412,80 @@ test('inspect ส่งต่อเกณฑ์/คำในระบบ แล�
     );
 });
 
+test('definitions บอกเฉพาะตัวแปรที่ถูกใช้จริง พร้อมชนิด/pattern', function () {
+    const masker = privacy.createMasker([
+        enabled(MONEY),
+        enabled(NAME),
+        { name: 'COMPANY', kind: 'text', pattern: 'บริษัท ทดสอบ จำกัด', enabled: 1 }
+    ]);
+
+    assert.deepStrictEqual(masker.definitions, []);
+
+    masker.mask('บริษัท ทดสอบ จำกัด วงเงิน 4,000.00 บาท');
+
+    const names = masker.definitions.map(function (item) {
+        return item.name;
+    });
+
+    // NAME เปิดใช้แต่ไม่พบในข้อความ จึงไม่อยู่ในคำอธิบาย
+    assert.deepStrictEqual(names, ['MONEY', 'COMPANY']);
+
+    const money = masker.definitions[0];
+    const company = masker.definitions[1];
+
+    assert.strictEqual(money.kind, 'regex');
+    assert.ok(money.pattern.includes('บาท'));
+    assert.strictEqual(company.kind, 'text');
+});
+
+test('buildMaskInstruction แนบ pattern ของตัวแปรที่ใช้ และไม่รั่วคำของชนิด text', function () {
+    const masker = privacy.createMasker([
+        enabled(MONEY),
+        { name: 'COMPANY', kind: 'text', pattern: 'บริษัท ทดสอบ จำกัด', enabled: 1 }
+    ]);
+
+    masker.mask('บริษัท ทดสอบ จำกัด วงเงิน 4,000.00 บาท');
+
+    const instruction = privacy.buildMaskInstruction(masker.definitions);
+
+    // คำสั่งเดิมยังครบ
+    assert.ok(instruction.startsWith(privacy.MASK_INSTRUCTION));
+    assert.ok(instruction.includes('ห้ามแก้'));
+
+    // regex = ส่ง pattern, text = บอกแค่ประเภท
+    assert.ok(instruction.includes('ชื่อตัวแปร MONEY = ค่าที่ตรงกับ pattern:'));
+    assert.ok(instruction.includes('ชื่อตัวแปร COMPANY = คำเฉพาะที่ตั้งไว้'));
+    assert.ok(!instruction.includes('บริษัท ทดสอบ จำกัด'));
+
+    // ไม่มีตัวแปร = คำสั่งเดิมเหมือนก่อนมี legend
+    assert.strictEqual(privacy.buildMaskInstruction([]), privacy.MASK_INSTRUCTION);
+
+    // prompt จริงมีคำอธิบายตัวแปรก่อนข้อความต้นฉบับ
+    const prompt = improve.buildPrompt('วงเงิน [[MONEY_1]]', '', '', instruction);
+
+    assert.ok(prompt.includes('ชื่อตัวแปร MONEY'));
+    assert.ok(prompt.indexOf('ชื่อตัวแปร MONEY') < prompt.indexOf('ข้อความต้นฉบับ:'));
+});
+
+test('inspect คืน definitions ของตัวแปรที่ถูกใช้ในข้อความ', function () {
+    const report = privacy.inspect(
+        [enabled(MONEY), enabled(NAME)],
+        ['จำนวนเงิน 4,000.00 บาท']
+    );
+
+    assert.deepStrictEqual(
+        report.definitions.map(function (item) {
+            return item.name;
+        }),
+        ['MONEY']
+    );
+
+    const instruction = privacy.buildMaskInstruction(report.definitions);
+
+    assert.ok(instruction.includes('ชื่อตัวแปร MONEY'));
+    assert.ok(!instruction.includes('ชื่อตัวแปร NAME'));
+});
+
 test('sanitizeName เก็บเฉพาะ A-Z 0-9 _ และมีค่าสำรอง', function () {
     assert.strictEqual(privacy.sanitizeName('money key'), 'MONEY_KEY');
     assert.strictEqual(privacy.sanitizeName('  ชื่อ-นามสกุล  '), 'TERM');
