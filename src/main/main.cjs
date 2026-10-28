@@ -2094,12 +2094,43 @@ ipcMain.handle(
                 );
             }
 
+            // token ที่ใช้ในรอบนี้ — สรุปให้หน้าจอ และบันทึกลงสถิติของแต่ละ key
+            const usageTotals = { input: 0, output: 0 };
+
             const result =
                 await ocrImprove.improveText(
                     maskedText,
                     {
+                        // key เดียว (โครงเก่า) + รายการ key (โครงใหม่ — ใช้เป็น fallback)
                         apiKey: saved.gemini?.apiKey || "",
+                        apiKeys: saved.gemini?.apiKeys || [],
                         model: saved.gemini?.model,
+                        // เรียกหลังได้ token ของแต่ละก้อน — สะสมแยกตาม key
+                        onUsage: function (keyId, usage) {
+
+                            const input =
+                                Math.max(0, Math.floor(Number(usage && usage.input) || 0));
+
+                            const output =
+                                Math.max(0, Math.floor(Number(usage && usage.output) || 0));
+
+                            usageTotals.input += input;
+                            usageTotals.output += output;
+
+                            try {
+                                ocrConfig.addGeminiUsage(
+                                    getDataPath(),
+                                    keyId,
+                                    { input: input, output: output }
+                                );
+
+                            } catch (error) {
+                                console.error(
+                                    "บันทึก token ของ Gemini ไม่สำเร็จ:",
+                                    error
+                                );
+                            }
+                        },
                         // prompt ที่แก้ไว้ในหน้า ตั้งค่า OCR (ว่าง = ค่าเริ่มต้น)
                         prompt: saved.improve?.prompt || "",
                         contextRawText: contextRawText,
@@ -2146,6 +2177,11 @@ ipcMain.handle(
             return {
                 ok: true,
                 ...result,
+                // token ที่ใช้ในรอบนี้ (input/output) และจำนวน key ที่ได้ใช้
+                usage: usageTotals,
+                keysUsed: Array.isArray(result.usageByKey)
+                    ? result.usageByKey.length
+                    : 0,
                 // แทนค่าเดิมกลับให้ผู้ใช้เห็น (AI เห็นเฉพาะตัวแปร)
                 text: restored,
                 masked: report.count,
@@ -3311,12 +3347,36 @@ ipcMain.handle(
                 const ocrGemini =
                     require("./ocr-gemini.cjs");
 
-                ocrPage = function (page) {
+                ocrPage = async function (page) {
 
-                    return ocrGemini.ocrPage(page, {
-                        apiKey: settings.gemini.apiKey,
-                        model: settings.gemini.model
-                    });
+                    const result =
+                        await ocrGemini.ocrPage(page, {
+                            // key เดียว (โครงเก่า) + รายการ key (โครงใหม่ — fallback)
+                            apiKey: settings.gemini.apiKey,
+                            apiKeys: settings.gemini.apiKeys || [],
+                            model: settings.gemini.model
+                        });
+
+                    // บันทึก token ของหน้านี้ — บันทึกไม่ได้ก็ไม่ให้ OCR ล้มเหลว
+                    if (result && result.keyId) {
+
+                        try {
+                            ocrConfig.addGeminiUsage(
+                                getDataPath(),
+                                result.keyId,
+                                result.usage
+                            );
+
+                        } catch (error) {
+
+                            console.error(
+                                "บันทึก token ของ Gemini OCR ไม่สำเร็จ:",
+                                error
+                            );
+                        }
+                    }
+
+                    return result;
                 };
             }
 

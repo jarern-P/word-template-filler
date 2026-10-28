@@ -246,6 +246,53 @@ function splitChunks(text, limit) {
     return chunks;
 }
 
+// token ที่ Gemini รายงานกลับมา — ใช้แสดง/สะสมในหน้า ตั้งค่า OCR
+function readUsage(data) {
+    const usage =
+        data && data.usageMetadata && typeof data.usageMetadata === 'object'
+            ? data.usageMetadata
+            : {};
+
+    return {
+        input: Math.max(0, Math.floor(Number(usage.promptTokenCount) || 0)),
+        output: Math.max(0, Math.floor(Number(usage.candidatesTokenCount) || 0))
+    };
+}
+
+// รายการ key ตามลำดับที่ใช้ — รองรับทั้ง apiKeys (หลาย key) และ apiKey เดียว
+function normalizeApiKeys(options) {
+    const opts = options || {};
+    const keys = [];
+    const seen = new Set();
+
+    function add(value, id) {
+        const apiKey = String(value == null ? '' : value).trim();
+
+        if (apiKey === '' || seen.has(apiKey)) return;
+
+        seen.add(apiKey);
+
+        keys.push({
+            id: String(id == null ? '' : id),
+            apiKey: apiKey
+        });
+    }
+
+    if (Array.isArray(opts.apiKeys)) {
+        opts.apiKeys.forEach(function (item) {
+            if (item && typeof item === 'object') {
+                add(item.apiKey, item.id);
+            } else {
+                add(item, '');
+            }
+        });
+    }
+
+    if (keys.length === 0) add(opts.apiKey, '');
+
+    return keys;
+}
+
 async function requestChunk(text, apiKey, model, prompt, contextRawText, maskInstruction, fieldNames) {
     const body = {
         contents: [
@@ -343,24 +390,29 @@ async function requestChunk(text, apiKey, model, prompt, contextRawText, maskIns
         throw new Error('Gemini ไม่ได้ส่งข้อความกลับมา — ลองใหม่อีกครั้ง');
     }
 
-    return text_out;
+    return {
+        text: text_out,
+        usage: readUsage(data)
+    };
 }
 
 // opts.maskInstruction = คำสั่งเรื่องตัวแปรที่ใช้แทนคำเฉพาะ (ว่าง = ไม่แนบ)
 // opts.fieldNames = ฟิลด์ของแม่แบบที่ใช้เป็น key พร้อมชนิด/ตัวอย่าง (ว่าง = ไม่แนบ)
-// คืน { text, model, chunks } — ถ้าก้อนใดล้มเหลว จะโยน error ทั้งหมด
+// opts.apiKeys = [{ id, apiKey }] — ใช้เรียงตามลำดับ ถ้า key หนึ่งขัดข้องจึงลอง key ถัดไป
+// opts.onUsage(keyId, { input, output }) = แจ้ง token ของแต่ละ key (ถ้าส่งมา)
+// คืน { text, model, chunks, usageByKey } — ถ้าก้อนใดล้มเหลว จะโยน error ทั้งหมด
 // (ไม่คืนข้อความบางส่วน เพื่อไม่ให้ข้อมูลหายเงียบ ๆ)
 async function improveText(text, options) {
     const opts = options || {};
-    const apiKey = String(opts.apiKey || '').trim();
     const source = String(text == null ? '' : text);
     const contextRawText = String(opts.contextRawText || '').trim();
+    const keys = normalizeApiKeys(opts);
 
     if (source.trim() === '') {
         throw new Error('ไม่มีข้อความให้ปรับปรุง');
     }
 
-    if (apiKey === '') {
+    if (keys.length === 0) {
         throw new Error('ยังไม่ได้ใส่ API key ของ Gemini — ไปที่ ตั้งค่า OCR ก่อน');
     }
 
@@ -368,6 +420,12 @@ async function improveText(text, options) {
 
     const chunks = splitChunks(source, opts.chunkChars);
     const results = [];
+    const usageByKey = [];
+
+    // key ที่ล้มเหลวในรอบนี้ = ไม่ลองซ้ำ แต่ใช้ key ถัดไปแทน
+    const failedKeys = new Set();
+
+    let lastError = null;
 
     for (let index = 0; index < chunks.length; index++) {
         if (typeof opts.onProgress === 'function') {
@@ -378,23 +436,79 @@ async function improveText(text, options) {
             });
         }
 
-        results.push(
-            await requestChunk(
-                chunks[index],
-                apiKey,
-                model,
-                opts.prompt,
-                opts.contextRawText,
-                opts.maskInstruction,
-                opts.fieldNames
-            )
-        );
+        let done = false;
+
+        for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+            const key = keys[keyIndex];
+
+            if (failedKeys.has(key.apiKey)) continue;
+
+            try {
+                const result = await requestChunk(
+                    chunks[index],
+                    key.apiKey,
+                    model,
+                    opts.prompt,
+                    opts.contextRawText,
+                    opts.maskInstruction,
+                    opts.fieldNames
+                );
+
+                results.push(result.text);
+
+                // สะสม token ของ key นี้ (หลายก้อนอาจใช้ key เดียวกัน)
+                const id = key.id || ('key-' + (keyIndex + 1));
+
+                let entry = null;
+
+                for (const item of usageByKey) {
+                    if (item.id === id) {
+                        entry = item;
+                        break;
+                    }
+                }
+
+                if (!entry) {
+                    entry = { id: id, input: 0, output: 0 };
+                    usageByKey.push(entry);
+                }
+
+                entry.input += result.usage.input;
+                entry.output += result.usage.output;
+
+                if (typeof opts.onUsage === 'function') {
+                    try {
+                        opts.onUsage(id, result.usage);
+                    } catch (error) {
+                        // นับ token ไม่สำเร็จไม่ควรทำให้การปรับปรุงล้มเหลว
+                    }
+                }
+
+                done = true;
+                break;
+
+            } catch (error) {
+                lastError = error;
+                failedKeys.add(key.apiKey);
+
+                console.warn(
+                    '[ปรับปรุง] API key ลำดับที่ ' + (keyIndex + 1) +
+                    ' ใช้ไม่ได้ — ลอง key ถัดไป: ' +
+                    ((error && error.message) || String(error))
+                );
+            }
+        }
+
+        if (!done) {
+            throw lastError || new Error('Gemini ไม่ได้ส่งข้อความกลับมา — ลองใหม่อีกครั้ง');
+        }
     }
 
     return {
         text: results.join('\n'),
         model: model,
-        chunks: chunks.length
+        chunks: chunks.length,
+        usageByKey: usageByKey
     };
 }
 

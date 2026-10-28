@@ -90,18 +90,55 @@ function textToLines(text) {
         });
 }
 
-async function ocrPage(page, options) {
-    const opts = options || {};
-    const apiKey = String(opts.apiKey || '').trim();
+// token ที่ Gemini รายงานกลับมา — ใช้แสดง/สะสมในหน้า ตั้งค่า OCR
+function readUsage(data) {
+    const usage =
+        data && data.usageMetadata && typeof data.usageMetadata === 'object'
+            ? data.usageMetadata
+            : {};
 
-    if (apiKey === '') {
-        throw new Error('ยังไม่ได้ใส่ API key ของ Gemini — ไปที่ ตั้งค่า OCR ก่อน');
+    return {
+        input: Math.max(0, Math.floor(Number(usage.promptTokenCount) || 0)),
+        output: Math.max(0, Math.floor(Number(usage.candidatesTokenCount) || 0))
+    };
+}
+
+// รายการ key ตามลำดับที่ใช้ — รองรับทั้ง apiKeys (หลาย key) และ apiKey เดียว
+function normalizeApiKeys(options) {
+    const opts = options || {};
+    const keys = [];
+    const seen = new Set();
+
+    function add(value, id) {
+        const apiKey = String(value == null ? '' : value).trim();
+
+        if (apiKey === '' || seen.has(apiKey)) return;
+
+        seen.add(apiKey);
+
+        keys.push({
+            id: String(id == null ? '' : id),
+            apiKey: apiKey
+        });
     }
 
-    const model = sanitizeModel(opts.model);
+    if (Array.isArray(opts.apiKeys)) {
+        opts.apiKeys.forEach(function (item) {
+            if (item && typeof item === 'object') {
+                add(item.apiKey, item.id);
+            } else {
+                add(item, '');
+            }
+        });
+    }
 
-    const png = await renderPageToPng(page);
+    if (keys.length === 0) add(opts.apiKey, '');
 
+    return keys;
+}
+
+// ส่งภาพหนึ่งหน้าให้ Gemini ด้วย key หนึ่ง — คืนข้อมูล JSON ที่ได้
+async function requestPage(png, apiKey, model) {
     const body = {
         contents: [
             {
@@ -177,37 +214,78 @@ async function ocrPage(page, options) {
         throw new Error(friendlyError(response.status, message));
     }
 
-    const candidate =
-        data &&
-        Array.isArray(data.candidates) &&
-        data.candidates[0];
+    return data;
+}
 
-    const parts =
-        candidate &&
-        candidate.content &&
-        Array.isArray(candidate.content.parts)
-            ? candidate.content.parts
-            : [];
+async function ocrPage(page, options) {
+    const opts = options || {};
+    const keys = normalizeApiKeys(opts);
 
-    const text = cleanText(
-        parts
-            .map(function (part) {
-                return part && typeof part.text === 'string' ? part.text : '';
-            })
-            .filter(Boolean)
-            .join('\n')
-    );
-
-    // ถูกบล็อกด้วย safety หรือจบเพราะ MAX_TOKENS โดยไม่มีข้อความ
-    if (text === '' && candidate && candidate.finishReason === 'SAFETY') {
-        throw new Error('Gemini ไม่ยอมอ่านหน้านี้ (ถูกระบบความปลอดภัยบล็อก)');
+    if (keys.length === 0) {
+        throw new Error('ยังไม่ได้ใส่ API key ของ Gemini — ไปที่ ตั้งค่า OCR ก่อน');
     }
 
-    return {
-        text: text,
-        lines: textToLines(text),
-        confidence: 0
-    };
+    const model = sanitizeModel(opts.model);
+
+    // วาดหน้าครั้งเดียว — ใช้ภาพเดิมกับทุก key
+    const png = await renderPageToPng(page);
+
+    let lastError = null;
+
+    // ใช้ key ตามลำดับ — key ใดขัดข้องจึงลอง key ถัดไป
+    for (let index = 0; index < keys.length; index++) {
+        const key = keys[index];
+
+        try {
+            const data = await requestPage(png, key.apiKey, model);
+
+            const candidate =
+                data &&
+                Array.isArray(data.candidates) &&
+                data.candidates[0];
+
+            const parts =
+                candidate &&
+                candidate.content &&
+                Array.isArray(candidate.content.parts)
+                    ? candidate.content.parts
+                    : [];
+
+            const text = cleanText(
+                parts
+                    .map(function (part) {
+                        return part && typeof part.text === 'string' ? part.text : '';
+                    })
+                    .filter(Boolean)
+                    .join('\n')
+            );
+
+            // ถูกบล็อกด้วย safety หรือจบเพราะ MAX_TOKENS โดยไม่มีข้อความ
+            if (text === '' && candidate && candidate.finishReason === 'SAFETY') {
+                throw new Error('Gemini ไม่ยอมอ่านหน้านี้ (ถูกระบบความปลอดภัยบล็อก)');
+            }
+
+            return {
+                text: text,
+                lines: textToLines(text),
+                confidence: 0,
+                // ข้อมูลสำหรับบันทึก token ในหน้า ตั้งค่า OCR
+                keyId: key.id,
+                usage: readUsage(data)
+            };
+
+        } catch (error) {
+            lastError = error;
+
+            console.warn(
+                '[Gemini OCR] API key ลำดับที่ ' + (index + 1) +
+                ' ใช้ไม่ได้ — ลอง key ถัดไป: ' +
+                ((error && error.message) || String(error))
+            );
+        }
+    }
+
+    throw lastError || new Error('Gemini อ่านหน้านี้ไม่สำเร็จ — ลองใหม่อีกครั้ง');
 }
 
 module.exports = {

@@ -703,6 +703,14 @@
                 (Number(response.chunks) > 1
                     ? ' · ' + response.chunks + ' ก้อน'
                     : '') +
+                // token ที่ใช้ในรอบนี้ (สะสมแยกตาม key อยู่ที่หน้า ตั้งค่า OCR)
+                (response.usage &&
+                    (Number(response.usage.input) > 0 || Number(response.usage.output) > 0)
+                    ? ' · token เข้า ' +
+                        Number(response.usage.input || 0).toLocaleString('th-TH') +
+                        ' / ออก ' +
+                        Number(response.usage.output || 0).toLocaleString('th-TH')
+                    : '') +
                 // คำเฉพาะที่ถูกแทนด้วยตัวแปรก่อนส่ง (ดูหน้า "คำเฉพาะ")
                 (Number(response.masked) > 0
                     ? ' · ปกปิดคำเฉพาะ ' + response.masked + ' จุด'

@@ -425,6 +425,194 @@ test('improveText ส่งชนิดและตัวอย่างขอ�
     }
 });
 
+test('improveText ใช้ key ถัดไปเมื่อ key แรกขัดข้อง', async function () {
+    const originalFetch = global.fetch;
+    const keysUsed = [];
+
+    global.fetch = async function (url, init) {
+        keysUsed.push(init.headers['x-goog-api-key']);
+
+        if (init.headers['x-goog-api-key'] === 'bad-key') {
+            return {
+                ok: false,
+                status: 403,
+                json: async function () {
+                    return { error: { message: 'API key not valid' } };
+                }
+            };
+        }
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        { content: { parts: [{ text: 'เลขที่: 702057001' }] } }
+                    ],
+                    usageMetadata: {
+                        promptTokenCount: 12,
+                        candidatesTokenCount: 8
+                    }
+                };
+            }
+        };
+    };
+
+    try {
+        const result = await improve.improveText('เลขที่ 702057001', {
+            apiKeys: [
+                { id: 'k1', apiKey: 'bad-key' },
+                { id: 'k2', apiKey: 'good-key' }
+            ]
+        });
+
+        assert.deepStrictEqual(keysUsed, ['bad-key', 'good-key']);
+        assert.strictEqual(result.text, 'เลขที่: 702057001');
+        assert.deepStrictEqual(result.usageByKey, [
+            { id: 'k2', input: 12, output: 8 }
+        ]);
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('improveText สะสม token ตาม key และเรียก onUsage ทุกก้อน', async function () {
+    const originalFetch = global.fetch;
+    const reported = [];
+
+    global.fetch = async function () {
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        { content: { parts: [{ text: 'ฟิลด์: ค่า' }] } }
+                    ],
+                    usageMetadata: {
+                        promptTokenCount: 10,
+                        candidatesTokenCount: 5
+                    }
+                };
+            }
+        };
+    };
+
+    try {
+        const result = await improve.improveText('หนึ่ง\nสอง\nสาม', {
+            apiKeys: [{ id: 'k1', apiKey: 'good-key' }],
+            chunkChars: 8,
+            onUsage: function (keyId, usage) {
+                reported.push({ keyId: keyId, usage: usage });
+            }
+        });
+
+        assert.ok(result.chunks > 1);
+        assert.strictEqual(reported.length, result.chunks);
+        assert.ok(reported.every(function (item) {
+            return item.keyId === 'k1';
+        }));
+
+        assert.deepStrictEqual(result.usageByKey, [
+            {
+                id: 'k1',
+                input: 10 * result.chunks,
+                output: 5 * result.chunks
+            }
+        ]);
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('ocr-config เก็บหลาย key และสะสม token แยกตาม key', function () {
+    withTempDir(function (dir) {
+        const saved = ocrConfig.save(dir, {
+            gemini: {
+                model: 'gemini-2.5-flash',
+                keys: [
+                    { id: '', apiKey: 'key-one' },
+                    { id: '', apiKey: 'key-two' }
+                ]
+            }
+        });
+
+        assert.strictEqual(saved.gemini.keys.length, 2);
+        assert.ok(saved.gemini.keys.every(function (key) {
+            return key.hasKey === true;
+        }));
+
+        // key จริงไม่ถูกส่งออกไปหน้าจอ
+        assert.strictEqual(saved.gemini.keys[0].apiKey, undefined);
+
+        const firstId = saved.gemini.keys[0].id;
+
+        ocrConfig.addGeminiUsage(dir, firstId, { input: 120, output: 30 });
+        ocrConfig.addGeminiUsage(dir, firstId, { input: 10, output: 5 });
+
+        const pub = ocrConfig.read(dir);
+
+        assert.strictEqual(pub.gemini.keys[0].usage.inputTotal, 130);
+        assert.strictEqual(pub.gemini.keys[0].usage.outputTotal, 35);
+        assert.strictEqual(pub.gemini.keys[0].usage.inputLast, 10);
+        assert.strictEqual(pub.gemini.keys[0].usage.outputLast, 5);
+        assert.strictEqual(pub.gemini.keys[0].usage.requests, 2);
+        assert.ok(pub.gemini.keys[0].usage.updatedAt !== '');
+
+        // key ที่สองยังไม่มี token
+        assert.strictEqual(pub.gemini.keys[1].usage.inputTotal, 0);
+
+        // readSecrets คืน key จริงตามลำดับ
+        assert.deepStrictEqual(
+            ocrConfig.readSecrets(dir).gemini.apiKeys.map(function (key) {
+                return key.apiKey;
+            }),
+            ['key-one', 'key-two']
+        );
+
+        // บันทึกโดยไม่พิมพ์ key ใหม่ = key เดิมและสถิติเดิมอยู่ครบ
+        const again = ocrConfig.save(dir, {
+            gemini: {
+                keys: pub.gemini.keys.map(function (key) {
+                    return { id: key.id, apiKey: '' };
+                })
+            }
+        });
+
+        assert.strictEqual(again.gemini.keys.length, 2);
+        assert.strictEqual(again.gemini.keys[0].usage.inputTotal, 130);
+    });
+});
+
+test('ocr-config อ่านไฟล์เก่าที่เก็บ Gemini key เดียว', function () {
+    withTempDir(function (dir) {
+        fs.writeFileSync(
+            path.join(dir, ocrConfig.CONFIG_FILE),
+            JSON.stringify({
+                version: 2,
+                gemini: {
+                    apiKey: 'plain:' + Buffer.from('old-key', 'utf8').toString('base64'),
+                    model: 'gemini-2.5-flash'
+                }
+            })
+        );
+
+        const pub = ocrConfig.read(dir);
+
+        assert.strictEqual(pub.gemini.keys.length, 1);
+        assert.strictEqual(pub.gemini.keys[0].hasKey, true);
+        assert.strictEqual(pub.gemini.keys[0].usage.inputTotal, 0);
+
+        const secrets = ocrConfig.readSecrets(dir);
+
+        assert.strictEqual(secrets.gemini.apiKey, 'old-key');
+        assert.strictEqual(secrets.gemini.apiKeys[0].apiKey, 'old-key');
+    });
+});
+
 test('ocr-config เก็บ prompt ที่แก้เองและคืน prompt เริ่มต้นให้หน้าจอ', function () {
     withTempDir(function (dir) {
         const initial = ocrConfig.read(dir);

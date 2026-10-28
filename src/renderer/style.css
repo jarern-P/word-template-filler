@@ -4958,3 +4958,47 @@ body.table-ratio-dragging .table-ratio-handle {
 .ocr-actions {
     margin-top: 16px;
 }
+
+/* ── Gemini API keys (หลาย key + สถิติ token) ── */
+.gemini-keys {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.gemini-key-row {
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.gemini-key-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.gemini-key-row input {
+    width: 100%;
+    margin-bottom: 6px;
+}
+
+.gemini-key-row .hint {
+    margin: 4px 0 0;
+}
+
+.gemini-key-usage {
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.gemini-key-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}

@@ -175,11 +175,12 @@
         '    <section class="suggest-settings ocr-provider-settings" id="ocrGeminiSection" hidden>',
         '        <h2>Gemini API</h2>',
 
-        '        <div class="field">',
-        '            <label for="ocrGeminiKey">API key</label>',
-        '            <input type="password" id="ocrGeminiKey" autocomplete="new-password" spellcheck="false">',
-        '            <p class="hint" id="ocrGeminiKeyHint"></p>',
-        '        </div>',
+        '        <div id="ocrGeminiKeys" class="gemini-keys"></div>',
+        '        <p class="hint">',
+        '            ใส่ได้หลาย key — ใช้เรียงตามลำดับที่แสดงด้านบน: ถ้า key แรกใช้งานไม่ได้',
+        '            (key ผิด/โควตาเต็ม/เซิร์ฟเวอร์ขัดข้อง) ระบบจะลอง key ถัดไปให้อัตโนมัติ',
+        '            และนับ token แยกตาม key แต่ละตัว',
+        '        </p>',
 
         '        <div class="field">',
         '            <label for="ocrGeminiModel">โมเดล</label>',
@@ -189,7 +190,8 @@
         '        </div>',
 
         '        <div class="form-actions page-actions ocr-actions">',
-        '            <button id="ocrGeminiClearBtn" type="button" class="plain">ลบ API key ที่เก็บไว้</button>',
+        '            <button id="ocrGeminiAddKeyBtn" type="button" class="plain">+ เพิ่ม API key</button>',
+        '            <button id="ocrGeminiClearBtn" type="button" class="plain">ลบ API key ทั้งหมด</button>',
         '        </div>',
 
         '        <p class="hint">',
@@ -200,7 +202,8 @@
 
         '        <p class="hint">',
         '            key และโมเดลชุดนี้ถูกใช้กับปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูลด้วย ',
-        '            (ตรวจคำผิด + จัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด)',
+        '            (ตรวจคำผิด + จัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด) ',
+        '            และใช้กับ OCR เมื่อเลือกผู้ให้บริการ Gemini',
         '        </p>',
         '    </section>',
 
@@ -256,6 +259,13 @@
 
     const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
+    // จำนวน key สูงสุดที่ตั้งได้ (เรียงตามลำดับการใช้)
+    const MAX_GEMINI_KEYS = 5;
+
+    // ช่อง key ที่แสดงอยู่ — { id, hasKey, usage, draft }
+    // draft = ค่าที่พิมพ์ค้างไว้ (ยังไม่บันทึก)
+    let geminiKeyRows = [];
+
     // ค่าล่าสุดจาก main process (ใช้ตัดสินว่า "มี key เก็บไว้แล้ว" ไหม)
     let settings = {
         provider: 'paddle',
@@ -263,7 +273,7 @@
         mode: 'auto',
         twoStage: false,
         improve: { prompt: '', defaultPrompt: '' },
-        gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false },
+        gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false, keys: [] },
         iloveapi: { hasKey: false }
     };
 
@@ -273,6 +283,183 @@
 
     function api() {
         return window.electronAPI || null;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Gemini API keys (หลาย key + สถิติ token ของแต่ละ key)
+    // ──────────────────────────────────────────────────────────────
+
+    function emptyUsage() {
+        return {
+            inputTotal: 0,
+            outputTotal: 0,
+            inputLast: 0,
+            outputLast: 0,
+            requests: 0,
+            updatedAt: ''
+        };
+    }
+
+    function toTokenCount(value) {
+        const number = Math.floor(Number(value));
+
+        return isFinite(number) && number > 0 ? number : 0;
+    }
+
+    function normalizeUsage(value) {
+        const source = value && typeof value === 'object' ? value : {};
+
+        return {
+            inputTotal: toTokenCount(source.inputTotal),
+            outputTotal: toTokenCount(source.outputTotal),
+            inputLast: toTokenCount(source.inputLast),
+            outputLast: toTokenCount(source.outputLast),
+            requests: toTokenCount(source.requests),
+            updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : ''
+        };
+    }
+
+    function formatNumber(value) {
+        return Number(value || 0).toLocaleString('th-TH');
+    }
+
+    // ข้อความสรุป token ของ key — สะสม และรอบล่าสุด
+    function formatUsage(value) {
+        const usage = normalizeUsage(value);
+
+        if (usage.requests === 0 && usage.inputTotal === 0 && usage.outputTotal === 0) {
+            return 'ยังไม่มีการใช้ token';
+        }
+
+        const updated = usage.updatedAt
+            ? ' · อัปเดต ' + new Date(usage.updatedAt).toLocaleString('th-TH')
+            : '';
+
+        return 'token สะสม: input ' + formatNumber(usage.inputTotal) +
+            ' · output ' + formatNumber(usage.outputTotal) +
+            ' · รอบล่าสุด: input ' + formatNumber(usage.inputLast) +
+            ' · output ' + formatNumber(usage.outputLast) +
+            updated;
+    }
+
+    function geminiHasAnyKey() {
+        return geminiKeyRows.some(function (row) {
+            return row.hasKey || String(row.draft || '').trim() !== '';
+        });
+    }
+
+    // วาดช่อง API key ทุกช่อง (เก็บค่าที่พิมพ์ค้างไว้ใน row.draft)
+    function renderGeminiKeys() {
+        const box = el('ocrGeminiKeys');
+
+        if (!box) return;
+
+        // ยังไม่มี key เลย = แสดงช่องว่าง 1 ช่องให้กรอก
+        if (geminiKeyRows.length === 0) {
+            geminiKeyRows.push({
+                id: '',
+                hasKey: false,
+                usage: emptyUsage(),
+                draft: ''
+            });
+        }
+
+        box.innerHTML = '';
+
+        geminiKeyRows.forEach(function (row, index) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'gemini-key-row';
+            wrapper.dataset.geminiKeyRow = String(index);
+
+            const head = document.createElement('div');
+            head.className = 'gemini-key-head';
+
+            const title = document.createElement('strong');
+            title.textContent = 'API key ' + (index + 1);
+
+            const badge = document.createElement('span');
+            badge.className = 'ocr-badge ' + (row.hasKey ? 'ok' : 'pending');
+            badge.textContent = row.hasKey ? 'เก็บไว้แล้ว' : 'ยังไม่มี key';
+
+            head.appendChild(title);
+            head.appendChild(badge);
+
+            const input = document.createElement('input');
+            input.type = 'password';
+            input.className = 'gemini-key-input';
+            input.autocomplete = 'new-password';
+            input.spellcheck = false;
+            input.value = row.draft || '';
+            input.placeholder = row.hasKey
+                ? '•••••••• (เว้นว่าง = ใช้ key เดิม)'
+                : 'วาง API key ที่นี่';
+
+            input.addEventListener('input', function () {
+                row.draft = input.value;
+            });
+
+            const hint = document.createElement('p');
+            hint.className = 'hint';
+            hint.textContent = row.hasKey
+                ? 'มี key เก็บไว้แล้ว — พิมพ์ key ใหม่เฉพาะเมื่อต้องการเปลี่ยน'
+                : 'ยังไม่มี key ในช่องนี้ — ต้องใส่ก่อนใช้งาน';
+
+            const usage = document.createElement('p');
+            usage.className = 'hint gemini-key-usage';
+            usage.textContent = formatUsage(row.usage);
+
+            const actions = document.createElement('div');
+            actions.className = 'gemini-key-actions';
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'plain danger';
+            remove.textContent = 'ลบ key นี้';
+
+            remove.addEventListener('click', function () {
+                geminiKeyRows.splice(index, 1);
+                renderGeminiKeys();
+                setStatus('ลบ key ออกจากรายการแล้ว — กด “บันทึกการตั้งค่า” เพื่อยืนยัน');
+            });
+
+            actions.appendChild(remove);
+
+            wrapper.appendChild(head);
+            wrapper.appendChild(input);
+            wrapper.appendChild(hint);
+            wrapper.appendChild(usage);
+            wrapper.appendChild(actions);
+            box.appendChild(wrapper);
+        });
+
+        const addBtn = el('ocrGeminiAddKeyBtn');
+
+        if (addBtn) {
+            addBtn.disabled = geminiKeyRows.length >= MAX_GEMINI_KEYS;
+        }
+    }
+
+    function addGeminiKeyRow() {
+        if (geminiKeyRows.length >= MAX_GEMINI_KEYS) return;
+
+        geminiKeyRows.push({
+            id: '',
+            hasKey: false,
+            usage: emptyUsage(),
+            draft: ''
+        });
+
+        renderGeminiKeys();
+        setStatus('เพิ่มช่อง API key แล้ว — ใส่ key แล้วกด “บันทึกการตั้งค่า”');
+    }
+
+    function collectGeminiKeys() {
+        return geminiKeyRows.map(function (row) {
+            return {
+                id: row.id || '',
+                apiKey: row.draft || ''
+            };
+        });
     }
 
     function setStatus(text, kind) {
@@ -357,12 +544,25 @@
             },
             gemini: {
                 model: (value.gemini && value.gemini.model) || DEFAULT_GEMINI_MODEL,
-                hasKey: Boolean(value.gemini && value.gemini.hasKey)
+                hasKey: Boolean(value.gemini && value.gemini.hasKey),
+                keys: value.gemini && Array.isArray(value.gemini.keys)
+                    ? value.gemini.keys
+                    : []
             },
             iloveapi: {
                 hasKey: Boolean(value.iloveapi && value.iloveapi.hasKey)
             }
         };
+
+        // ช่อง key ที่มีอยู่ — ค่าที่พิมพ์ค้าง (draft) เริ่มจากว่างเสมอ
+        geminiKeyRows = settings.gemini.keys.map(function (key) {
+            return {
+                id: String(key.id || ''),
+                hasKey: key.hasKey === true,
+                usage: normalizeUsage(key.usage),
+                draft: ''
+            };
+        });
 
         selectProvider(settings.provider);
 
@@ -373,13 +573,13 @@
         el('ocrModeAlways').checked = settings.mode === 'always';
 
         el('ocrGeminiModel').value = settings.gemini.model;
-        el('ocrGeminiKey').value = '';
         el('ocrIloveKey').value = '';
 
         // prompt ที่แก้เอง — ถ้ายังไม่เคยแก้ (= ว่าง) ให้แสดงค่าเริ่มต้นให้เห็นและแก้ได้
         el('ocrImprovePrompt').value =
             settings.improve.prompt || settings.improve.defaultPrompt;
 
+        renderGeminiKeys();
         updateKeyHints();
         updateImprovePromptHint();
         updateModeState();
@@ -401,16 +601,7 @@
     }
 
     function updateKeyHints() {
-        const geminiHasKey = settings.gemini.hasKey;
         const iloveHasKey = settings.iloveapi.hasKey;
-
-        el('ocrGeminiKeyHint').textContent = geminiHasKey
-            ? 'มี API key เก็บไว้แล้ว — เว้นว่างเพื่อใช้ key เดิม'
-            : 'ยังไม่มี API key — ต้องใส่ก่อนใช้ Gemini';
-
-        el('ocrGeminiKey').placeholder = geminiHasKey
-            ? '•••••••• (เว้นว่าง = ใช้ key เดิม)'
-            : 'วาง API key ที่นี่';
 
         el('ocrIloveKeyHint').textContent = iloveHasKey
             ? 'มี Public Key เก็บไว้แล้ว — เว้นว่างเพื่อใช้ key เดิม'
@@ -420,7 +611,7 @@
             ? '•••••••• (เว้นว่าง = ใช้ key เดิม)'
             : 'วาง Public Key ที่นี่';
 
-        el('ocrGeminiClearBtn').disabled = !geminiHasKey;
+        el('ocrGeminiClearBtn').disabled = !geminiHasAnyKey();
         el('ocrIloveClearBtn').disabled = !iloveHasKey;
     }
 
@@ -438,7 +629,8 @@
                     : el('ocrImprovePrompt').value
             },
             gemini: {
-                apiKey: el('ocrGeminiKey').value,
+                // id เดิมมาด้วยเสมอ — main จะเก็บ key/สถิติเดิมไว้ถ้าเว้นช่องว่าง
+                keys: collectGeminiKeys(),
                 model: el('ocrGeminiModel').value
             },
             iloveapi: {
@@ -816,13 +1008,10 @@
 
         // ตรวจ key ก่อนบันทึก เฉพาะผู้ให้บริการที่ต้องใช้
         if (provider === 'gemini') {
-            const hasKey =
-                String(payload.gemini.apiKey || '').trim() !== '' ||
-                settings.gemini.hasKey;
-
-            if (!hasKey) {
-                setStatus('กรุณาใส่ API key ของ Gemini ก่อนใช้งาน', 'error');
-                el('ocrGeminiKey').focus();
+            if (!geminiHasAnyKey()) {
+                setStatus('กรุณาใส่ API key ของ Gemini อย่างน้อย 1 key ก่อนใช้งาน', 'error');
+                const firstInput = document.querySelector('.gemini-key-input');
+                if (firstInput) firstInput.focus();
                 return;
             }
         }
@@ -848,7 +1037,7 @@
         if (scope.AppDialog && scope.AppDialog.confirm) {
             const confirmed = await scope.AppDialog.confirm(
                 isGemini
-                    ? 'ลบ API key ของ Gemini ที่เก็บไว้ในเครื่องนี้?'
+                    ? 'ลบ API key ของ Gemini ทั้งหมดที่เก็บไว้ในเครื่องนี้?'
                     : 'ลบ API key ของ i love api ที่เก็บไว้ในเครื่องนี้?'
             );
 
@@ -859,7 +1048,7 @@
 
         if (isGemini) {
             payload.gemini = {
-                apiKey: '',
+                keys: [],
                 model: el('ocrGeminiModel').value,
                 clearKey: true
             };
@@ -926,6 +1115,7 @@
             setStatus('คืนค่า prompt เริ่มต้นแล้ว — กด “บันทึกการตั้งค่า” เพื่อยืนยัน');
         });
         el('ocrImprovePrompt').addEventListener('input', updateImprovePromptHint);
+        el('ocrGeminiAddKeyBtn').addEventListener('click', addGeminiKeyRow);
         el('ocrGeminiClearBtn').addEventListener('click', function () {
             clearKey('gemini');
         });
@@ -954,6 +1144,8 @@
         // เรียกจาก app.js หลังวาดหน้าเสร็จ
         onShow: function () {
             bind();
+            // แสดงช่อง key ว่างไว้ก่อน — ถ้าโหลดค่าตั้งไม่สำเร็จก็ยังกรอกได้
+            renderGeminiKeys();
             loadConfig();
             refreshStatus();
             refreshVlStatus();
