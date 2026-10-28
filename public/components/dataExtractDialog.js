@@ -643,7 +643,10 @@
             setSourceStatus('กำลังให้ AI ตรวจคำผิดและจัดเป็น key-value...');
 
             const response = await window.electronAPI.ocrImproveText({
-                text: original
+                text: original,
+                // ชื่อฟิลด์ของแม่แบบ — main process แนบไปใน prompt ตามสวิตช์
+                // "ส่งชื่อฟิลด์ไปใน prompt" ในหน้า ตั้งค่าแม่แบบ
+                fields: settings.fields || []
             });
 
             if (!response || response.ok === false) {

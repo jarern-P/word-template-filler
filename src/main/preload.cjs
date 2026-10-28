@@ -251,7 +251,8 @@ contextBridge.exposeInMainWorld(
         // Improve Text (ปรับปรุงข้อความ — ตรวจคำผิด + จัดเป็น Key-Value)
         // ─────────────────────────────
 
-        // payload = { text } — ใช้ API key + โมเดลของ Gemini ที่บันทึกไว้ในหน้า ตั้งค่า OCR
+        // payload = { text, fields } — ใช้ API key + โมเดลของ Gemini ที่บันทึกไว้ในหน้า ตั้งค่า OCR
+        // fields = ชื่อฟิลด์ของแม่แบบ (แนบเป็น key ใน prompt ตามสวิตช์ในหน้า ตั้งค่าแม่แบบ)
         // คืน { ok, text, model, chunks }
         //
         // นอกจากนี้ยังส่ง context raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
@@ -261,6 +262,15 @@ contextBridge.exposeInMainWorld(
         // และถูกแทนคืนในคำตอบ — จำนวนจุดที่ปกปิดมาที่ response.masked
         ocrImproveText: (payload) =>
             ipcRenderer.invoke("ocr:improve", payload),
+
+        // สวิตช์ "ส่งชื่อฟีลด์ของแม่แบบไปใน prompt" (หน้า ตั้งค่าแม่แบบ)
+        // คืน { ok, sendFields }
+        improveSettingsGet: () =>
+            ipcRenderer.invoke("improve:settings-get"),
+
+        // payload = { sendFields } — คืน { ok, sendFields }
+        improveSettingsSave: (payload) =>
+            ipcRenderer.invoke("improve:settings-save", payload),
 
         // ความคืบหน้าเมื่อข้อความยาวและถูกแบ่งเป็นก้อน { stage, index, total }
         onImproveProgress: (callback) => {

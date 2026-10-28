@@ -53,6 +53,39 @@ test('buildPrompt ไม่แนบ context เมื่อว่าง', funct
     assert.ok(!prompt.includes('ข้อมูลอ้างอิงจากฐานข้อมูล'));
 });
 
+test('buildPrompt แนบชื่อฟิลด์ของแม่แบบเมื่อส่งมา', function () {
+    const prompt = improve.buildPrompt(
+        'เลขที่ 702057001',
+        '',
+        '',
+        '',
+        ['เลขที่', '  วันที่  ', '\u0e40\u0e25\u0e02\u0e17\u0e35', '', null]
+    );
+
+    assert.ok(prompt.includes('ชื่อฟิลด์ของแม่แบบ'));
+    assert.ok(prompt.includes('ใช้ชื่อฟิลด์นั้นเป็น key'));
+
+    const section = prompt.slice(
+        prompt.indexOf('ชื่อฟิลด์ของแม่แบบ'),
+        prompt.indexOf('ข้อความต้นฉบับ:')
+    );
+
+    // เรียงตามที่ส่งมา ไม่ซ้ำ และไม่มีชื่อว่าง
+    assert.ok(section.indexOf('เลขที่') < section.indexOf('วันที่'));
+    assert.strictEqual(section.match(/เลขที่/g).length, 1);
+    assert.ok(section.includes('วันที่'));
+    assert.ok(!section.includes('null'));
+});
+
+test('buildPrompt ไม่แนบชื่อฟิลด์เมื่อไม่มี', function () {
+    assert.ok(
+        !improve.buildPrompt('ข้อความ', '', '', '', []).includes('ชื่อฟิลด์ของแม่แบบ')
+    );
+    assert.ok(
+        !improve.buildPrompt('ข้อความ').includes('ชื่อฟิลด์ของแม่แบบ')
+    );
+});
+
 test('cleanResult ตัด code fence บรรทัดว่าง และช่องว่างเกิน', function () {
     const cleaned = improve.cleanResult(
         '```text\n' +
@@ -291,6 +324,44 @@ test('improveText ส่ง prompt ที่แก้เองไปในคำ
 
         assert.ok(sent.startsWith('แก้คำผิดเท่านั้น'));
         assert.ok(sent.includes('จา นวนเงนิ 4,000.00'));
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('improveText ส่งชื่อฟิลด์ของแม่แบบไปในคำขอ', async function () {
+    const originalFetch = global.fetch;
+    let body = null;
+
+    global.fetch = async function (url, init) {
+        body = JSON.parse(init.body);
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        { content: { parts: [{ text: 'เลขที่: 702057001' }] } }
+                    ]
+                };
+            }
+        };
+    };
+
+    try {
+        await improve.improveText('เลขที่ 702057001', {
+            apiKey: 'k',
+            fieldNames: ['เลขที่', 'วันที่']
+        });
+
+        const sent = body.contents[0].parts[0].text;
+
+        assert.ok(sent.includes('ชื่อฟิลด์ของแม่แบบ'));
+        assert.ok(sent.includes('เลขที่'));
+        assert.ok(sent.includes('วันที่'));
+        assert.ok(sent.includes('เลขที่ 702057001'));
 
     } finally {
         global.fetch = originalFetch;

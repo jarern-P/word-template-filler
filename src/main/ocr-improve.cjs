@@ -76,10 +76,30 @@ function friendlyError(status, message) {
     return detail || ('Gemini ตอบกลับสถานะ ' + status);
 }
 
+// ชื่อฟิลด์ที่ส่งมาให้ AI ใช้เป็น key — ตัดช่องว่างซ้ำ/ชื่อว่าง/ชื่อซ้ำออก
+function normalizeFieldNames(value) {
+    const seen = new Set();
+    const names = [];
+
+    (Array.isArray(value) ? value : []).forEach(function (item) {
+        const name = String(item == null ? '' : item)
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (name === '' || seen.has(name)) return;
+
+        seen.add(name);
+        names.push(name);
+    });
+
+    return names;
+}
+
 // คำสั่งเต็มที่ส่งให้โมเดล (แยกไว้เพื่อทดสอบได้โดยไม่ต้องเรียกเน็ต)
 // prompt ที่ผู้ใช้แก้ในหน้าตั้งค่าจะแทนที่ชุดเริ่มต้น ส่วนข้อความต้นฉบับ
 // ถูกต่อท้ายด้วยรูปแบบเดิมเสมอ เพื่อไม่ให้ตำแหน่งข้อความหายไป
-function buildPrompt(text, prompt, contextRawText, maskInstruction) {
+// fieldNames = ชื่อฟิลด์ของแม่แบบ (ว่าง = ไม่แนบ)
+function buildPrompt(text, prompt, contextRawText, maskInstruction, fieldNames) {
     const instructions =
         String(prompt == null ? '' : prompt).trim() || DEFAULT_PROMPT;
 
@@ -92,6 +112,21 @@ function buildPrompt(text, prompt, contextRawText, maskInstruction) {
 
     if (mask !== '') {
         parts.push('', mask);
+    }
+
+    // ชื่อฟิลด์ของแม่แบบ — ให้ AI ใช้เป็น key ให้ตรงกับฟิลด์จริง
+    const fields = normalizeFieldNames(fieldNames);
+
+    if (fields.length > 0) {
+        parts.push(
+            '',
+            'ชื่อฟิลด์ของแม่แบบ (ใช้ชื่อต่อไปนี้เป็น key ในผลลัพธ์ — เขียนให้ตรงตามที่กำหนด):',
+            '<<<',
+            fields.join('\n'),
+            '>>>',
+            'ถ้าข้อมูลในข้อความตรงกับฟิลด์ใด ให้ใช้ชื่อฟิลด์นั้นเป็น key',
+            'ถ้าไม่ตรงกับฟิลด์ใดเลย ให้ตั้งชื่อฟิลด์ใหม่ตามความหมายเหมือนเดิม'
+        );
     }
 
     parts.push(
@@ -169,13 +204,13 @@ function splitChunks(text, limit) {
     return chunks;
 }
 
-async function requestChunk(text, apiKey, model, prompt, contextRawText, maskInstruction) {
+async function requestChunk(text, apiKey, model, prompt, contextRawText, maskInstruction, fieldNames) {
     const body = {
         contents: [
             {
                 role: 'user',
                 parts: [
-                    { text: buildPrompt(text, prompt, contextRawText, maskInstruction) }
+                    { text: buildPrompt(text, prompt, contextRawText, maskInstruction, fieldNames) }
                 ]
             }
         ],
@@ -270,6 +305,7 @@ async function requestChunk(text, apiKey, model, prompt, contextRawText, maskIns
 }
 
 // opts.maskInstruction = คำสั่งเรื่องตัวแปรที่ใช้แทนคำเฉพาะ (ว่าง = ไม่แนบ)
+// opts.fieldNames = ชื่อฟิลด์ของแม่แบบที่ใช้เป็น key (ว่าง = ไม่แนบ)
 // คืน { text, model, chunks } — ถ้าก้อนใดล้มเหลว จะโยน error ทั้งหมด
 // (ไม่คืนข้อความบางส่วน เพื่อไม่ให้ข้อมูลหายเงียบ ๆ)
 async function improveText(text, options) {
@@ -307,7 +343,8 @@ async function improveText(text, options) {
                 model,
                 opts.prompt,
                 opts.contextRawText,
-                opts.maskInstruction
+                opts.maskInstruction,
+                opts.fieldNames
             )
         );
     }

@@ -1832,6 +1832,125 @@ ipcMain.handle(
 // นอกจากนี้ยังดึงข้อมูลจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) มาเป็น raw text
 // ส่งไปพร้อมกับ prompt เพื่อให้ AI มีบริบทเพิ่มเติม
 
+// key ในตาราง app_settings ของสวิตช์ "ส่งชื่อฟีลด์ของแม่แบบไปใน prompt"
+// (หน้า ตั้งค่าแม่แบบ) — เก็บรวมทั้งแอป
+const IMPROVE_SEND_FIELDS_KEY = "improveSendFields";
+
+
+// สวิตช์ "ส่งชื่อฟีลด์ของแม่แบบไปใน prompt"
+// ยังไม่เคยตั้ง = เปิดไว้ (ให้ AI ใช้ชื่อฟิลด์เป็น key ตั้งแต่แรก)
+async function loadImproveSendFields() {
+
+    try {
+
+        await dbReady();
+
+        const result =
+            await dbRequest(
+                "setting-get",
+                { key: IMPROVE_SEND_FIELDS_KEY }
+            );
+
+        const stored =
+            result && result.result ? result.result.value : null;
+
+        if (stored === null || stored === "") return true;
+
+        return stored === "1" || stored === "true";
+
+    } catch (error) {
+
+        console.error(
+            "โหลดค่าตั้งการส่งชื่อฟิลด์ไม่สำเร็จ:",
+            error
+        );
+
+        return true;
+    }
+}
+
+
+// ค่าตั้งการส่งชื่อฟิลด์ — หน้า ตั้งค่าแม่แบบ ใช้อ่านสวิตช์
+ipcMain.handle(
+    "improve:settings-get",
+    async function () {
+
+        try {
+
+            return {
+                ok: true,
+                sendFields: await loadImproveSendFields()
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+    }
+);
+
+
+// บันทึกสวิตช์ — payload = { sendFields }
+ipcMain.handle(
+    "improve:settings-save",
+    async function (event, payload) {
+
+        try {
+
+            await dbReady();
+
+            const input =
+                payload && typeof payload === "object" ? payload : {};
+
+            if (input.sendFields === undefined) {
+                return {
+                    ok: true,
+                    sendFields: await loadImproveSendFields()
+                };
+            }
+
+            const sendFields =
+                input.sendFields === true || Number(input.sendFields) === 1;
+
+            const saved =
+                await dbRequest(
+                    "setting-save",
+                    {
+                        key: IMPROVE_SEND_FIELDS_KEY,
+                        value: sendFields ? "1" : "0"
+                    }
+                );
+
+            if (!saved || saved.ok === false) {
+                throw new Error(
+                    (saved && saved.error) ||
+                    "บันทึกค่าส่งชื่อฟิลด์ไม่สำเร็จ"
+                );
+            }
+
+            return {
+                ok: true,
+                sendFields: sendFields
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+    }
+);
+
+
 ipcMain.handle(
     "ocr:improve",
     async function (event, payload) {
@@ -1902,6 +2021,22 @@ ipcMain.handle(
 
             console.log("[คำเฉพาะ] ข้อความที่ส่งให้ AI:\n" + maskedText);
 
+            // ชื่อฟิลด์ของแม่แบบที่ส่งมาทาง payload — แนบไปใน prompt ตามสวิตช์
+            // (หน้า ตั้งค่าแม่แบบ) เพื่อให้ AI ใช้ชื่อฟิลด์นั้นเป็น key
+            const fieldNames =
+                await loadImproveSendFields() &&
+                payload &&
+                Array.isArray(payload.fields)
+                    ? payload.fields
+                    : [];
+
+            if (fieldNames.length > 0) {
+                console.log(
+                    "[ปรับปรุง] แนบชื่อฟิลด์ไปใน prompt " +
+                    fieldNames.length + " ฟิลด์"
+                );
+            }
+
             const result =
                 await ocrImprove.improveText(
                     maskedText,
@@ -1914,6 +2049,8 @@ ipcMain.handle(
                         // มีการปกปิดจริง = บอก AI ว่าตัวแปรในวงเล็บห้ามแตะ
                         // (มีคำอธิบาย pattern ต่อท้ายเมื่อเปิดสวิตช์ในหน้า "คำเฉพาะ")
                         maskInstruction: maskInstruction,
+                        // ชื่อฟิลด์ของแม่แบบ (ว่าง = ใช้ prompt ชุดเดิม)
+                        fieldNames: fieldNames,
                         onProgress: function (progress) {
 
                             if (event.sender.isDestroyed()) {

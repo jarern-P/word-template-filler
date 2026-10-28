@@ -46,8 +46,28 @@
             ' accept=".json,application/json" hidden>'
     ].join('\n');
 
+    // สวิตช์ส่งชื่อฟิลด์ไปใน prompt ของ AI — เก็บรวมทั้งแอป (ใช้ทุกแม่แบบ)
+    // อยู่บนสุดของหน้า เพราะเป็นค่าตั้งของการทำงาน ไม่ใช่ของแม่แบบตัวใดตัวหนึ่ง
+    const IMPROVE_SETTINGS_HTML = [
+        '<section class="suggest-settings">',
+        '    <h2>ส่งชื่อฟิลด์ให้ AI</h2>',
+        '    <label class="switch-toggle" for="templateImproveSendFields">',
+        '        <input type="checkbox" id="templateImproveSendFields">',
+        '        <span class="switch-box" aria-hidden="true"></span>',
+        '        <span class="switch-text">ส่งชื่อฟิลด์ของแม่แบบไปใน prompt</span>',
+        '    </label>',
+        '    <p class="hint">',
+        '        เปิด = ทุกครั้งที่กด "ปรับปรุง" ระบบจะแนบชื่อฟิลด์ของแม่แบบที่ใช้งานอยู่',
+        '        ไปใน prompt ด้วย เพื่อให้ AI ใช้ชื่อฟิลด์นั้นเป็น key ของ key-value pair',
+        '        · ปิด = ส่งเฉพาะข้อความ ให้ AI ตั้งชื่อฟิลด์เอง (ใช้ร่วมทุกแม่แบบ)',
+        '    </p>',
+        '    <p id="templateImproveSendFieldsStatus" class="db-status"></p>',
+        '</section>'
+    ].join('\n');
+
     // ส่วนรายการ แสดงก่อน editor (list-first)
     const LIST_HTML = [
+        IMPROVE_SETTINGS_HTML,
         '<section class="saved-templates">',
         '    <div class="list-head">',
         '        <h2>แม่แบบ ที่บันทึกไว้</h2>',
@@ -479,6 +499,107 @@
         editorTitle: 'ตั้งค่า Type ของแต่ละ Field',
         emptyMessage: 'ยังไม่ได้เลือกไฟล์ .docx — เลือกจากช่องด้านบน หรือกด "แก้ไข" จากรายการ'
     });
+
+    // ── สวิตช์ "ส่งชื่อฟิลด์ไปใน prompt" (เก็บรวมทั้งแอป) ──
+
+    function setImproveSettingsStatus(text, kind) {
+        const status = document.getElementById('templateImproveSendFieldsStatus');
+
+        if (!status) return;
+
+        status.textContent = text || '';
+        status.className = 'db-status' + (kind ? ' ' + kind : '');
+    }
+
+    async function loadImproveSendFields() {
+        const toggle = document.getElementById('templateImproveSendFields');
+
+        if (!toggle) return;
+
+        // เปิดนอกแอป (เบราว์เซอร์) — ใช้ค่าเริ่มต้นโดยไม่บันทึกได้
+        if (!window.electronAPI || !window.electronAPI.improveSettingsGet) {
+            toggle.checked = true;
+            return;
+        }
+
+        try {
+            const response = await window.electronAPI.improveSettingsGet();
+
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'โหลดค่าตั้งไม่สำเร็จ'
+                );
+            }
+
+            toggle.checked = response.sendFields !== false;
+            setImproveSettingsStatus('');
+
+        } catch (error) {
+            setImproveSettingsStatus(
+                'โหลดค่าตั้งไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+        }
+    }
+
+    async function saveImproveSendFields() {
+        const toggle = document.getElementById('templateImproveSendFields');
+
+        if (!toggle) return;
+
+        if (!window.electronAPI || !window.electronAPI.improveSettingsSave) {
+            setImproveSettingsStatus(
+                'เปิดหน้านี้ในแอป (Electron) เพื่อบันทึกได้',
+                'error'
+            );
+            return;
+        }
+
+        // ปิดสวิตช์ระหว่างบันทึก กันกดรัว (ค่าจริงมาจากฐานข้อมูล)
+        toggle.disabled = true;
+        setImproveSettingsStatus('กำลังบันทึก...');
+
+        try {
+            const response = await window.electronAPI.improveSettingsSave({
+                sendFields: toggle.checked
+            });
+
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'บันทึกไม่สำเร็จ'
+                );
+            }
+
+            toggle.checked = response.sendFields !== false;
+            setImproveSettingsStatus(
+                'บันทึกแล้ว · ส่งชื่อฟิลด์ ' +
+                    (toggle.checked ? 'เปิด' : 'ปิด'),
+                'ok'
+            );
+
+        } catch (error) {
+            // ค่าจริงในฐานข้อมูลไม่เปลี่ยน — โหลดค่าที่บันทึกไว้กลับมาให้ตรงก่อน
+            await loadImproveSendFields();
+            setImproveSettingsStatus(
+                'บันทึกไม่สำเร็จ: ' + error.message,
+                'error'
+            );
+
+        } finally {
+            toggle.disabled = false;
+        }
+    }
+
+    // เรียกจาก app.js หลังวาดหน้าเสร็จ — DOM ถูกสร้างใหม่ทุกครั้ง
+    page.onShow = function () {
+        const toggle = document.getElementById('templateImproveSendFields');
+
+        if (toggle) {
+            toggle.addEventListener('change', saveImproveSendFields);
+        }
+
+        loadImproveSendFields();
+    };
 
     // เรียกจาก app.js ตอนกด "+ สร้างแม่แบบใหม่" — เริ่มจาก editor ว่าง
     page.onModalOpen = function (modalId) {
