@@ -77,6 +77,21 @@ test('buildPrompt แนบชื่อฟิลด์ของแม่แบ�
     assert.ok(!section.includes('null'));
 });
 
+test('buildPrompt แนบชนิดและตัวอย่างของฟิลด์', function () {
+    const prompt = improve.buildPrompt('จำนวนเงนิ 100 บาท', '', '', '', [
+        { name: 'จำนวนเงิน', type: 'currency', placeholder: 'หนึ่งร้อยบาทถ้วน' },
+        { name: 'วันที่', type: 'date', placeholder: '' }
+    ]);
+
+    assert.ok(
+        prompt.includes('- จำนวนเงิน · ชนิด: จำนวนเงิน · ตัวอย่าง: หนึ่งร้อยบาทถ้วน')
+    );
+    assert.ok(prompt.includes('- วันที่ · ชนิด: วันที่'));
+
+    // ตัวอย่างเป็นเพียงแนวทาง — AI ต้องไม่คัดลอกค่าตัวอย่างลงผลลัพธ์
+    assert.ok(prompt.includes('ห้ามนำค่าตัวอย่างไปใส่แทนข้อมูลจริง'));
+});
+
 test('buildPrompt ไม่แนบชื่อฟิลด์เมื่อไม่มี', function () {
     assert.ok(
         !improve.buildPrompt('ข้อความ', '', '', '', []).includes('ชื่อฟิลด์ของแม่แบบ')
@@ -362,6 +377,48 @@ test('improveText ส่งชื่อฟิลด์ของแม่แบ�
         assert.ok(sent.includes('เลขที่'));
         assert.ok(sent.includes('วันที่'));
         assert.ok(sent.includes('เลขที่ 702057001'));
+
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('improveText ส่งชนิดและตัวอย่างของฟิลด์ไปในคำขอ', async function () {
+    const originalFetch = global.fetch;
+    let body = null;
+
+    global.fetch = async function (url, init) {
+        body = JSON.parse(init.body);
+
+        return {
+            ok: true,
+            status: 200,
+            json: async function () {
+                return {
+                    candidates: [
+                        { content: { parts: [{ text: 'จำนวนเงิน: 4,000.00' }] } }
+                    ]
+                };
+            }
+        };
+    };
+
+    try {
+        await improve.improveText('จำนวนเงิน 4000', {
+            apiKey: 'k',
+            fieldNames: [
+                {
+                    name: 'จำนวนเงิน',
+                    type: 'currency',
+                    placeholder: 'หนึ่งพันบาทถ้วน'
+                }
+            ]
+        });
+
+        const sent = body.contents[0].parts[0].text;
+
+        assert.ok(sent.includes('ชนิด: จำนวนเงิน'));
+        assert.ok(sent.includes('ตัวอย่าง: หนึ่งพันบาทถ้วน'));
 
     } finally {
         global.fetch = originalFetch;

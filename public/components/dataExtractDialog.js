@@ -388,6 +388,21 @@
     // ข้อความต้นทาง
     // ──────────────────────────────────────────────────────────────
 
+    // ฟิลด์ที่ส่งไปให้ AI ใช้เป็น key — แนบชนิดและข้อความตัวอย่างไปด้วย
+    // (AI จะได้รู้ว่าแต่ละฟิลด์เป็นข้อมูลแบบไหน และตัวอย่างหน้าตาอย่างไร)
+    function improveFields() {
+        const types = settings.types || {};
+        const placeholders = settings.placeholders || {};
+
+        return (settings.fields || []).map(function (field) {
+            return {
+                name: field,
+                type: types[field] || '',
+                placeholder: placeholders[field] || ''
+            };
+        });
+    }
+
     function sourceText() {
         const textarea = el('dataSourceText');
         return scope.DataExtract.normalizeText(textarea ? textarea.value : '');
@@ -644,9 +659,9 @@
 
             const response = await window.electronAPI.ocrImproveText({
                 text: original,
-                // ชื่อฟิลด์ของแม่แบบ — main process แนบไปใน prompt ตามสวิตช์
-                // "ส่งชื่อฟิลด์ไปใน prompt" ในหน้า ตั้งค่าแม่แบบ
-                fields: settings.fields || []
+                // ฟิลด์ของแม่แบบ (ชื่อ + ชนิด + ตัวอย่าง) — main process แนบไปใน prompt
+                // ตามสวิตช์ "ส่งชื่อฟิลด์ไปใน prompt" ในหน้า ตั้งค่าแม่แบบ
+                fields: improveFields()
             });
 
             if (!response || response.ok === false) {
@@ -1235,6 +1250,7 @@
      *   title, templateName,
      *   fields: string[],
      *   types: { field: type },
+     *   placeholders: { field: ข้อความตัวอย่าง },
      *   patterns: { field: regex },
      *   onSavePatterns: async (patterns) => {},
      *   onFill: (values, result) => {}

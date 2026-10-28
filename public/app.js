@@ -2538,6 +2538,9 @@
             // (ตอนอยู่หน้ารายงาน #form เป็นฟอร์มของหน้ารายงาน อ่านจาก DOM ไม่ได้)
             types: scope.App.getFieldTypes(),
 
+            // ข้อความตัวอย่างของแต่ละ field — ส่งให้ AI ตอนกด "ปรับปรุง"
+            placeholders: scope.App.getFieldPlaceholders(),
+
             patterns: scope.App.getFieldPatterns(),
 
             // list ที่อยู่กลุ่มเดียวกัน = แถวเดียวหลายคอลัมน์
@@ -4652,6 +4655,8 @@
                 fields: record.fields || [],
 
                 types: record.types || {},
+
+                placeholders: record.placeholders || {},
 
                 patterns: record.patterns || {},
 

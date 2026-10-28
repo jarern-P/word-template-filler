@@ -76,29 +76,70 @@ function friendlyError(status, message) {
     return detail || ('Gemini ตอบกลับสถานะ ' + status);
 }
 
-// ชื่อฟิลด์ที่ส่งมาให้ AI ใช้เป็น key — ตัดช่องว่างซ้ำ/ชื่อว่าง/ชื่อซ้ำออก
+// ชื่อชนิดของฟิลด์ที่ส่งไปให้ AI อ่าน (ค่าที่เก็บในฐานข้อมูลเป็นภาษาอังกฤษ)
+const FIELD_TYPE_LABELS = {
+    text: 'ข้อความ',
+    number: 'ตัวเลข',
+    currency: 'จำนวนเงิน',
+    date: 'วันที่',
+    checkbox: 'ติ๊ก/ไม่ติ๊ก',
+    textarea: 'ข้อความยาว',
+    email: 'อีเมล',
+    list: 'รายการ',
+    table: 'ตาราง'
+};
+
+function fieldTypeLabel(type) {
+    const key = String(type == null ? '' : type).trim().toLowerCase();
+
+    return FIELD_TYPE_LABELS[key] || key;
+}
+
+// ฟิลด์ที่ส่งมาให้ AI ใช้เป็น key — รับได้ทั้งชื่อ (สตริง) และ
+// { name, type, placeholder } — ตัดช่องว่างซ้ำ/ชื่อว่าง/ชื่อซ้ำออก
 function normalizeFieldNames(value) {
     const seen = new Set();
-    const names = [];
+    const fields = [];
 
     (Array.isArray(value) ? value : []).forEach(function (item) {
-        const name = String(item == null ? '' : item)
+        const raw = item && typeof item === 'object' ? item : { name: item };
+
+        const name = String(raw.name == null ? '' : raw.name)
             .replace(/\s+/g, ' ')
             .trim();
 
         if (name === '' || seen.has(name)) return;
 
         seen.add(name);
-        names.push(name);
+
+        const placeholder = String(raw.placeholder == null ? '' : raw.placeholder)
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        fields.push({
+            name: name,
+            type: fieldTypeLabel(raw.type),
+            placeholder: placeholder
+        });
     });
 
-    return names;
+    return fields;
+}
+
+// หนึ่งฟิลด์ต่อหนึ่งบรรทัด: "- ชื่อฟิลด์ · ชนิด: … · ตัวอย่าง: …"
+function fieldLine(field) {
+    const parts = [field.name];
+
+    if (field.type) parts.push('ชนิด: ' + field.type);
+    if (field.placeholder) parts.push('ตัวอย่าง: ' + field.placeholder);
+
+    return '- ' + parts.join(' · ');
 }
 
 // คำสั่งเต็มที่ส่งให้โมเดล (แยกไว้เพื่อทดสอบได้โดยไม่ต้องเรียกเน็ต)
 // prompt ที่ผู้ใช้แก้ในหน้าตั้งค่าจะแทนที่ชุดเริ่มต้น ส่วนข้อความต้นฉบับ
 // ถูกต่อท้ายด้วยรูปแบบเดิมเสมอ เพื่อไม่ให้ตำแหน่งข้อความหายไป
-// fieldNames = ชื่อฟิลด์ของแม่แบบ (ว่าง = ไม่แนบ)
+// fieldNames = ฟิลด์ของแม่แบบ [{ name, type, placeholder }] หรือชื่อฟิลด์ (ว่าง = ไม่แนบ)
 function buildPrompt(text, prompt, contextRawText, maskInstruction, fieldNames) {
     const instructions =
         String(prompt == null ? '' : prompt).trim() || DEFAULT_PROMPT;
@@ -122,8 +163,9 @@ function buildPrompt(text, prompt, contextRawText, maskInstruction, fieldNames) 
             '',
             'ชื่อฟิลด์ของแม่แบบ (ใช้ชื่อต่อไปนี้เป็น key ในผลลัพธ์ — เขียนให้ตรงตามที่กำหนด):',
             '<<<',
-            fields.join('\n'),
+            fields.map(fieldLine).join('\n'),
             '>>>',
+            'ชนิดและตัวอย่างข้อมูลของแต่ละฟิลด์เป็นเพียงแนวทาง — ห้ามนำค่าตัวอย่างไปใส่แทนข้อมูลจริง',
             'ถ้าข้อมูลในข้อความตรงกับฟิลด์ใด ให้ใช้ชื่อฟิลด์นั้นเป็น key',
             'ถ้าไม่ตรงกับฟิลด์ใดเลย ให้ตั้งชื่อฟิลด์ใหม่ตามความหมายเหมือนเดิม'
         );
@@ -305,7 +347,7 @@ async function requestChunk(text, apiKey, model, prompt, contextRawText, maskIns
 }
 
 // opts.maskInstruction = คำสั่งเรื่องตัวแปรที่ใช้แทนคำเฉพาะ (ว่าง = ไม่แนบ)
-// opts.fieldNames = ชื่อฟิลด์ของแม่แบบที่ใช้เป็น key (ว่าง = ไม่แนบ)
+// opts.fieldNames = ฟิลด์ของแม่แบบที่ใช้เป็น key พร้อมชนิด/ตัวอย่าง (ว่าง = ไม่แนบ)
 // คืน { text, model, chunks } — ถ้าก้อนใดล้มเหลว จะโยน error ทั้งหมด
 // (ไม่คืนข้อความบางส่วน เพื่อไม่ให้ข้อมูลหายเงียบ ๆ)
 async function improveText(text, options) {

@@ -252,7 +252,8 @@ contextBridge.exposeInMainWorld(
         // ─────────────────────────────
 
         // payload = { text, fields } — ใช้ API key + โมเดลของ Gemini ที่บันทึกไว้ในหน้า ตั้งค่า OCR
-        // fields = ชื่อฟิลด์ของแม่แบบ (แนบเป็น key ใน prompt ตามสวิตช์ในหน้า ตั้งค่าแม่แบบ)
+        // fields = ฟิลด์ของแม่แบบ [{ name, type, placeholder }]
+        //          (แนบเป็น key พร้อมชนิด/ตัวอย่างใน prompt ตามสวิตช์ในหน้า ตั้งค่าแม่แบบ)
         // คืน { ok, text, model, chunks }
         //
         // นอกจากนี้ยังส่ง context raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
