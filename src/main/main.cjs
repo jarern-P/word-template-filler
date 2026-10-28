@@ -1856,10 +1856,14 @@ ipcMain.handle(
             // ปกปิดคำเฉพาะ (หน้า "คำเฉพาะ") — ทั้งข้อความและบริบทถูกแทนด้วย
             // ตัวแปร [[NAME_1]] ก่อนออกจากเครื่อง และแทนคืนตอนได้ผลลัพธ์
             // ใช้ตัวสแกนตัวเดียวกับปุ่ม "ตรวจคำเฉพาะ" — ผลที่เห็นก่อนกดจึงตรงกัน
+            const terms =
+                await loadSensitiveTerms();
+
             const report =
                 privacyMask.inspect(
-                    await loadSensitiveTerms(),
-                    [text, contextRawText]
+                    terms,
+                    [text, contextRawText],
+                    await buildPrivacyMaskOptions(terms)
                 );
 
             const maskedText =
@@ -2070,6 +2074,120 @@ async function loadSensitiveTerms() {
 }
 
 
+// key ในตาราง app_settings ของ % ความคล้ายขั้นต่ำ (ใช้ร่วมกันทุกรายการ)
+const PRIVACY_MIN_SIMILARITY_KEY = "privacyMinSimilarity";
+
+
+// % ความคล้ายขั้นต่ำที่ใช้เทียบกับคำในระบบ (ยังไม่เคยตั้ง = ค่าเริ่มต้น)
+async function loadPrivacyMinSimilarity() {
+
+    try {
+
+        await dbReady();
+
+        const result =
+            await dbRequest(
+                "setting-get",
+                { key: PRIVACY_MIN_SIMILARITY_KEY }
+            );
+
+        const stored =
+            result && result.result ? result.result.value : null;
+
+        return privacyMask.sanitizeMinSimilarity(
+            stored === null || stored === ""
+                ? privacyMask.DEFAULT_MIN_SIMILARITY
+                : stored
+        );
+
+    } catch (error) {
+
+        console.error(
+            "โหลด % ขั้นต่ำของคำเฉพาะไม่สำเร็จ:",
+            error
+        );
+
+        return privacyMask.DEFAULT_MIN_SIMILARITY;
+    }
+}
+
+
+// คำในระบบที่ใช้เทียบ = คลังคำ (words) + ข้อมูลหลัก (master)
+async function loadKnownWords() {
+
+    try {
+
+        await dbReady();
+
+        const masterList =
+            await dbRequest("master-list", {});
+
+        const wordList =
+            await dbRequest("word-list", {});
+
+        const words = [];
+
+        if (masterList && Array.isArray(masterList.result)) {
+            masterList.result.forEach(function (item) {
+                if (item && item.name) words.push(item.name);
+            });
+        }
+
+        if (wordList && Array.isArray(wordList.result)) {
+            wordList.result.forEach(function (item) {
+                if (item && item.word) words.push(item.word);
+            });
+        }
+
+        return words;
+
+    } catch (error) {
+
+        // โหลดไม่ได้ = ไม่มีคำให้เทียบ (รายการที่ต้องมีคำในระบบจะไม่ปกปิด)
+        console.error(
+            "โหลดคำในระบบไม่สำเร็จ:",
+            error
+        );
+
+        return [];
+    }
+}
+
+
+// จำนวนคำในระบบ (ไม่ซ้ำ) — หน้าจอใช้แสดงว่ามีคำให้เทียบกี่คำ
+function countKnownWords(list) {
+
+    const seen = new Set();
+
+    (Array.isArray(list) ? list : []).forEach(function (item) {
+        const value = privacyMask.normalizeForCompare(item);
+
+        if (value !== "") seen.add(value);
+    });
+
+    return seen.size;
+}
+
+
+// ตัวเลือกของ privacyMask.inspect — โหลดคำในระบบเฉพาะเมื่อมีรายการที่ต้องใช้
+// (รายการทั่วไปจึงไม่ต้องเสียเวลาโหลดข้อมูลหลัก/คลังคำทุกครั้ง)
+async function buildPrivacyMaskOptions(terms) {
+
+    const list = Array.isArray(terms) ? terms : [];
+
+    const needsKnown =
+        list.some(function (term) {
+            return privacyMask.isEnabled(term) &&
+                privacyMask.isRequireKnown(term);
+        });
+
+    return {
+        knownWords: needsKnown ? await loadKnownWords() : [],
+        minSimilarity: await loadPrivacyMinSimilarity()
+    };
+}
+
+
 ipcMain.handle(
     "privacy:list",
     async () => {
@@ -2186,6 +2304,85 @@ ipcMain.handle(
 );
 
 
+// ค่าตั้งของหน้า "คำเฉพาะ" — % ขั้นต่ำ + จำนวนคำในระบบที่โหลดมาเทียบ
+ipcMain.handle(
+    "privacy:settings-get",
+    async function () {
+
+        try {
+
+            const knownWords =
+                await loadKnownWords();
+
+            return {
+                ok: true,
+                minSimilarity:
+                    await loadPrivacyMinSimilarity(),
+                defaultMinSimilarity:
+                    privacyMask.DEFAULT_MIN_SIMILARITY,
+                knownWords: countKnownWords(knownWords)
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+    }
+);
+
+
+// บันทึก % ขั้นต่ำ (ใช้ร่วมกันทุกรายการที่ตั้ง "ต้องมีคำในระบบเท่านั้น")
+ipcMain.handle(
+    "privacy:settings-save",
+    async function (event, payload) {
+
+        try {
+
+            await dbReady();
+
+            const minSimilarity =
+                privacyMask.sanitizeMinSimilarity(
+                    payload && payload.minSimilarity
+                );
+
+            const saved =
+                await dbRequest(
+                    "setting-save",
+                    {
+                        key: PRIVACY_MIN_SIMILARITY_KEY,
+                        value: String(minSimilarity)
+                    }
+                );
+
+            if (!saved || saved.ok === false) {
+                throw new Error(
+                    (saved && saved.error) || "บันทึก % ขั้นต่ำไม่สำเร็จ"
+                );
+            }
+
+            return {
+                ok: true,
+                minSimilarity: minSimilarity
+            };
+
+        } catch (error) {
+
+            return {
+                ok: false,
+                error:
+                    error?.message ||
+                    String(error)
+            };
+        }
+    }
+);
+
+
 // ทดสอบว่าข้อความตัวอย่างถูกปกปิดหน้าตาเป็นอย่างไร
 // payload = { text, terms } — terms มาจากหน้าโดยตรง (ยังไม่บันทึกก็ทดสอบได้)
 // ไม่ส่ง terms มา = ใช้รายการที่บันทึกไว้
@@ -2205,8 +2402,17 @@ ipcMain.handle(
                     ? payload.terms
                     : await loadSensitiveTerms();
 
+            // ค่าที่หน้า "คำเฉพาะ" กำลังแก้อยู่ (ยังไม่บันทึก) ใช้ทดสอบได้ทันที
+            const options =
+                await buildPrivacyMaskOptions(terms);
+
+            if (payload && payload.minSimilarity !== undefined) {
+                options.minSimilarity =
+                    privacyMask.sanitizeMinSimilarity(payload.minSimilarity);
+            }
+
             const masker =
-                privacyMask.createMasker(terms);
+                privacyMask.createMasker(terms, options);
 
             return {
                 ok: true,
@@ -2214,7 +2420,9 @@ ipcMain.handle(
                     text: masker.mask(text),
                     count: masker.count,
                     placeholders: masker.used,
-                    errors: masker.errors
+                    errors: masker.errors,
+                    minSimilarity: masker.minSimilarity,
+                    knownWords: masker.knownWords
                 }
             };
 
@@ -2262,10 +2470,14 @@ ipcMain.handle(
                 await buildContextRawText();
 
             // ตัวสแกนตัวเดียวกับที่ใช้ตอนส่งจริง (ocr:improve)
+            const terms =
+                await loadSensitiveTerms();
+
             const report =
                 privacyMask.inspect(
-                    await loadSensitiveTerms(),
-                    [text, contextRawText]
+                    terms,
+                    [text, contextRawText],
+                    await buildPrivacyMaskOptions(terms)
                 );
 
             console.log(

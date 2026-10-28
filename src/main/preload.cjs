@@ -82,16 +82,25 @@ contextBridge.exposeInMainWorld(
         privacyList: () =>
             ipcRenderer.invoke("privacy:list"),
 
-        // payload = { id, name, kind, pattern, enabled } — id = 0 คือเพิ่มใหม่
-        // ส่งมาเฉพาะฟิลด์ที่เปลี่ยนก็ได้ ที่เหลือใช้ค่าเดิมของรายการนั้น
+        // payload = { id, name, kind, pattern, enabled, require_known }
+        // id = 0 คือเพิ่มใหม่ — ส่งมาเฉพาะฟิลด์ที่เปลี่ยนก็ได้ ที่เหลือใช้ค่าเดิม
         privacySave: (payload) =>
             ipcRenderer.invoke("privacy:save", payload),
 
         privacyDelete: (id) =>
             ipcRenderer.invoke("privacy:delete", id),
 
-        // ทดสอบการปกปิดกับข้อความตัวอย่าง — payload = { text, terms }
-        // คืน { ok, result: { text, count, placeholders, errors } }
+        // ค่าตั้งที่ใช้ร่วมกัน: % ความคล้ายขั้นต่ำ + จำนวนคำในระบบ (คลังคำ + ข้อมูลหลัก)
+        // คืน { ok, minSimilarity, defaultMinSimilarity, knownWords }
+        privacySettingsGet: () =>
+            ipcRenderer.invoke("privacy:settings-get"),
+
+        // payload = { minSimilarity } — 0–100 (ค่าเริ่มต้น 80)
+        privacySettingsSave: (payload) =>
+            ipcRenderer.invoke("privacy:settings-save", payload),
+
+        // ทดสอบการปกปิดกับข้อความตัวอย่าง — payload = { text, terms, minSimilarity }
+        // คืน { ok, result: { text, count, placeholders, errors, minSimilarity, knownWords } }
         privacyPreview: (payload) =>
             ipcRenderer.invoke("privacy:preview", payload),
 

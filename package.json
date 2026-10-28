@@ -19,9 +19,9 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",
-    "adm-zip": "^0.6.1",
-    "better-sqlite3": "^13.0.3",
-    "onnxruntime-node": "^1.30.0",
+    "adm-zip": "^0.6.1",        "better-sqlite3": "^13.0.3",
+        "js-levenshtein": "^1.1.6",
+        "onnxruntime-node": "^1.30.0",
     "pdfjs-dist": "^3.11.174",
     "ppu-doclayout": "^1.0.0",
     "ppu-paddle-ocr": "^6.6.1"
@@ -30,10 +30,8 @@
     "@electron/rebuild": "^4.2.0",
     "concurrently": "^9.2.4",
     "docx-preview": "^0.4.1",
-    "electron": "^44.3.0",
-    "electron-builder": "^26.15.3",
-    "js-levenshtein": "^1.1.6",
-    "jszip": "^3.10.2",
+    "electron": "^44.3.0",        "electron-builder": "^26.15.3",
+        "jszip": "^3.10.2",
     "vite": "^8.3.0",
     "wait-on": "^9.1.0"
   },

@@ -7,6 +7,15 @@ const assert = require('node:assert');
 const privacy = require('../src/main/privacy-mask.cjs');
 const improve = require('../src/main/ocr-improve.cjs');
 
+// รายการที่ตั้ง "ต้องมีคำในระบบเท่านั้น" — ใช้กับชื่อบริษัทที่มีคำต่อท้าย
+const KNOWN_COMPANY = {
+    name: 'VENDOR',
+    kind: 'regex',
+    pattern: 'บริษัท\\s*[ก-๙]+(?:\\s+[ก-๙]+)*?\\s+จำกัด',
+    enabled: 1,
+    require_known: 1
+};
+
 const MONEY = privacy.DEFAULT_TERMS[0];
 const NUMBER = privacy.DEFAULT_TERMS[1];
 const NAME = privacy.DEFAULT_TERMS[2];
@@ -294,6 +303,113 @@ test('findPlaceholders หาตัวแปรที่ยังค้างห
     );
 
     assert.deepStrictEqual(privacy.findPlaceholders(null), []);
+});
+
+test('ต้องมีคำในระบบ: ใช้คำในระบบ (สะกดถูก) แทนคำที่ใกล้เคียงแล้วจึงเป็นตัวแปร', function () {
+    const masker = privacy.createMasker([KNOWN_COMPANY], {
+        knownWords: ['บริษัท สยามการค้า จำกัด'],
+        minSimilarity: 80
+    });
+
+    // OCR อ่าน miss สระ/วรรณยุกต์ไป 1 ตัว — ยังถึงเกณฑ์ 80%
+    const masked = masker.mask('คู่ค้า: บริษัท สยามการคา จำกัด');
+
+    assert.strictEqual(masked, 'คู่ค้า: [[VENDOR_1]]');
+    assert.strictEqual(masker.count, 1);
+    // แทนค่าคืนด้วยคำในระบบ ไม่ใช่ค่าที่พิมพ์ผิด
+    assert.strictEqual(masker.restore(masked), 'คู่ค้า: บริษัท สยามการค้า จำกัด');
+});
+
+test('ต้องมีคำในระบบ: ค่าที่ regex จับได้แต่ไม่มีในระบบจะไม่ถูกแทนตัวแปร', function () {
+    const masker = privacy.createMasker([KNOWN_COMPANY], {
+        knownWords: ['บริษัท สยามการค้า จำกัด'],
+        minSimilarity: 80
+    });
+
+    const source = 'คู่ค้า: บริษัท มหาชน จำกัด';
+
+    assert.strictEqual(masker.mask(source), source);
+    assert.strictEqual(masker.count, 0);
+    assert.strictEqual(masker.used, 0);
+
+    // ไม่มีคำในระบบเลย = ไม่ปกปิดอะไร
+    const empty = privacy.createMasker([KNOWN_COMPANY], { knownWords: [] });
+
+    assert.strictEqual(empty.mask(source), source);
+    assert.strictEqual(empty.count, 0);
+});
+
+test('ต้องมีคำในระบบ: % ขั้นต่ำคุมการแทนค่า และมีผลเฉพาะรายการที่ติ๊ก', function () {
+    const text = 'คู่ค้า: บริษัท สยามการคา จำกัด';
+    const terms = [KNOWN_COMPANY];
+
+    // ต้องตรง 100% = คำที่พิมพ์ผิดไม่ผ่าน
+    const strict = privacy.createMasker(terms, {
+        knownWords: ['บริษัท สยามการค้า จำกัด'],
+        minSimilarity: 100
+    });
+
+    assert.strictEqual(strict.mask(text), text);
+    assert.strictEqual(strict.count, 0);
+
+    // รายการอื่นที่ไม่ติ๊กยังปกปิดตามปกติ
+    const mixed = privacy.createMasker(
+        [Object.assign({}, KNOWN_COMPANY, { require_known: 0 }), enabled(MONEY)],
+        { knownWords: [], minSimilarity: 80 }
+    );
+
+    assert.strictEqual(
+        mixed.mask('บริษัท มหาชน จำกัด วงเงิน 4,000.00 บาท'),
+        '[[VENDOR_1]] วงเงิน [[MONEY_1]]'
+    );
+});
+
+test('similarityPercent ใช้ระยะ Levenshtein หารด้วยความยาวมากสุด (0–100)', function () {
+    assert.strictEqual(privacy.similarityPercent('ทดสอบ', 'ทดสอบ'), 100);
+    // ต่าง 1 ตัว จาก 5 ตัว = 80%
+    assert.strictEqual(Math.round(privacy.similarityPercent('ทดสอบ', 'ทดสอ')), 80);
+    assert.strictEqual(privacy.similarityPercent('ABC', 'abc'), 100);
+    assert.strictEqual(privacy.similarityPercent('กขคง', 'จฉชซ'), 0);
+
+    assert.strictEqual(privacy.normalizeForCompare('  บริษัท   ทดสอบ  '), 'บริษัท ทดสอบ');
+});
+
+test('sanitizeMinSimilarity รับเฉพาะ 0–100 และมีค่าเริ่มต้น', function () {
+    assert.strictEqual(privacy.sanitizeMinSimilarity(undefined), privacy.DEFAULT_MIN_SIMILARITY);
+    assert.strictEqual(privacy.sanitizeMinSimilarity(''), privacy.DEFAULT_MIN_SIMILARITY);
+    assert.strictEqual(privacy.sanitizeMinSimilarity('abc'), privacy.DEFAULT_MIN_SIMILARITY);
+    assert.strictEqual(privacy.sanitizeMinSimilarity(75.6), 76);
+    assert.strictEqual(privacy.sanitizeMinSimilarity(-5), 0);
+    assert.strictEqual(privacy.sanitizeMinSimilarity(150), 100);
+});
+
+test('isRequireKnown รับได้ทั้ง 0/1 และ true/false', function () {
+    assert.strictEqual(privacy.isRequireKnown({ require_known: 1 }), true);
+    assert.strictEqual(privacy.isRequireKnown({ require_known: true }), true);
+    assert.strictEqual(privacy.isRequireKnown({ requireKnown: 1 }), true);
+    assert.strictEqual(privacy.isRequireKnown({ require_known: 0 }), false);
+    assert.strictEqual(privacy.isRequireKnown({}), false);
+    assert.strictEqual(privacy.isRequireKnown(null), false);
+});
+
+test('inspect ส่งต่อเกณฑ์/คำในระบบ และนับรายการที่ต้องมีคำในระบบ', function () {
+    const report = privacy.inspect(
+        [KNOWN_COMPANY, enabled(MONEY)],
+        ['คู่ค้า: บริษัท สยามการคา จำกัด วงเงิน 4,000.00 บาท'],
+        { knownWords: ['บริษัท สยามการค้า จำกัด'], minSimilarity: 85 }
+    );
+
+    assert.strictEqual(report.requireKnown, 1);
+    assert.strictEqual(report.minSimilarity, 85);
+    assert.strictEqual(report.knownWords, 1);
+    assert.strictEqual(
+        report.masked[0],
+        'คู่ค้า: [[VENDOR_1]] วงเงิน [[MONEY_1]]'
+    );
+    assert.strictEqual(
+        report.restore(report.masked[0]),
+        'คู่ค้า: บริษัท สยามการค้า จำกัด วงเงิน 4,000.00 บาท'
+    );
 });
 
 test('sanitizeName เก็บเฉพาะ A-Z 0-9 _ และมีค่าสำรอง', function () {

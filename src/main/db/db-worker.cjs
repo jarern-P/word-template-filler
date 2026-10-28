@@ -108,15 +108,24 @@ const SCHEMA = `
 
     -- คำ/pattern ที่ต้องปกปิดก่อนส่งข้อความให้ AI (หน้า "คำเฉพาะ")
     -- kind = text (คำธรรมดา) | regex (pattern ที่เขียนเอง)
+    -- require_known = 1 คือปกปิดเฉพาะค่าที่ตรง/ใกล้เคียงคำในระบบ (คลังคำ + ข้อมูลหลัก)
     CREATE TABLE IF NOT EXISTS sensitive_terms (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        name       TEXT NOT NULL DEFAULT '',
-        kind       TEXT NOT NULL DEFAULT 'text',
-        pattern    TEXT NOT NULL,
-        enabled    INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        name          TEXT NOT NULL DEFAULT '',
+        kind          TEXT NOT NULL DEFAULT 'text',
+        pattern       TEXT NOT NULL,
+        enabled       INTEGER NOT NULL DEFAULT 0,
+        require_known INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
         UNIQUE(kind, pattern)
+    );
+
+    -- ค่าตั้งที่ใช้ร่วมกันทั้งแอป (เช่น % ขั้นต่ำของการเทียบคำในระบบ)
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
     );
 
 `;
@@ -445,6 +454,39 @@ function migrateTemplateListGroups() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ require_known ให้ตาราง sensitive_terms
+// ============================================================
+
+// "ต้องมีคำในระบบเท่านั้น" ของแต่ละ pattern ในหน้า "คำเฉพาะ"
+// ฐานข้อมูลรุ่นก่อนไม่มีคอลัมน์นี้ — ถือว่าปิดไว้ (0)
+function migrateSensitiveTermsRequireKnown() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(sensitive_terms)
+        `).all();
+
+    // ยังไม่มีตาราง (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "require_known")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE sensitive_terms
+        ADD COLUMN require_known INTEGER NOT NULL DEFAULT 0
+    `);
+
+    console.log(
+        "Migrated sensitive_terms table: added 'require_known' column"
+    );
+}
+
+
+// ============================================================
 // Migration: เพิ่มคอลัมน์ list_limits ให้ตาราง templates
 // ============================================================
 
@@ -553,7 +595,9 @@ function openDatabase() {
     migrateTemplateTables();
     migrateTemplateListGroups();
     migrateTemplateListLimits();
-    migrateTemplatePatterns();        db.exec(SCHEMA);
+    migrateTemplatePatterns();
+    migrateSensitiveTermsRequireKnown();
+    db.exec(SCHEMA);
 
     // เติม preset คำเฉพาะให้ฐานข้อมูลใหม่ (ตารางว่างเท่านั้น)
     seedSensitiveTerms();
@@ -3652,7 +3696,8 @@ function handlePrivacySave(message) {
                     name,
                     kind,
                     pattern,
-                    enabled
+                    enabled,
+                    require_known
                 FROM sensitive_terms
                 WHERE id = ?
             `).get(id)
@@ -3703,6 +3748,17 @@ function handlePrivacySave(message) {
         const enabled =
             (rawEnabled === true || Number(rawEnabled) === 1) ? 1 : 0;
 
+        // "ต้องมีคำในระบบเท่านั้น" — ปกปิดเฉพาะค่าที่ตรง/ใกล้เคียงคำในระบบ
+        const rawRequireKnown =
+            payload.require_known === undefined
+                ? (payload.requireKnown === undefined
+                    ? (current ? current.require_known : 0)
+                    : payload.requireKnown)
+                : payload.require_known;
+
+        const requireKnown =
+            (rawRequireKnown === true || Number(rawRequireKnown) === 1) ? 1 : 0;
+
         // pattern ซ้ำ (ชนิดเดียวกัน) จะใช้ตัวแปรคนละชื่อไม่ได้ เพราะแทนค่าพร้อมกัน
         const duplicate =
             db.prepare(`
@@ -3732,6 +3788,7 @@ function handlePrivacySave(message) {
                     kind = @kind,
                     pattern = @pattern,
                     enabled = @enabled,
+                    require_known = @require_known,
                     updated_at = @updated_at
                 WHERE id = @id
             `).run({
@@ -3740,6 +3797,7 @@ function handlePrivacySave(message) {
                 kind: kind,
                 pattern: pattern,
                 enabled: enabled,
+                require_known: requireKnown,
                 updated_at: now
             });
 
@@ -3754,6 +3812,7 @@ function handlePrivacySave(message) {
                         kind,
                         pattern,
                         enabled,
+                        require_known,
                         created_at,
                         updated_at
                     )
@@ -3762,6 +3821,7 @@ function handlePrivacySave(message) {
                         @kind,
                         @pattern,
                         @enabled,
+                        @require_known,
                         @created_at,
                         @updated_at
                     )
@@ -3770,6 +3830,7 @@ function handlePrivacySave(message) {
                     kind: kind,
                     pattern: pattern,
                     enabled: enabled,
+                    require_known: requireKnown,
                     created_at: now,
                     updated_at: now
                 });
@@ -3825,6 +3886,7 @@ function handlePrivacyList(message) {
                     kind,
                     pattern,
                     enabled,
+                    require_known,
                     created_at,
                     updated_at
                 FROM sensitive_terms
@@ -3840,6 +3902,7 @@ function handlePrivacyList(message) {
                 kind: row.kind === "regex" ? "regex" : "text",
                 pattern: row.pattern,
                 enabled: Number(row.enabled) === 1 ? 1 : 0,
+                require_known: Number(row.require_known) === 1 ? 1 : 0,
                 created_at: row.created_at,
                 updated_at: row.updated_at
             }))
@@ -3885,6 +3948,120 @@ function handlePrivacyDelete(message) {
             ok: true,
             result: {
                 deleted: result.changes > 0
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// ============================================================
+// Settings (ค่าตั้งที่ใช้ร่วมกัน)
+// ============================================================
+
+// อ่านค่าตั้งตาม key — ยังไม่เคยบันทึก = value เป็น null (ผู้เรียกใช้ค่าเริ่มต้น)
+function handleSettingGet(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const key =
+            String((message.payload && message.payload.key) || "").trim();
+
+        if (!key) {
+            throw new Error("ไม่ระบุ key ของค่าตั้ง");
+        }
+
+        const row =
+            db.prepare(`
+                SELECT value
+                FROM app_settings
+                WHERE key = ?
+            `).get(key);
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                key: key,
+                value: row ? row.value : null
+            }
+        });
+
+    } catch (error) {
+
+        send({
+            id: message.id,
+            ok: false,
+            error:
+                error?.message ||
+                String(error)
+        });
+
+    }
+}
+
+
+// บันทึกค่าตั้ง (มีอยู่แล้ว = ทับค่าเดิม)
+function handleSettingSave(message) {
+
+    try {
+
+        if (!db) {
+            throw new Error("ฐานข้อมูลยังไม่เปิด");
+        }
+
+        const payload = message.payload || {};
+
+        const key =
+            String(payload.key || "").trim();
+
+        if (!key) {
+            throw new Error("ไม่ระบุ key ของค่าตั้ง");
+        }
+
+        const value =
+            String(payload.value == null ? "" : payload.value).trim();
+
+        db.prepare(`
+            INSERT INTO app_settings (
+                key,
+                value,
+                updated_at
+            )
+            VALUES (
+                @key,
+                @value,
+                @updated_at
+            )
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+        `).run({
+            key: key,
+            value: value,
+            updated_at: new Date().toISOString()
+        });
+
+        send({
+            id: message.id,
+            ok: true,
+            result: {
+                key: key,
+                value: value
             }
         });
 
@@ -4147,6 +4324,25 @@ parentPort.on("message", (message) => {
             case "privacy-delete":
 
                 handlePrivacyDelete(message);
+
+                break;
+
+
+            // ------------------------------------------------
+            // Settings (ค่าตั้งที่ใช้ร่วมกัน)
+            // ------------------------------------------------
+
+            case "setting-get":
+
+                handleSettingGet(message);
+
+                break;
+
+            // ------------------------------------------------
+
+            case "setting-save":
+
+                handleSettingSave(message);
 
                 break;
 

@@ -9,10 +9,22 @@
 // รายการแต่ละอันมี 2 ชนิด (kind):
 //   text  = คำธรรมดา (เทียบทั้งคำตามที่พิมพ์ ไม่สนตัวพิมพ์เล็ก/ใหญ่)
 //   regex = pattern ที่เขียนเอง ใส่ flag ได้ทั้งแบบ /.../i หรือพิมพ์เฉพาะ pattern
+//
+// รายการที่ตั้ง "ต้องมีคำในระบบเท่านั้น" (require_known) จะปกปิดเฉพาะค่าที่
+// ตรง/ใกล้เคียงกับคำในระบบ (คลังคำ + ข้อมูลหลัก) ตาม % ที่กำหนด — ค่าที่ regex
+// จับได้แต่ไม่มีในระบบจะไม่ถูกแทนด้วยตัวแปร
 'use strict';
+
+const levenshtein = require('js-levenshtein');
 
 // เพดานกันข้อมูลชุดใหญ่ผิดปกติ (สแกนทั้งข้อความต่อ 1 คำขอ)
 const MAX_TERMS = 500;
+
+// % ความคล้ายขั้นต่ำเริ่มต้นของการเทียบกับคำในระบบ (ใช้เมื่อยังไม่ตั้งค่า)
+const DEFAULT_MIN_SIMILARITY = 80;
+
+// เพดานจำนวนคำในระบบที่โหลดมาเทียบ (กันข้อมูลหลักใหญ่ผิดปกติ)
+const MAX_KNOWN_WORDS = 20000;
 
 const MAX_PATTERN_LENGTH = 500;
 
@@ -82,6 +94,77 @@ function isEnabled(term) {
     return Boolean(term) && (term.enabled === true || Number(term.enabled) === 1);
 }
 
+// "ต้องมีคำในระบบเท่านั้น" — รับได้ทั้ง require_known (ฐานข้อมูล) และ requireKnown
+function isRequireKnown(term) {
+    if (!term) return false;
+
+    const value = term.require_known === undefined
+        ? term.requireKnown
+        : term.require_known;
+
+    return value === true || Number(value) === 1;
+}
+
+// ค่าที่ใช้เทียบคำ: ตัดช่องว่างหัวท้าย ยุบช่องว่างซ้ำ และไม่สนตัวพิมพ์เล็ก/ใหญ่
+function normalizeForCompare(value) {
+    return String(value == null ? '' : value)
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+// % ความคล้ายของ 2 คำ (0–100) — ใช้ Levenshtein distance หารด้วยความยาวมากสุด
+// ไม่ปัดเศษ เพื่อให้การเทียบกับเกณฑ์ตรงตามจริง (หน้าจอค่อยปัดตอนแสดง)
+function similarityPercent(a, b) {
+    const left = normalizeForCompare(a);
+    const right = normalizeForCompare(b);
+
+    if (left === '' && right === '') return 100;
+    if (left === right) return 100;
+
+    const longest = Math.max(left.length, right.length);
+
+    return (1 - levenshtein(left, right) / longest) * 100;
+}
+
+// % ขั้นต่ำที่บันทึกไว้ — รับเฉพาะตัวเลข 0–100 (ค่าอื่นใช้ค่าเริ่มต้น)
+function sanitizeMinSimilarity(value) {
+    // ว่าง/ไม่ระบุ = ยังไม่ตั้งค่า ใช้ค่าเริ่มต้น (Number("") เป็น 0 จึงต้องเช็คก่อน)
+    if (value === null || value === undefined || String(value).trim() === '') {
+        return DEFAULT_MIN_SIMILARITY;
+    }
+
+    const number = Number(value);
+
+    if (!isFinite(number)) return DEFAULT_MIN_SIMILARITY;
+
+    return Math.min(100, Math.max(0, Math.round(number)));
+}
+
+// รายการคำในระบบ (คลังคำ + ข้อมูลหลัก) ที่โหลดมาเทียบ
+// dedupe แบบไม่สนตัวพิมพ์เล็ก/ใหญ่ และตัดช่องว่างซ้ำ เพื่อให้เทียบได้ตรงกัน
+function prepareKnownWords(list) {
+    const seen = new Set();
+    const words = [];
+
+    (Array.isArray(list) ? list : []).forEach(function (item) {
+        const value = String(item == null ? '' : item)
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (value === '') return;
+
+        const key = value.toLowerCase();
+
+        if (seen.has(key)) return;
+
+        seen.add(key);
+        words.push({ value: value, norm: key, length: key.length });
+    });
+
+    return words.slice(0, MAX_KNOWN_WORDS);
+}
+
 // แปลง pattern เป็น RegExp
 //
 //   text  -> ปิดอักขระพิเศษทั้งหมด (เทียบตามตัวอักษร) ไม่สนตัวพิมพ์เล็ก/ใหญ่
@@ -134,10 +217,14 @@ function validatePattern(kind, pattern) {
 //
 // ใช้ตัวเดียวกันกับทั้งข้อความต้นฉบับและบริบทจากฐานข้อมูล เพื่อให้ค่าเดียวกัน
 // ได้ placeholder เดียวกันเสมอ (AI เห็นเป็นตัวแปรเดียวกันทั้งชุด)
-function createMasker(terms) {
+function createMasker(terms, options) {
     const compiled = [];
     const errors = [];
     const list = Array.isArray(terms) ? terms : [];
+    const settings = options && typeof options === 'object' ? options : {};
+
+    const minSimilarity = sanitizeMinSimilarity(settings.minSimilarity);
+    const knownWords = prepareKnownWords(settings.knownWords);
 
     list.slice(0, MAX_TERMS).forEach(function (term) {
         if (!isEnabled(term)) return;
@@ -150,7 +237,11 @@ function createMasker(terms) {
             return;
         }
 
-        compiled.push({ name: name, regex: parsed.regex });
+        compiled.push({
+            name: name,
+            regex: parsed.regex,
+            requireKnown: isRequireKnown(term)
+        });
     });
 
     const byValue = new Map();    // name + ค่า -> placeholder
@@ -158,6 +249,53 @@ function createMasker(terms) {
     const map = [];               // [{ placeholder, value }]
     const matched = new Set();    // ชื่อตัวแปรที่เจอค่าจริงในข้อความชุดนี้
     let count = 0;                // จำนวนจุดที่ถูกแทน
+
+    // คำในระบบที่ใกล้ที่สุดของค่าที่ regex จับได้ — null = ไม่มีคำที่ผ่านเกณฑ์
+    //
+    // เทียบกับ "คลังคำ + ข้อมูลหลัก" ทั้งหมด (ตัดคำที่ความยาวต่างกันเกินเกณฑ์ออกก่อน
+    // เพราะระยะแก้ไขอย่างน้อยที่สุดคือผลต่างความยาว) แล้วแคชผลไว้ต่อค่าหนึ่งค่า
+    // เพื่อไม่ต้องคำนวณซ้ำเมื่อคำเดิมปรากฏหลายจุด
+    const knownCache = new Map();
+
+    function bestKnownWord(value) {
+        if (knownWords.length === 0) return null;
+
+        const probe = normalizeForCompare(value);
+
+        if (probe === '') return null;
+
+        if (knownCache.has(probe)) return knownCache.get(probe);
+
+        let best = null;
+        let bestPercent = -1;
+
+        knownWords.forEach(function (word) {
+            const longest = Math.max(word.length, probe.length);
+
+            // ระยะที่ยอมให้แก้ได้มากที่สุดเพื่อให้ยังถึง % ขั้นต่ำ
+            // ความยาวต่างกันเกินกว่านี้ = ไม่มีทางถึงเกณฑ์ (ระยะขั้นต่ำ = ผลต่างความยาว)
+            const allowedDistance = longest * (100 - minSimilarity) / 100;
+
+            if (Math.abs(word.length - probe.length) > allowedDistance) return;
+
+            const percent = (1 - levenshtein(probe, word.norm) / longest) * 100;
+
+            // % เท่ากัน = เลือกคำที่สั้นกว่า (คำที่แตกต่างจากต้นฉบับน้อยกว่า)
+            if (
+                percent > bestPercent ||
+                (percent === bestPercent && best && word.length < best.length)
+            ) {
+                best = word;
+                bestPercent = percent;
+            }
+        });
+
+        const found = best && bestPercent >= minSimilarity ? best.value : null;
+
+        knownCache.set(probe, found);
+
+        return found;
+    }
 
     // ช่วงที่ถูกปกปิดใน "ข้อความนั้น" — กันรายการถัดไปทับค่าที่แทนไปแล้ว
     // (ต้องเป็นของแต่ละครั้งที่เรียก mask เพราะข้อความคนละก้อนมีตำแหน่งคนละชุด)
@@ -222,7 +360,17 @@ function createMasker(terms) {
 
                 if (overlaps(ranges, start, end)) continue;
 
-                const value = match[0];
+                let value = match[0];
+
+                // ต้องมีคำในระบบเท่านั้น: ใช้คำในระบบแทนค่าที่จับได้ (แก้คำที่ OCR
+                // อ่านเพี้ยนให้ตรงกับคำจริง) — ถ้าไม่มีคำที่ถึงเกณฑ์ ก็ไม่ปกปิดค่านี้
+                if (term.requireKnown) {
+                    const known = bestKnownWord(value);
+
+                    if (known === null) continue;
+
+                    value = known;
+                }
 
                 ranges.push([start, end]);
                 replacements.push({
@@ -299,6 +447,13 @@ function createMasker(terms) {
         // ชื่อตัวแปรที่เจอค่าจริง — ที่เหลือคือรายการที่เปิดใช้แต่ไม่พบในข้อความชุดนี้
         get matched() {
             return Array.from(matched);
+        },
+        // เกณฑ์/จำนวนคำในระบบที่ใช้เทียบ (หน้า "คำเฉพาะ" แสดงให้เห็น)
+        get minSimilarity() {
+            return minSimilarity;
+        },
+        get knownWords() {
+            return knownWords.length;
         }
     };
 }
@@ -326,9 +481,9 @@ function findPlaceholders(text) {
 //   counts      : จำนวนจุดที่ปกปิดของแต่ละก้อน
 //   count/placeholders/items/unmatched/errors/enabled/total
 // }
-function inspect(terms, chunks) {
+function inspect(terms, chunks, options) {
     const list = Array.isArray(terms) ? terms : [];
-    const masker = createMasker(list);
+    const masker = createMasker(list, options);
     const masked = [];
     const counts = [];
 
@@ -356,6 +511,12 @@ function inspect(terms, chunks) {
         // จำนวนรายการที่เปิดใช้/ทั้งหมด — 0 = ยังไม่มีการปกปิดเลย
         enabled: list.filter(isEnabled).length,
         total: list.length,
+        // รายการที่ตั้ง "ต้องมีคำในระบบเท่านั้น" + เกณฑ์/จำนวนคำที่ใช้เทียบ
+        requireKnown: list.filter(function (term) {
+            return isEnabled(term) && isRequireKnown(term);
+        }).length,
+        minSimilarity: masker.minSimilarity,
+        knownWords: masker.knownWords,
         // คืนค่าเดิมได้ด้วย (ตอนส่งจริงใช้แทนค่ากลับในคำตอบของ AI)
         restore: masker.restore
     };
@@ -366,12 +527,18 @@ module.exports = {
     MAX_TERMS,
     MAX_PATTERN_LENGTH,
     MAX_NAME_LENGTH,
+    DEFAULT_MIN_SIMILARITY,
+    MAX_KNOWN_WORDS,
     FALLBACK_NAME,
     MASK_INSTRUCTION,
     DEFAULT_TERMS,
     escapeRegExp,
     sanitizeName,
     isEnabled,
+    isRequireKnown,
+    normalizeForCompare,
+    similarityPercent,
+    sanitizeMinSimilarity,
     validatePattern,
     createMasker,
     inspect,

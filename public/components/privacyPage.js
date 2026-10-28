@@ -32,6 +32,12 @@
         '        — ข้อมูลจริงจึงไม่ออกจากเครื่อง',
         '    </p>',
 
+        '    <p class="hint">',
+        '        รายการที่ติ๊ก "ต้องมีคำในระบบเท่านั้น" จะปกปิดเฉพาะค่าที่ตรงหรือใกล้เคียง',
+        '        กับคำในระบบ (คลังคำศัพท์ + ข้อมูลหลัก) ตาม % ที่กำหนดด้านล่าง — ค่าที่ regex จับได้',
+        '        แต่ไม่มีในระบบจะไม่ถูกแทนด้วยตัวแปร',
+        '    </p>',
+
         // ── สรุปสถานะ ──
         '    <section class="suggest-settings">',
         '        <h2>การปกปิด</h2>',
@@ -40,6 +46,24 @@
         '            ชื่อตัวแปรใช้ได้เฉพาะ A–Z, 0–9 และ _ (อักขระอื่นถูกแทนด้วย _)',
         '            · ตัวเลขลำดับท้ายตัวแปรเติมให้เองตามค่าที่พบ',
         '        </p>',
+
+        '        <div class="field">',
+        '            <label for="privacyMinSimilarity">เทียบกับคำในระบบขั้นต่ำ (%)</label>',
+        '            <input type="number" id="privacyMinSimilarity" min="0" max="100"' +
+            ' step="1" inputmode="numeric" value="80">',
+        '        </div>',
+
+        '        <p class="hint">',
+        '            ใช้ร่วมกันทุกรายการที่ติ๊ก "ต้องมีคำในระบบเท่านั้น" — ค่าที่ใกล้เคียงที่สุด',
+        '            ตั้งแต่ % นี้ขึ้นไปจะถูกแทนด้วยคำในระบบ (คำที่สะกดถูก) ก่อนแปลงเป็นตัวแปร',
+        '        </p>',
+
+        '        <div class="form-actions">',
+        '            <button id="privacyMinSimilaritySaveBtn" type="button" class="plain">บันทึก % ขั้นต่ำ</button>',
+        '        </div>',
+
+        '        <p id="privacySettingsStatus" class="db-status"></p>',
+        '        <p id="privacyKnownWords" class="hint"></p>',
         '    </section>',
 
         // ── รายการ (list-first) ──
@@ -119,6 +143,18 @@
         '                    <span class="switch-text">เปิดใช้เมื่อส่ง AI</span>',
         '                </label>',
 
+        '                <label class="switch-toggle" for="privacyRequireKnown">',
+        '                    <input type="checkbox" id="privacyRequireKnown">',
+        '                    <span class="switch-box" aria-hidden="true"></span>',
+        '                    <span class="switch-text">ต้องมีคำในระบบเท่านั้น</span>',
+        '                </label>',
+
+        '                <p class="hint">',
+        '                    ติ๊ก "ต้องมีคำในระบบเท่านั้น" = ค่าที่ regex จับได้จะถูกเทียบกับ',
+        '                    คลังคำศัพท์ + ข้อมูลหลัก ถ้าความคล้ายถึง % ขั้นต่ำ (ตั้ง ởด้านบนของหน้า)',
+        '                    จะใช้คำในระบบแทนแล้วแปลงเป็นตัวแปร — ถ้าไม่มีคำที่ถึงเกณฑ์ จะไม่ถูกแทนค่า',
+        '                </p>',
+
         '                <input type="hidden" id="privacyId" value="">',
 
         '                <p class="hint">',
@@ -144,6 +180,8 @@
     let records = [];       // รายการล่าสุดจากฐานข้อมูล
     let searchText = '';
     let previewBusy = false;
+    let minSimilarity = 80; // % ขั้นต่ำของการเทียบกับคำในระบบ (ใช้ร่วมกันทุกรายการ)
+    let knownWords = 0;     // จำนวนคำในระบบ (คลังคำศัพท์ + ข้อมูลหลัก)
 
     // ค่าที่พิมพ์ไว้ — จำข้ามการเปลี่ยนหน้า (DOM ถูกวาดใหม่ทุกครั้ง)
     const state = {
@@ -221,13 +259,20 @@
             ? '(ว่าง)'
             : record.pattern;
 
+        const metaParts = [
+            KIND_LABELS[record.kind] || KIND_LABELS.text,
+            'ตัวแปร [[' + record.name + '_1]]'
+        ];
+
+        if (Number(record.require_known) === 1) {
+            metaParts.push('ต้องมีคำในระบบ ≥ ' + minSimilarity + '%');
+        }
+
+        metaParts.push('อัปเดต ' + formatDate(record.updated_at));
+
         const meta = document.createElement('span');
         meta.className = 'meta';
-        meta.textContent = [
-            KIND_LABELS[record.kind] || KIND_LABELS.text,
-            'ตัวแปร [[' + record.name + '_1]]',
-            'อัปเดต ' + formatDate(record.updated_at)
-        ].join(' · ');
+        meta.textContent = metaParts.join(' · ');
 
         info.appendChild(name);
         info.appendChild(pattern);
@@ -348,6 +393,108 @@
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // ค่าตั้งที่ใช้ร่วมกัน (% ขั้นต่ำ + จำนวนคำในระบบ)
+    // ──────────────────────────────────────────────────────────────
+
+    function updateKnownWordsText() {
+        const node = el('privacyKnownWords');
+        if (!node) return;
+
+        node.textContent = 'คำในระบบที่ใช้เทียบ: ' + knownWords + ' คำ' +
+            ' (คลังคำศัพท์ + ข้อมูลหลัก)' +
+            (knownWords === 0
+                ? ' — ยังไม่มีคำในระบบ รายการที่ติ๊ก "ต้องมีคำในระบบเท่านั้น" จะไม่ปกปิดค่าใดเลย'
+                : '');
+    }
+
+    async function loadSettings() {
+        const status = el('privacySettingsStatus');
+        const input = el('privacyMinSimilarity');
+
+        if (!window.electronAPI || !window.electronAPI.privacySettingsGet) {
+            updateKnownWordsText();
+            return;
+        }
+
+        try {
+            const response = await window.electronAPI.privacySettingsGet();
+
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'โหลดค่าตั้งไม่สำเร็จ'
+                );
+            }
+
+            minSimilarity = Number(response.minSimilarity);
+            knownWords = Number(response.knownWords) || 0;
+
+            if (input) input.value = String(minSimilarity);
+
+            setStatus(status, '');
+            updateKnownWordsText();
+
+            // ป้าย "ต้องมีคำในระบบ ≥ N%" ในรายการต้องตรงกับค่าที่บันทึกไว้
+            renderList();
+
+        } catch (error) {
+            setStatus(status, 'โหลดค่าตั้งไม่สำเร็จ: ' + error.message, 'error');
+            updateKnownWordsText();
+        }
+    }
+
+    async function saveSettings() {
+        const status = el('privacySettingsStatus');
+        const input = el('privacyMinSimilarity');
+        const button = el('privacyMinSimilaritySaveBtn');
+
+        if (!window.electronAPI || !window.electronAPI.privacySettingsSave) {
+            setStatus(status, 'เปิดหน้านี้ในแอป (Electron) เพื่อบันทึกได้', 'error');
+            return;
+        }
+
+        const value = Number(input ? input.value : minSimilarity);
+
+        if (!isFinite(value) || value < 0 || value > 100) {
+            setStatus(status, 'กรุณากรอกตัวเลข 0–100', 'error');
+            return;
+        }
+
+        if (button) button.disabled = true;
+
+        setStatus(status, 'กำลังบันทึก...');
+
+        try {
+            const response = await window.electronAPI.privacySettingsSave({
+                minSimilarity: value
+            });
+
+            if (!response || response.ok === false) {
+                throw new Error(
+                    (response && response.error) || 'บันทึกไม่สำเร็จ'
+                );
+            }
+
+            minSimilarity = Number(response.minSimilarity);
+
+            if (input) input.value = String(minSimilarity);
+
+            renderList();
+
+            setStatus(
+                status,
+                'บันทึก % ขั้นต่ำแล้ว: ' + minSimilarity + '%',
+                'ok'
+            );
+
+        } catch (error) {
+            setStatus(status, 'บันทึกไม่สำเร็จ: ' + error.message, 'error');
+
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
     async function save() {
         const form = readForm();
         const status = el('privacyFormStatus');
@@ -375,7 +522,8 @@
                 name: form.name,
                 kind: form.kind,
                 pattern: form.pattern,
-                enabled: form.enabled ? 1 : 0
+                enabled: form.enabled ? 1 : 0,
+                require_known: form.requireKnown ? 1 : 0
             });
 
             await load();
@@ -462,13 +610,15 @@
         const kind = el('privacyKind');
         const pattern = el('privacyPattern');
         const enabled = el('privacyEnabled');
+        const requireKnown = el('privacyRequireKnown');
 
         return {
             id: (id && id.value) ? Number(id.value) : 0,
             name: name ? name.value.trim() : '',
             kind: kind && kind.value === 'regex' ? 'regex' : 'text',
             pattern: pattern ? pattern.value.trim() : '',
-            enabled: enabled ? enabled.checked : true
+            enabled: enabled ? enabled.checked : true,
+            requireKnown: requireKnown ? requireKnown.checked : false
         };
     }
 
@@ -498,6 +648,9 @@
         const enabled = el('privacyEnabled');
         if (enabled) enabled.checked = Number(record.enabled) === 1;
 
+        const requireKnown = el('privacyRequireKnown');
+        if (requireKnown) requireKnown.checked = Number(record.require_known) === 1;
+
         setEditing(record);
 
         const pattern = el('privacyPattern');
@@ -511,6 +664,9 @@
 
         const enabled = el('privacyEnabled');
         if (enabled) enabled.checked = true;
+
+        const requireKnown = el('privacyRequireKnown');
+        if (requireKnown) requireKnown.checked = false;
 
         setEditing(null);
     }
@@ -557,7 +713,8 @@
                     name: record.name,
                     kind: record.kind,
                     pattern: record.pattern,
-                    enabled: Number(record.enabled) === 1 ? 1 : 0
+                    enabled: Number(record.enabled) === 1 ? 1 : 0,
+                    require_known: Number(record.require_known) === 1 ? 1 : 0
                 };
             });
 
@@ -565,9 +722,20 @@
                 return term.enabled === 1;
             }).length;
 
+            const requireKnownCount = terms.filter(function (term) {
+                return term.enabled === 1 && term.require_known === 1;
+            }).length;
+
+            // ใช้ % ที่พิมพ์ค้างอยู่ในช่อง (ยังไม่กดบันทึกก็ทดสอบได้)
+            const input = el('privacyMinSimilarity');
+            const typed = Number(input ? input.value : minSimilarity);
+
             const response = await window.electronAPI.privacyPreview({
                 text: text,
-                terms: terms
+                terms: terms,
+                minSimilarity: isFinite(typed) && typed >= 0 && typed <= 100
+                    ? typed
+                    : minSimilarity
             });
 
             if (!response || response.ok === false) {
@@ -593,6 +761,11 @@
                     ' · ใช้ ' + enabledCount + ' รายการที่เปิดใช้' +
                     (enabledCount === 0
                         ? ' (ยังไม่มีรายการที่เปิดใช้ — ตอนส่งจริงจะไม่มีการปกปิด)'
+                        : '') +
+                    (requireKnownCount > 0
+                        ? ' · ต้องมีคำในระบบ ' + requireKnownCount + ' รายการ' +
+                            ' (≥ ' + Number(result.minSimilarity || 0) + '%,' +
+                            ' คำในระบบ ' + Number(result.knownWords || 0) + ' คำ)'
                         : '') +
                     (errors.length > 0
                         ? ' · ใช้ไม่ได้ ' + errors.length + ' รายการ: ' +
@@ -623,6 +796,7 @@
         const cancelBtn = el('privacyCancelBtn');
         const previewBtn = el('privacyPreviewBtn');
         const sample = el('privacySample');
+        const settingsSaveBtn = el('privacyMinSimilaritySaveBtn');
 
         if (!list) return;
 
@@ -684,6 +858,10 @@
             previewBtn.addEventListener('click', runPreview);
         }
 
+        if (settingsSaveBtn) {
+            settingsSaveBtn.addEventListener('click', saveSettings);
+        }
+
         if (sample) {
             sample.addEventListener('input', function () {
                 state.sample = sample.value;
@@ -724,6 +902,7 @@
             bind();
             resetForm();
             applyState();
+            loadSettings();
             load();
         },
 
