@@ -1832,14 +1832,15 @@ ipcMain.handle(
 // นอกจากนี้ยังดึงข้อมูลจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) มาเป็น raw text
 // ส่งไปพร้อมกับ prompt เพื่อให้ AI มีบริบทเพิ่มเติม
 
-// key ในตาราง app_settings ของสวิตช์ "ส่งชื่อฟีลด์ของแม่แบบไปใน prompt"
-// (หน้า ตั้งค่าแม่แบบ) — เก็บรวมทั้งแอป
+// key ในตาราง app_settings ของสวิตช์ในหน้า ตั้งค่าแม่แบบ (เก็บรวมทั้งแอป)
+// - ชื่อฟิลด์ของแม่แบบ (ใช้เป็น key ของ key-value pair)
+// - type + placeholder ของแต่ละฟิลด์ (ชนิด/ตัวอย่างข้อมูล)
 const IMPROVE_SEND_FIELDS_KEY = "improveSendFields";
+const IMPROVE_SEND_META_KEY = "improveSendFieldMeta";
 
 
-// สวิตช์ "ส่งชื่อฟีลด์ของแม่แบบไปใน prompt"
-// ยังไม่เคยตั้ง = เปิดไว้ (ให้ AI ใช้ชื่อฟิลด์เป็น key ตั้งแต่แรก)
-async function loadImproveSendFields() {
+// อ่านสวิตช์จาก app_settings — ยังไม่เคยตั้ง = เปิดไว้
+async function loadImproveSetting(key) {
 
     try {
 
@@ -1848,7 +1849,7 @@ async function loadImproveSendFields() {
         const result =
             await dbRequest(
                 "setting-get",
-                { key: IMPROVE_SEND_FIELDS_KEY }
+                { key: key }
             );
 
         const stored =
@@ -1861,7 +1862,7 @@ async function loadImproveSendFields() {
     } catch (error) {
 
         console.error(
-            "โหลดค่าตั้งการส่งชื่อฟิลด์ไม่สำเร็จ:",
+            "โหลดค่าตั้งการส่งข้อมูลฟิลด์ไม่สำเร็จ (" + key + "):",
             error
         );
 
@@ -1870,7 +1871,19 @@ async function loadImproveSendFields() {
 }
 
 
-// ค่าตั้งการส่งชื่อฟิลด์ — หน้า ตั้งค่าแม่แบบ ใช้อ่านสวิตช์
+// สวิตช์ "ส่งชื่อฟิลด์ของแม่แบบไปใน prompt"
+async function loadImproveSendFields() {
+    return loadImproveSetting(IMPROVE_SEND_FIELDS_KEY);
+}
+
+
+// สวิตช์ "ส่ง type และ placeholder ของแม่แบบไปใน prompt"
+async function loadImproveSendMeta() {
+    return loadImproveSetting(IMPROVE_SEND_META_KEY);
+}
+
+
+// ค่าตั้งสวิตช์ส่งข้อมูลฟิลด์ — หน้า ตั้งค่าแม่แบบ ใช้อ่านสวิตช์
 ipcMain.handle(
     "improve:settings-get",
     async function () {
@@ -1879,7 +1892,8 @@ ipcMain.handle(
 
             return {
                 ok: true,
-                sendFields: await loadImproveSendFields()
+                sendFields: await loadImproveSendFields(),
+                sendMeta: await loadImproveSendMeta()
             };
 
         } catch (error) {
@@ -1895,7 +1909,8 @@ ipcMain.handle(
 );
 
 
-// บันทึกสวิตช์ — payload = { sendFields }
+// บันทึกสวิตช์ — payload = { sendFields?, sendMeta? }
+// ส่งมาเฉพาะสวิตช์ที่เปลี่ยนก็ได้
 ipcMain.handle(
     "improve:settings-save",
     async function (event, payload) {
@@ -1907,35 +1922,61 @@ ipcMain.handle(
             const input =
                 payload && typeof payload === "object" ? payload : {};
 
-            if (input.sendFields === undefined) {
-                return {
-                    ok: true,
-                    sendFields: await loadImproveSendFields()
-                };
+            const hasFields =
+                input.sendFields !== undefined;
+
+            const hasMeta =
+                input.sendMeta !== undefined;
+
+            const sendFields = hasFields
+                ? (input.sendFields === true || Number(input.sendFields) === 1)
+                : await loadImproveSendFields();
+
+            const sendMeta = hasMeta
+                ? (input.sendMeta === true || Number(input.sendMeta) === 1)
+                : await loadImproveSendMeta();
+
+            const toSave = [];
+
+            if (hasFields) {
+                toSave.push({
+                    key: IMPROVE_SEND_FIELDS_KEY,
+                    value: sendFields ? "1" : "0",
+                    label: "ชื่อฟิลด์"
+                });
             }
 
-            const sendFields =
-                input.sendFields === true || Number(input.sendFields) === 1;
+            if (hasMeta) {
+                toSave.push({
+                    key: IMPROVE_SEND_META_KEY,
+                    value: sendMeta ? "1" : "0",
+                    label: "type/placeholder"
+                });
+            }
 
-            const saved =
-                await dbRequest(
-                    "setting-save",
-                    {
-                        key: IMPROVE_SEND_FIELDS_KEY,
-                        value: sendFields ? "1" : "0"
-                    }
-                );
+            for (const item of toSave) {
 
-            if (!saved || saved.ok === false) {
-                throw new Error(
-                    (saved && saved.error) ||
-                    "บันทึกค่าส่งชื่อฟิลด์ไม่สำเร็จ"
-                );
+                const saved =
+                    await dbRequest(
+                        "setting-save",
+                        {
+                            key: item.key,
+                            value: item.value
+                        }
+                    );
+
+                if (!saved || saved.ok === false) {
+                    throw new Error(
+                        (saved && saved.error) ||
+                        ("บันทึกค่าส่ง " + item.label + "ไม่สำเร็จ")
+                    );
+                }
             }
 
             return {
                 ok: true,
-                sendFields: sendFields
+                sendFields: sendFields,
+                sendMeta: sendMeta
             };
 
         } catch (error) {
@@ -2021,19 +2062,35 @@ ipcMain.handle(
 
             console.log("[คำเฉพาะ] ข้อความที่ส่งให้ AI:\n" + maskedText);
 
-            // ชื่อฟิลด์ของแม่แบบที่ส่งมาทาง payload — แนบไปใน prompt ตามสวิตช์
-            // (หน้า ตั้งค่าแม่แบบ) เพื่อให้ AI ใช้ชื่อฟิลด์นั้นเป็น key
-            const fieldNames =
-                await loadImproveSendFields() &&
-                payload &&
-                Array.isArray(payload.fields)
+            // ข้อมูลฟิลด์ของแม่แบบที่ส่งมาทาง payload — แนบไปใน prompt
+            // ตามสวิตช์ 2 ตัวในหน้า ตั้งค่าแม่แบบ:
+            // - ชื่อฟิลด์ = ใช้เป็น key ของ key-value pair
+            // - type/placeholder = ชนิดและตัวอย่างข้อมูลของแต่ละฟิลด์
+            const sendFieldNames =
+                await loadImproveSendFields();
+
+            const sendFieldMeta =
+                await loadImproveSendMeta();
+
+            let fieldNames = [];
+
+            if (sendFieldNames && payload && Array.isArray(payload.fields)) {
+
+                // ปิดสวิตช์ type/placeholder = ส่งแค่ชื่อฟิลด์
+                fieldNames = sendFieldMeta
                     ? payload.fields
-                    : [];
+                    : payload.fields.map(function (item) {
+                        return item && typeof item === "object"
+                            ? { name: item.name }
+                            : item;
+                    });
+            }
 
             if (fieldNames.length > 0) {
                 console.log(
-                    "[ปรับปรุง] แนบชื่อฟิลด์ไปใน prompt " +
-                    fieldNames.length + " ฟิลด์"
+                    "[ปรับปรุง] แนบข้อมูลฟิลด์ไปใน prompt " +
+                    fieldNames.length + " ฟิลด์" +
+                    (sendFieldMeta ? " (มี type/placeholder)" : " (ชื่อฟิลด์เท่านั้น)")
                 );
             }
 

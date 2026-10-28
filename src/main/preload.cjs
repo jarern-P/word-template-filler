@@ -264,12 +264,13 @@ contextBridge.exposeInMainWorld(
         ocrImproveText: (payload) =>
             ipcRenderer.invoke("ocr:improve", payload),
 
-        // สวิตช์ "ส่งชื่อฟีลด์ของแม่แบบไปใน prompt" (หน้า ตั้งค่าแม่แบบ)
-        // คืน { ok, sendFields }
+        // สวิตช์ส่งข้อมูลฟิลด์ไปใน prompt (หน้า ตั้งค่าแม่แบบ)
+        // sendFields = ชื่อฟิลด์ · sendMeta = type/placeholder
+        // คืน { ok, sendFields, sendMeta }
         improveSettingsGet: () =>
             ipcRenderer.invoke("improve:settings-get"),
 
-        // payload = { sendFields } — คืน { ok, sendFields }
+        // payload = { sendFields?, sendMeta? } — คืน { ok, sendFields, sendMeta }
         improveSettingsSave: (payload) =>
             ipcRenderer.invoke("improve:settings-save", payload),
 
