@@ -191,6 +191,25 @@ test('difflib ต่อวลี 3 ส่วนโดยไม่ซ้ำส่
     assert.strictEqual(result.changed, 0);
 });
 
+test('difflib ต่อวลีในคลังคำที่คั่นด้วย / ข้ามบรรทัด', function () {
+    const phrase =
+        'ขยายโอกาสและพัฒนาคุณภาพการศึกษา/' +
+        'ผู้สำเร็จการศึกษาด้านวิทยาศาสตร์และเทคโนโลยี/' +
+        'จัดการเรียนการสอนด้านวิทยาศาสตร์และเทคโนโลยี/' +
+        'โรงเรียนสาธิต';
+    const input = phrase.split('/').join('\n');
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [phrase],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, phrase);
+    assert.strictEqual(result.phrases, 1);
+    assert.strictEqual(result.changed, 0);
+});
+
 test('difflib ไม่แตะวลีที่อยู่บรรทัดเดียวกันแล้ว', function () {
     const input =
         'โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์ นวัตกรรมและเทคโนโลยี';

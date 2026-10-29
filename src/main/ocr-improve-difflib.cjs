@@ -649,7 +649,33 @@ function isFullyKnown(word, knownSet) {
     return true;
 }
 
-// วลีในคลังคำที่มีหลายคำ (เช่น "โครงการ... นวัตกรรมและเทคโนโลยี")
+// แยกส่วนของวลีด้วย "/" — แต่คง "2/2569" (ปี พ.ศ.) ไว้เป็นส่วนเดียว
+function splitPhraseToken(token) {
+    const parts = [];
+    let current = '';
+
+    for (let index = 0; index < token.length; index++) {
+        const char = token[index];
+        const numericSlash =
+            char === '/' &&
+            /[0-9]/.test(token[index - 1] || '') &&
+            /[0-9]/.test(token[index + 1] || '');
+
+        if (char === '/' && !numericSlash) {
+            parts.push(current);
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+
+    parts.push(current);
+
+    return parts.filter(Boolean);
+}
+
+// วลีในคลังคำที่มีหลายส่วน — คั่นด้วยช่องว่างหรือ "/"
+// (เช่น "โครงการ... นวัตกรรมและเทคโนโลยี" หรือ "ก/ข/ค")
 function buildPhrases(items) {
     return (Array.isArray(items) ? items : [])
         .map(function (item) {
@@ -657,11 +683,19 @@ function buildPhrases(items) {
                 .replace(/\s+/g, ' ')
                 .trim();
         })
-        .filter(function (value) {
-            return value !== '' && value.split(' ').length >= 2;
-        })
         .map(function (value) {
-            return { value: value, parts: value.split(' ') };
+            const parts = [];
+
+            value.split(/\s+/).forEach(function (token) {
+                splitPhraseToken(token).forEach(function (part) {
+                    parts.push(part);
+                });
+            });
+
+            return { value: value, parts: parts };
+        })
+        .filter(function (phrase) {
+            return phrase.parts.length >= 2;
         });
 }
 
