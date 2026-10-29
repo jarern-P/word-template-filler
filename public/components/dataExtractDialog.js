@@ -710,6 +710,12 @@
                     improved.split('\n').length + ' บรรทัด' +
                     (Number(response.changed) > 0
                         ? ' · แก้คำ ' + response.changed + ' คำ'
+                        : '') +
+                    (Number(response.phrases) > 0
+                        ? ' · ต่อวลี ' + response.phrases + ' จุด'
+                        : '') +
+                    (Number(response.changed) > 0 || Number(response.phrases) > 0
+                        ? ''
                         : ' · ไม่พบคำที่ต้องแก้')
                 );
 

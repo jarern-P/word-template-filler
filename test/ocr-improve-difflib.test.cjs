@@ -112,6 +112,99 @@ test('difflib ใช้คลังคำศัพท์แก้ชื่อส
     ]);
 });
 
+test('difflib แก้ประโยคยาวในคลังคำที่ OCR อ่านผิดหลายคำ', function () {
+    const correct = 'เห็นควรอนุมัติให้เบิกจ่ายได้ตามจำนวนเงินข้างต้น';
+
+    const result = difflibImprove.improveText(
+        'เหนควรอนมตไหเบกจายไดตามจานวนเงนขางตน',
+        {
+            master: [],
+            words: [correct],
+            dictionary: []
+        }
+    );
+
+    assert.strictEqual(result.text, correct);
+    assert.deepStrictEqual(result.replacements, [
+        {
+            from: 'เหนควรอนมตไหเบกจายไดตามจานวนเงนขางตน',
+            to: correct,
+            source: 'wordbank'
+        }
+    ]);
+
+    // ประโยคที่ถูกอยู่แล้วต้องไม่ถูกแก้
+    assert.strictEqual(
+        difflibImprove.improveText(correct, {
+            master: [],
+            words: [correct],
+            dictionary: []
+        }).changed,
+        0
+    );
+});
+
+test('difflib ต่อวลีในคลังคำที่ OCR ตัดข้ามบรรทัด และย้ายข้อความคั่นไปหลังวลี', function () {
+    const result = difflibImprove.improveText(
+        '(โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์\n' +
+        'นางสาวปวีณ์ทิตตา อินราช\n' +
+        'นวัตกรรมและเทคโนโลยี ประจำปีการศึกษา 2/2569)',
+        {
+            master: [],
+            words: [
+                'โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์ นวัตกรรมและเทคโนโลยี'
+            ],
+            dictionary: []
+        }
+    );
+
+    assert.strictEqual(
+        result.text,
+        '(โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์ นวัตกรรมและเทคโนโลยี ' +
+        'นางสาวปวีณ์ทิตตา อินราช ประจำปีการศึกษา 2/2569)'
+    );
+    assert.strictEqual(result.phrases, 1);
+    assert.strictEqual(result.changed, 0);
+});
+
+test('difflib ต่อวลี 3 ส่วนโดยไม่ซ้ำส่วนกลาง', function () {
+    const result = difflibImprove.improveText(
+        '(โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์\n' +
+        'นางสาวปวีณ์ทิตตา อินราช\n' +
+        'นวัตกรรมและเทคโนโลยี ประจำปีการศึกษา 2/2569)',
+        {
+            master: [],
+            words: [
+                'โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์ ' +
+                'นวัตกรรมและเทคโนโลยี ประจำปีการศึกษา 2/2569'
+            ],
+            dictionary: []
+        }
+    );
+
+    assert.strictEqual(
+        result.text,
+        '(โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์ นวัตกรรมและเทคโนโลยี ' +
+        'ประจำปีการศึกษา 2/2569 นางสาวปวีณ์ทิตตา อินราช)'
+    );
+    assert.strictEqual(result.phrases, 1);
+    assert.strictEqual(result.changed, 0);
+});
+
+test('difflib ไม่แตะวลีที่อยู่บรรทัดเดียวกันแล้ว', function () {
+    const input =
+        'โครงการสนับสนุนการพัฒนาทักษะทางวิทยาศาสตร์ นวัตกรรมและเทคโนโลยี';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [input],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.phrases, 0);
+});
+
 test('difflib ไม่แตะวลีในคลังคำศัพท์ที่ถูกอยู่แล้ว', function () {
     const input = 'สาธิตมหาวิทยาลัยทักษิณ ฝ่ายมัธยม';
 

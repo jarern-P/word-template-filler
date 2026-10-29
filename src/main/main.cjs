@@ -2053,6 +2053,7 @@ ipcMain.handle(
                     enabled: 0,
                     total: 0,
                     changed: local.changed,
+                    phrases: local.phrases,
                     replacements: local.replacements
                 };
             }

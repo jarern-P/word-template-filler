@@ -256,8 +256,8 @@ contextBridge.exposeInMainWorld(
         //   difflib = แก้คำในเครื่องจากข้อมูลหลัก + คลังคำ + พจนานุกรม
         // fields = ฟิลด์ของแม่แบบ [{ name, type, placeholder }]
         // ถ้ามีหลาย key จะลองตามลำดับจนกว่าจะสำเร็จ — token ถูกสะสมแยกตาม key
-        // คืน { ok, engine, text, model, chunks, usage: { input, output }, keysUsed, changed }
-        // (changed = จำนวนคำที่ difflib แก้ — ใช้เฉพาะโหมด difflib)
+        // คืน { ok, engine, text, model, chunks, usage: { input, output }, keysUsed, changed, phrases }
+        // (changed = จำนวนคำที่ difflib แก้ / phrases = จำนวนวลีที่ต่อข้ามบรรทัด)
         //
         // นอกจากนี้ยังส่ง context raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
         // ไปพร้อมกับ prompt อัตโนมัติ (ไม่ต้องทำอะไรที่ฝั่ง renderer)

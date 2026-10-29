@@ -27,7 +27,14 @@ const THAI_RUN = /[\u0E00-\u0E7F]+/g;
 const THAI_ONLY = /^[\u0E00-\u0E7F]+$/;
 
 const MIN_WORD_LENGTH = 2;
-const MAX_WORD_LENGTH = 40;
+// รองรับวลี/ประโยคยาวที่ผู้ใช้เก็บในคลังคำ (เดิม 40 ตัวทำให้ประโยคยาว
+// ถูกตัดทิ้งก่อนนำมาเทียบ)
+const MAX_WORD_LENGTH = 120;
+
+// ระยะห่างสูงสุดระหว่างส่วนของวลีที่จะถือว่าเป็นวลีเดียวกัน
+// (OCR อาจแยกวลีข้ามบรรทัดโดยมีข้อความอื่นคั่น)
+const MAX_PHRASE_GAP = 200;
+const MAX_PHRASE_LINES = 3;
 
 // ค่าความคล้ายขั้นต่ำของ difflib (0–1) — สูงเกินไปจะไม่แก้อะไร
 // ต่ำเกินไปจะแทนคำที่ไม่เกี่ยวข้อง
@@ -93,15 +100,19 @@ function loadDictionary() {
 
 // ระยะแก้ไขที่ยอมรับได้ — คำสั้นต้องใกล้มาก คำยาวผ่อนได้เล็กน้อย
 //
-// ข้อมูลหลักและคลังคำเป็นรายการที่ผู้ใช้ตั้งใจเพิ่ม (ชื่อคน/หน่วยงาน/สถานที่)
-// และ OCR มักอ่านชื่อเฉพาะผิดหลายตัวพร้อมกัน เช่น "สตยานริกษ" กับ
-// "สัตยานุรักษ์" (ห่าง 4) หรือ "เสาธตมหาวทยาลัยทักษณ" กับ
-// "สาธิตมหาวิทยาลัยทักษิณ" (ห่าง 4) จึงผ่อนระยะสำหรับคำยาวในสองกลุ่มนี้
+// ข้อมูลหลักและคลังคำเป็นรายการที่ผู้ใช้ตั้งใจเพิ่ม (ชื่อคน/หน่วยงาน/สถานที่/
+// ประโยคที่ใช้บ่อย) และ OCR มักอ่านผิดหลายตัวพร้อมกัน เช่น "สตยานริกษ" กับ
+// "สัตยานุรักษ์" (ห่าง 4) หรือประโยคยาวที่อ่านตกหล่นหลายคำ
+//
+// จึงผ่อนระยะตามความยาว: วลียิ่งยาวยิ่งมีตัวอักษรให้ OCR อ่านผิดได้มาก
+// (แต่ยังต้องผ่าน cutoff ของ difflib และตัวอักษรร่วมขั้นต่ำอีกชั้น)
 function allowedDistance(length, source) {
     if (length <= 3) return 1;
     if (length <= 6) return 2;
-    if ((source === 'master' || source === 'wordbank') && length >= 8) {
-        return 4;
+
+    if (source === 'master' || source === 'wordbank') {
+        if (length >= 20) return Math.ceil(length * 0.4);
+        if (length >= 8) return 4;
     }
 
     return 3;
@@ -264,6 +275,105 @@ function isFullyKnown(word, knownSet) {
     }
 
     return true;
+}
+
+// วลีในคลังคำที่มีหลายคำ (เช่น "โครงการ... นวัตกรรมและเทคโนโลยี")
+function buildPhrases(items) {
+    return (Array.isArray(items) ? items : [])
+        .map(function (item) {
+            return String(item == null ? '' : item)
+                .replace(/\s+/g, ' ')
+                .trim();
+        })
+        .filter(function (value) {
+            return value !== '' && value.split(' ').length >= 2;
+        })
+        .map(function (value) {
+            return { value: value, parts: value.split(' ') };
+        });
+}
+
+// หาตำแหน่งของวลีที่ส่วนต่าง ๆ ปรากฏเรียงกันภายในระยะที่กำหนด
+function findPhraseSpan(text, parts, from) {
+    let first = text.indexOf(parts[0], from);
+
+    while (first !== -1) {
+        let lastEnd = first + parts[0].length;
+        let position = lastEnd;
+        let found = true;
+        // ข้อความระหว่างส่วนของวลี (ไม่รวมตัวส่วนเอง) — ใช้ย้ายไปไว้หลังวลี
+        const gaps = [];
+
+        for (let index = 1; index < parts.length; index++) {
+            const at = text.indexOf(parts[index], position);
+
+            if (at === -1 || at - position > MAX_PHRASE_GAP) {
+                found = false;
+                break;
+            }
+
+            gaps.push(text.slice(position, at));
+
+            lastEnd = at + parts[index].length;
+            position = lastEnd;
+        }
+
+        if (found) {
+            return {
+                start: first,
+                end: lastEnd,
+                gaps: gaps
+            };
+        }
+
+        first = text.indexOf(parts[0], first + 1);
+    }
+
+    return null;
+}
+
+// รวมส่วนของวลีที่ OCR ตัดข้ามบรรทัด โดยเก็บข้อความที่คั่นอยู่
+// ไปไว้หลังวลี (เช่น ชื่อคนที่ OCR อ่านคั่นกลางชื่อโครงการ)
+function reassemblePhrases(text, phrases) {
+    let result = String(text == null ? '' : text);
+    let count = 0;
+
+    phrases.forEach(function (phrase) {
+        let from = 0;
+
+        while (from < result.length) {
+            const span = findPhraseSpan(result, phrase.parts, from);
+
+            if (!span) break;
+
+            const gap = span.gaps.join(' ');
+
+            // วลีที่อยู่บรรทัดเดียวกันอยู่แล้ว = ไม่ต้องทำอะไร
+            // และไม่รวมถ้าข้อความคั่นยาว/หลายบรรทัดเกินไป (อาจคนละส่วนของเอกสาร)
+            if (
+                !gap.includes('\n') ||
+                gap.length > MAX_PHRASE_GAP ||
+                (gap.match(/\n/g) || []).length > MAX_PHRASE_LINES
+            ) {
+                from = span.start + 1;
+                continue;
+            }
+
+            const between = gap.replace(/\s+/g, ' ').trim();
+            const replacement = phrase.value +
+                (between === '' ? '' : ' ' + between);
+
+            result =
+                result.slice(0, span.start) +
+                replacement +
+                result.slice(span.end);
+
+            count += 1;
+            from = span.start + replacement.length;
+        }
+    });
+
+    return { text: result, count: count };
 }
 
 // หาคำที่ใกล้ที่สุดในกลุ่มเดียว — คืน { word, source } หรือ null
@@ -517,9 +627,17 @@ function improveText(text, options) {
 
     parts.push(source.slice(last));
 
+    // ต่อวลีในคลังคำที่ OCR ตัดข้ามบรรทัด (หลังแก้คำแล้ว เพื่อให้ส่วนของวลี
+    // สะกดตรงกับคลังคำ)
+    const reassembled = reassemblePhrases(
+        parts.join(''),
+        buildPhrases(opts.words)
+    );
+
     return {
-        text: parts.join(''),
+        text: reassembled.text,
         changed: replacements.length,
+        phrases: reassembled.count,
         replacements: replacements
     };
 }
@@ -531,6 +649,8 @@ module.exports = {
     parseWords,
     loadDictionary,
     dictionaryPath,
+    buildPhrases,
+    reassemblePhrases,
     allowedDistance,
     hasSingleCharTail,
     isFullyKnown
