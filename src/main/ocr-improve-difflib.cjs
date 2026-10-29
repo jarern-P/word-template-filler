@@ -1008,20 +1008,24 @@ function improveText(text, options) {
                     parts.push(replaceWith(joined, hit));
 
                 } else if (hasNoiseGap) {
-                    // จุดอาจคั่นระหว่างคำเต็มสองคำ (เช่น "เรียน.ผู้อานวยก")
-                    // ถ้าเป็นเพียงสองคำยาว ๆ ให้แก้ทีละคำ — แต่ถ้าเป็นเศษคำ
-                    // ที่ถูกจุดตัดหลายท่อน ให้คงไว้ก่อนเพื่อกันข้อความเพี้ยน
-                    const gaps = (slice.match(/\u0001/g) || []).length;
-                    const twoWords =
-                        cluster.length === 2 &&
-                        gaps === 1 &&
-                        cluster[0].text.length >= 4 &&
-                        cluster[1].text.length >= 4;
+                    // จุดอาจคั่นระหว่างคำเต็ม ๆ (เช่น "เรียน.ผู้อานวยก")
+                    // ถ้าทุกท่อนยาวพอ ให้แก้ทีละคำ — แต่ถ้ามีเศษคำสั้น ๆ
+                    // ที่ถูกจุดตัด ให้คงไว้ก่อนเพื่อกันข้อความเพี้ยน
+                    const allWords = cluster.every(function (item) {
+                        return item.text.length >= 4;
+                    });
+                    // ต้องมีแต่ช่องว่างที่มาจากจุดจริง ๆ — ถ้ามีช่องว่างเดิม
+                    // คั่นอยู่ด้วย แปลว่าอาจเป็นหลายคำในประโยค ไม่แก้ทีละท่อน
+                    const sentinelOnly = !/[ \t]/.test(slice);
 
-                    if (twoWords) {
-                        parts.push(completeWord(cluster[0].text));
-                        parts.push(' ');
-                        parts.push(completeWord(cluster[1].text));
+                    if (allWords && sentinelOnly) {
+                        cluster.forEach(function (item, itemIndex) {
+                            if (itemIndex > 0) {
+                                parts.push(' ');
+                            }
+
+                            parts.push(completeWord(item.text));
+                        });
                     } else {
                         parts.push(slice);
                     }

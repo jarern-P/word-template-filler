@@ -364,6 +364,24 @@ test('difflib ยุบช่องว่างจากจุดเมื่อ
     assert.strictEqual(result.dots, 1);
 });
 
+test('difflib แก้ชื่อที่ถูกจุดคั่นหลายคำ และคงจุดหน้าตัวเลข', function () {
+    const result = difflibImprove.improveText(
+        'จ่ายให้แก่..นายกฤษฎ. พัชรสิทธิ์.(ธนาคารไทยพาณิชย์.จำกัด..มหาชน.4064268953) 0',
+        {
+            master: [],
+            words: ['นายกฤษฎา พัชรสิทธิ์'],
+            dictionary: []
+        }
+    );
+
+    assert.strictEqual(
+        result.text,
+        'จ่ายให้แก่ นายกฤษฎา พัชรสิทธิ์ ' +
+        '(ธนาคารไทยพาณิชย์ จำกัด มหาชน.4064268953) 0'
+    );
+    assert.strictEqual(result.dots, 7);
+});
+
 test('difflib แก้คำที่ OCR อ่านขาดท้ายคำได้ แม้ความคล้ายต่ำกว่า 0.75', function () {
     const result = difflibImprove.improveText('เรียน ผู้อานวยก: โรงเรียน', {
         master: [],
