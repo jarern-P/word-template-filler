@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "test": "node --test test/ocr-two-stage.test.cjs test/ocr-two-stage-lines.test.cjs test/ocr-training.test.cjs test/ocr-improve.test.cjs test/ocr-padding.test.cjs test/privacy-mask.test.cjs",
+    "test": "node --test test/ocr-two-stage.test.cjs test/ocr-two-stage-lines.test.cjs test/ocr-training.test.cjs test/ocr-improve.test.cjs test/ocr-improve-difflib.test.cjs test/ocr-padding.test.cjs test/privacy-mask.test.cjs",
     "test:integration": "node --test test/integration/two-stage-real-pdf.test.cjs test/integration/layout-join-lines-real.test.cjs",
     "electron": "electron .",
     "dev:electron": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && npm run electron\"",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",
     "adm-zip": "^0.6.1",        "better-sqlite3": "^13.0.3",
+    "difflib": "^0.2.4",
         "js-levenshtein": "^1.1.6",
         "onnxruntime-node": "^1.30.0",
     "pdfjs-dist": "^3.11.174",
@@ -45,6 +46,7 @@
     "files": [
       "dist/**/*",
       "src/main/**/*",
+      "dictionary/th_TH.dic",
       "package.json"
     ],
     "asarUnpack": [

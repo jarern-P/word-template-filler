@@ -29,6 +29,9 @@ const ocrTraining =
 const ocrImprove =
     require("./ocr-improve.cjs");
 
+const ocrImproveDifflib =
+    require("./ocr-improve-difflib.cjs");
+
 const privacyMask =
     require("./privacy-mask.cjs");
 
@@ -1825,9 +1828,10 @@ ipcMain.handle(
 // Improve Text (ปรับปรุงข้อความ — ตรวจคำผิด + จัดเป็น Key-Value)
 // ============================================================
 //
-// ปุ่ม "ปรับปรุง" ในกล่องใส่ข้อมูล: ส่งข้อความที่อ่านได้ให้ Gemini
-// เพื่อแก้คำที่ OCR อ่านผิด แล้วจัดใหม่เป็น "ชื่อฟิลด์: ค่า" ทีละบรรทัด
-// ใช้ API key + โมเดลเดียวกับที่บันทึกไว้ในหน้า ตั้งค่า OCR
+// ปุ่ม "ปรับปรุง" ในกล่องใส่ข้อมูล: เลือกวิธีได้ในหน้า ตั้งค่า OCR
+//   - ai      = ส่งให้ Gemini แก้คำที่ OCR อ่านผิด แล้วจัดใหม่เป็น "ชื่อฟิลด์: ค่า"
+//   - difflib = เทียบคำกับข้อมูลหลัก/คลังคำ/พจนานุกรมในเครื่อง (ไม่ส่งออกนอกเครื่อง)
+// ใช้ API key + โมเดลเดียวกับที่บันทึกไว้ในหน้า ตั้งค่า OCR (เฉพาะโหมด ai)
 //
 // นอกจากนี้ยังดึงข้อมูลจากฐานข้อมูล (ข้อมูลหลัก + คลังคำ) มาเป็น raw text
 // ส่งไปพร้อมกับ prompt เพื่อให้ AI มีบริบทเพิ่มเติม
@@ -2010,6 +2014,49 @@ ipcMain.handle(
             // key จริงอยู่ใน main process เท่านั้น
             const saved = ocrConfig.readSecrets(getDataPath());
 
+            // วิธีปรับปรุง: AI (Gemini) หรือ difflib (ในเครื่อง)
+            // difflib ไม่ส่งข้อมูลออกนอกเครื่อง จึงไม่ต้องปกปิดคำเฉพาะ
+            if (saved.improve?.engine === "difflib") {
+
+                const sources = await loadImproveWordSources();
+
+                const local =
+                    ocrImproveDifflib.improveText(
+                        text,
+                        {
+                            master: sources.master,
+                            words: sources.words
+                        }
+                    );
+
+                console.log(
+                    "[ปรับปรุง] difflib.js แก้คำ " +
+                    local.changed + " จุด"
+                );
+
+                return {
+                    ok: true,
+                    engine: "difflib",
+                    text: local.text,
+                    model: "difflib.js",
+                    chunks: 1,
+                    usage: { input: 0, output: 0 },
+                    keysUsed: 0,
+                    // ไม่มีการปกปิดคำเฉพาะ (ไม่มีข้อมูลออกนอกเครื่อง)
+                    masked: 0,
+                    textMasked: local.text,
+                    textCount: 0,
+                    contextCount: 0,
+                    items: [],
+                    unmatched: [],
+                    leftover: [],
+                    enabled: 0,
+                    total: 0,
+                    changed: local.changed,
+                    replacements: local.replacements
+                };
+            }
+
             // ดึง raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
             const contextRawText = await buildContextRawText();
 
@@ -2176,6 +2223,7 @@ ipcMain.handle(
 
             return {
                 ok: true,
+                engine: "ai",
                 ...result,
                 // token ที่ใช้ในรอบนี้ (input/output) และจำนวน key ที่ได้ใช้
                 usage: usageTotals,
@@ -2222,6 +2270,53 @@ ipcMain.handle(
 //
 // ใช้ดึงข้อมูลทั้งหมดจากตาราง master และ words
 // แล้วรวมเป็น raw text เดียว เพื่อส่งให้ AI ใช้เป็นบริบท
+
+// รายการคำสำหรับ difflib: ข้อมูลหลัก + คลังคำศัพท์
+// (แยกเป็นรายการเพื่อให้โมดูล difflib จัดลำดับความสำคัญได้)
+async function loadImproveWordSources() {
+
+    const master = [];
+    const words = [];
+
+    try {
+
+        await dbReady();
+
+        const [masterList, wordList] = await Promise.all([
+            dbRequest("master-list", {}),
+            dbRequest("word-list", {})
+        ]);
+
+        if (masterList && Array.isArray(masterList.result)) {
+            masterList.result.forEach(function (item) {
+                if (!item) return;
+
+                // ชื่อ + กลุ่ม/กลุ่มย่อย — ช่วยแก้ชื่อหน่วยงาน/ประเภทที่ OCR อ่านผิด
+                [item.name, item.code_group, item.sub_group]
+                    .forEach(function (value) {
+                        const text = String(value == null ? "" : value).trim();
+
+                        if (text !== "") master.push(text);
+                    });
+            });
+        }
+
+        if (wordList && Array.isArray(wordList.result)) {
+            wordList.result.forEach(function (item) {
+                const word = String(item && item.word ? item.word : "").trim();
+
+                if (word !== "") words.push(word);
+            });
+        }
+
+    } catch (error) {
+
+        console.error("โหลดรายการคำสำหรับ difflib ไม่สำเร็จ:", error);
+    }
+
+    return { master: master, words: words };
+}
+
 
 async function buildContextRawText() {
     try {

@@ -1,0 +1,173 @@
+// เทสต์การปรับปรุงข้อความด้วย difflib.js — ลำดับความสำคัญของแหล่งคำ
+// การแทนคำที่ OCR อ่านผิด และค่าตั้งว่าจะใช้ AI หรือ difflib
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const difflibImprove = require('../src/main/ocr-improve-difflib.cjs');
+const ocrConfig = require('../src/main/ocr-config.cjs');
+
+function withTempDir(fn) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-difflib-'));
+
+    try {
+        return fn(dir);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+test('difflib ใช้คำจากข้อมูลหลักก่อน แม้คลังคำจะมีคำที่ใกล้กว่า', function () {
+    const result = difflibImprove.improveText('ทดสอป', {
+        master: ['ทดสอบ'],
+        words: ['ทดสอง'],
+        dictionary: ['ทดสอง', 'ทดสอบ'],
+        cutoff: 0.6
+    });
+
+    assert.strictEqual(result.text, 'ทดสอบ');
+    assert.strictEqual(result.changed, 1);
+    assert.deepStrictEqual(result.replacements, [
+        { from: 'ทดสอป', to: 'ทดสอบ', source: 'master' }
+    ]);
+});
+
+test('difflib ใช้คลังคำศัพท์ก่อนพจนานุกรม', function () {
+    const result = difflibImprove.improveText('ทดสอป', {
+        master: [],
+        words: ['ทดสอง'],
+        dictionary: ['ทดสอบ'],
+        cutoff: 0.6
+    });
+
+    assert.strictEqual(result.text, 'ทดสอง');
+    assert.strictEqual(result.replacements[0].source, 'wordbank');
+});
+
+test('difflib ใช้พจนานุกรมเมื่อไม่มีคำในข้อมูลหลัก/คลังคำ', function () {
+    const result = difflibImprove.improveText('ทดสอป', {
+        master: ['อื่น'],
+        words: ['อื่น'],
+        dictionary: ['ทดสอบ'],
+        cutoff: 0.6
+    });
+
+    assert.strictEqual(result.text, 'ทดสอบ');
+    assert.strictEqual(result.replacements[0].source, 'dictionary');
+});
+
+test('difflib แยกชื่อในข้อมูลหลักที่มีหลายคำและแก้เฉพาะคำที่ผิด', function () {
+    const result = difflibImprove.improveText('บริษัท ทดสอป จำกัด', {
+        master: ['บริษัท ทดสอบ จำกัด'],
+        words: [],
+        dictionary: [],
+        cutoff: 0.6
+    });
+
+    assert.strictEqual(result.text, 'บริษัท ทดสอบ จำกัด');
+    assert.strictEqual(result.changed, 1);
+});
+
+test('difflib แก้ชื่อเฉพาะในข้อมูลหลักที่ OCR อ่านผิดหลายตัว', function () {
+    const result = difflibImprove.improveText('นายเชาวรัตน์ สตยานริกษ', {
+        master: ['นายเชาวรัตน์ สัตยานุรักษ์'],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'นายเชาวรัตน์ สัตยานุรักษ์');
+    assert.deepStrictEqual(result.replacements, [
+        { from: 'สตยานริกษ', to: 'สัตยานุรักษ์', source: 'master' }
+    ]);
+});
+
+test('difflib ไม่ตัดท้ายคำย่อที่ขึ้นต้นด้วยคำรู้จัก', function () {
+    const input = 'ว่าที่ร.ต.หญิงพิชามญชุ์ ส่งนาวา';
+
+    const result = difflibImprove.improveText(input, {
+        master: [input],
+        words: [],
+        dictionary: ['ว่าที่']
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.changed, 0);
+});
+
+test('difflib รวมคำที่ OCR เว้นวรรคผิดแล้วแทนทั้งช่วง', function () {
+    const result = difflibImprove.improveText('จา นวนเงนิ 4,000.00 บาท', {
+        master: [],
+        words: ['จำนวนเงิน'],
+        dictionary: [],
+        cutoff: 0.6
+    });
+
+    assert.strictEqual(result.text, 'จำนวนเงิน 4,000.00 บาท');
+    assert.deepStrictEqual(result.replacements, [
+        { from: 'จานวนเงนิ', to: 'จำนวนเงิน', source: 'wordbank' }
+    ]);
+});
+
+test('difflib ไม่แตะคำที่ถูกอยู่แล้ว ตัวเลข และคำที่ไม่ใกล้คำใดเลย', function () {
+    const input = 'จำนวนเงิน 4,000.00 บาท\nกขคง';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [],
+        dictionary: ['จำนวนเงิน', 'บาท']
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.changed, 0);
+    assert.deepStrictEqual(result.replacements, []);
+});
+
+test('difflib อ่านพจนานุกรมกลางจาก dictionary/th_TH.dic', function () {
+    assert.ok(
+        fs.existsSync(difflibImprove.dictionaryPath()),
+        'ต้องมีไฟล์ dictionary/th_TH.dic'
+    );
+
+    assert.ok(difflibImprove.loadDictionary().length > 1000);
+
+    const result = difflibImprove.improveText('เงนิ', {
+        master: [],
+        words: []
+    });
+
+    assert.strictEqual(result.text, 'เงิน');
+});
+
+test('ocr-config ค่าเริ่มต้นใช้ AI และบันทึก/คืนค่า difflib ได้', function () {
+    withTempDir(function (dir) {
+        const initial = ocrConfig.read(dir);
+
+        assert.strictEqual(initial.improve.engine, 'ai');
+
+        const saved = ocrConfig.save(dir, {
+            improve: { engine: 'difflib' }
+        });
+
+        assert.strictEqual(saved.improve.engine, 'difflib');
+        assert.strictEqual(
+            ocrConfig.readSecrets(dir).improve.engine,
+            'difflib'
+        );
+
+        // ไม่ส่ง engine มา = ใช้ค่าเดิม
+        const again = ocrConfig.save(dir, { provider: 'gemini' });
+        assert.strictEqual(again.improve.engine, 'difflib');
+
+        // ค่าที่ไม่รู้จัก = คงค่าเดิมไว้
+        const invalid = ocrConfig.save(dir, {
+            improve: { engine: 'unknown' }
+        });
+
+        assert.strictEqual(invalid.improve.engine, 'difflib');
+    });
+});

@@ -14,6 +14,7 @@
 //     "twoStage": false,             // ตัวเลือกย่อยของ PaddleOCR:
 //                                    // true = Two-Stage Localized OCR
 //     "improve": {
+//       "engine": "ai",             // ai = Gemini | difflib = แก้คำในเครื่อง
 //       "prompt": ""                 // prompt ของปุ่ม "ปรับปรุง" (ว่าง = ค่าเริ่มต้น)
 //     },
 //     "gemini": {
@@ -52,6 +53,10 @@ const CONFIG_FILE = 'ocr-config.json';
 
 const PROVIDERS = ['paddle', 'paddleVL', 'gemini', 'iloveapi'];
 const MODES = ['auto', 'always'];
+
+// วิธีปรับปรุงข้อความ (ปุ่ม "ปรับปรุง")
+// ai = ส่งให้ Gemini | difflib = เทียบคำกับข้อมูลหลัก/คลังคำ/พจนานุกรมในเครื่อง
+const IMPROVE_ENGINES = ['ai', 'difflib'];
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -107,6 +112,7 @@ function defaultConfig() {
         mode: 'auto',
         twoStage: false,
         improve: {
+            engine: 'ai',
             prompt: ''
         },
         gemini: {
@@ -309,6 +315,7 @@ function normalizeRaw(input) {
         mode: mode,
         twoStage: source.twoStage === true,
         improve: {
+            engine: pick(improveInput.engine, IMPROVE_ENGINES, 'ai'),
             prompt: sanitizePrompt(improveInput.prompt)
         },
         gemini: {
@@ -338,6 +345,7 @@ function toPublic(raw) {
         mode: raw.mode,
         twoStage: raw.twoStage,
         improve: {
+            engine: raw.improve.engine,
             prompt: raw.improve.prompt,
             // prompt เริ่มต้นมาพร้อมกัน เพื่อให้หน้าจอแสดง/แก้ไขได้
             defaultPrompt: improve.DEFAULT_PROMPT
@@ -386,6 +394,7 @@ function readSecrets(dataPath) {
         mode: raw.mode,
         twoStage: raw.twoStage,
         improve: {
+            engine: raw.improve.engine,
             prompt: raw.improve.prompt
         },
         gemini: {
@@ -507,6 +516,9 @@ function save(dataPath, payload) {
             ? input.twoStage
             : current.twoStage,
         improve: {
+            engine: improveInput.engine === undefined
+                ? current.improve.engine
+                : pick(improveInput.engine, IMPROVE_ENGINES, current.improve.engine),
             prompt: improveInput.prompt === undefined
                 ? current.improve.prompt
                 : sanitizePrompt(improveInput.prompt)

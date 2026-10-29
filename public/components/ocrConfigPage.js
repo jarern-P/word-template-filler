@@ -202,8 +202,7 @@
 
         '        <p class="hint">',
         '            key และโมเดลชุดนี้ถูกใช้กับปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูลด้วย ',
-        '            (ตรวจคำผิด + จัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด) ',
-        '            และใช้กับ OCR เมื่อเลือกผู้ให้บริการ Gemini',
+        '            (เมื่อเลือกวิธีปรับปรุงเป็น AI) และใช้กับ OCR เมื่อเลือกผู้ให้บริการ Gemini',
         '        </p>',
         '    </section>',
 
@@ -228,15 +227,38 @@
         '        </p>',
         '    </section>',
 
-        // ── ปรับปรุงข้อความด้วย AI (ปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูล) ──
+        // ── ปรับปรุงข้อความ (ปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูล) ──
         '    <section class="suggest-settings" id="ocrImproveSection">',
-        '        <h2>ปรับปรุงข้อความด้วย AI</h2>',
+        '        <h2>ปรับปรุงข้อความ</h2>',
 
         '        <p class="hint">',
-        '            ใช้กับปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูล — ตรวจคำผิดและจัดข้อความเป็น ',
-        '            “ชื่อฟิลด์: ค่า” ทีละบรรทัด ด้วย Gemini (key และโมเดลจากส่วน Gemini API) ',
-        '            ข้อความต้นฉบับจะถูกต่อท้าย prompt นี้ให้อัตโนมัติ',
+        '            ใช้กับปุ่ม “ปรับปรุง” ในกล่องใส่ข้อมูล — เลือกได้ว่าจะใช้ AI ',
+        '            (ตรวจคำผิดและจัดข้อความเป็น “ชื่อฟิลด์: ค่า”) หรือ difflib.js ',
+        '            (แก้คำในเครื่องโดยไม่ส่งข้อมูลออกไป)',
         '        </p>',
+
+        '        <div class="ocr-mode">',
+        '            <span class="ocr-mode-label">วิธีปรับปรุง</span>',
+
+        '            <label class="ocr-choice">',
+        '                <input type="radio" name="ocrImproveEngine" value="ai" id="ocrImproveEngineAi">',
+        '                <span>',
+        '                    <strong>AI (Gemini)</strong>',
+        '                    <small>ตรวจคำผิดและจัดเป็น “ชื่อฟิลด์: ค่า” ด้วย AI — ',
+        '                        ต้องมี API key และต่ออินเทอร์เน็ต (ใช้ key/โมเดลจากส่วน Gemini API)</small>',
+        '                </span>',
+        '            </label>',
+
+        '            <label class="ocr-choice">',
+        '                <input type="radio" name="ocrImproveEngine" value="difflib" id="ocrImproveEngineDifflib">',
+        '                <span>',
+        '                    <strong>difflib.js (ในเครื่อง)</strong>',
+        '                    <small>เทียบคำที่ OCR ได้กับข้อมูลหลัก → คลังคำศัพท์ → พจนานุกรมกลาง ',
+        '                        แล้วแทนด้วยคำที่ใกล้ที่สุด — ไม่ต้องใช้ API key/อินเทอร์เน็ต ',
+        '                        (ไม่จัดข้อความเป็น key-value)</small>',
+        '                </span>',
+        '            </label>',
+        '        </div>',
 
         '        <div class="field">',
         '            <label for="ocrImprovePrompt">Prompt ที่ส่งให้ AI</label>',
@@ -272,7 +294,7 @@
         enabled: true,
         mode: 'auto',
         twoStage: false,
-        improve: { prompt: '', defaultPrompt: '' },
+        improve: { engine: 'ai', prompt: '', defaultPrompt: '' },
         gemini: { model: DEFAULT_GEMINI_MODEL, hasKey: false, keys: [] },
         iloveapi: { hasKey: false }
     };
@@ -539,6 +561,9 @@
             mode: value.mode === 'always' ? 'always' : 'auto',
             twoStage: value.twoStage === true,
             improve: {
+                engine: value.improve && value.improve.engine === 'difflib'
+                    ? 'difflib'
+                    : 'ai',
                 prompt: (value.improve && value.improve.prompt) || '',
                 defaultPrompt: (value.improve && value.improve.defaultPrompt) || ''
             },
@@ -575,14 +600,35 @@
         el('ocrGeminiModel').value = settings.gemini.model;
         el('ocrIloveKey').value = '';
 
+        el('ocrImproveEngineAi').checked = settings.improve.engine !== 'difflib';
+        el('ocrImproveEngineDifflib').checked = settings.improve.engine === 'difflib';
+
         // prompt ที่แก้เอง — ถ้ายังไม่เคยแก้ (= ว่าง) ให้แสดงค่าเริ่มต้นให้เห็นและแก้ได้
         el('ocrImprovePrompt').value =
             settings.improve.prompt || settings.improve.defaultPrompt;
 
         renderGeminiKeys();
         updateKeyHints();
-        updateImprovePromptHint();
+        updateImproveEngineState();
         updateModeState();
+    }
+
+    function selectedImproveEngine() {
+        const checked = document.querySelector(
+            'input[name="ocrImproveEngine"]:checked'
+        );
+
+        return checked && checked.value === 'difflib' ? 'difflib' : 'ai';
+    }
+
+    // prompt ใช้เฉพาะโหมด AI — โหมด difflib ไม่มี prompt
+    function updateImproveEngineState() {
+        const isAi = selectedImproveEngine() === 'ai';
+
+        el('ocrImprovePrompt').disabled = !isAi;
+        el('ocrImproveResetBtn').disabled = !isAi;
+
+        updateImprovePromptHint();
     }
 
     // บอกว่าตอนนี้ใช้ prompt ที่แก้เองหรือค่าเริ่มต้น (+ เตือนให้กดบันทึก)
@@ -591,6 +637,13 @@
         const hint = el('ocrImprovePromptHint');
 
         if (!textarea || !hint) return;
+
+        if (selectedImproveEngine() === 'difflib') {
+            hint.textContent =
+                'difflib.js ไม่ใช้ prompt — จะเทียบคำกับข้อมูลหลัก → คลังคำศัพท์ → ' +
+                'พจนานุกรมกลาง ให้อัตโนมัติ';
+            return;
+        }
 
         const isDefault =
             textarea.value.trim() === settings.improve.defaultPrompt.trim();
@@ -622,6 +675,7 @@
             mode: el('ocrModeAlways').checked ? 'always' : 'auto',
             twoStage: el('ocrTwoStage').checked,
             improve: {
+                engine: selectedImproveEngine(),
                 // แก้กลับเป็นข้อความเริ่มต้น = เก็บเป็นว่าง (ใช้ค่าเริ่มต้นของโปรแกรม)
                 prompt: el('ocrImprovePrompt').value.trim() ===
                     settings.improve.defaultPrompt.trim()
@@ -1115,6 +1169,11 @@
             setStatus('คืนค่า prompt เริ่มต้นแล้ว — กด “บันทึกการตั้งค่า” เพื่อยืนยัน');
         });
         el('ocrImprovePrompt').addEventListener('input', updateImprovePromptHint);
+        document
+            .querySelectorAll('input[name="ocrImproveEngine"]')
+            .forEach(function (radio) {
+                radio.addEventListener('change', updateImproveEngineState);
+            });
         el('ocrGeminiAddKeyBtn').addEventListener('click', addGeminiKeyRow);
         el('ocrGeminiClearBtn').addEventListener('click', function () {
             clearKey('gemini');

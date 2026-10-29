@@ -251,11 +251,13 @@ contextBridge.exposeInMainWorld(
         // Improve Text (ปรับปรุงข้อความ — ตรวจคำผิด + จัดเป็น Key-Value)
         // ─────────────────────────────
 
-        // payload = { text, fields } — ใช้ API key + โมเดลของ Gemini ที่บันทึกไว้ในหน้า ตั้งค่า OCR
+        // payload = { text, fields } — วิธีปรับปรุงเลือกไว้ในหน้า ตั้งค่า OCR
+        //   ai      = ใช้ API key + โมเดลของ Gemini (แนบ fields ตามสวิตช์ในหน้า ตั้งค่าแม่แบบ)
+        //   difflib = แก้คำในเครื่องจากข้อมูลหลัก + คลังคำ + พจนานุกรม
         // fields = ฟิลด์ของแม่แบบ [{ name, type, placeholder }]
-        //          (แนบเป็น key พร้อมชนิด/ตัวอย่างใน prompt ตามสวิตช์ในหน้า ตั้งค่าแม่แบบ)
         // ถ้ามีหลาย key จะลองตามลำดับจนกว่าจะสำเร็จ — token ถูกสะสมแยกตาม key
-        // คืน { ok, text, model, chunks, usage: { input, output }, keysUsed }
+        // คืน { ok, engine, text, model, chunks, usage: { input, output }, keysUsed, changed }
+        // (changed = จำนวนคำที่ difflib แก้ — ใช้เฉพาะโหมด difflib)
         //
         // นอกจากนี้ยังส่ง context raw text จากฐานข้อมูล (ข้อมูลหลัก + คลังคำ)
         // ไปพร้อมกับ prompt อัตโนมัติ (ไม่ต้องทำอะไรที่ฝั่ง renderer)

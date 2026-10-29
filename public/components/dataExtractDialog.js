@@ -60,12 +60,12 @@
         '                      placeholder="วางข้อความที่มีข้อมูลอยู่ที่นี่ หรือกดอัปโหลดไฟล์ .docx / .pdf"></textarea>',
         '            <div class="data-tools">',
         '                <button id="dataPrivacyCheckBtn" type="button" class="plain" title="ตรวจว่าคำ/ตัวเลขส่วนไหนจะถูกแทนด้วยตัวแปรก่อนส่งให้ AI — ใช้รายการจากหน้า คำเฉพาะ และไม่ส่งข้อมูลออกไป">ตรวจคำเฉพาะ</button>',
-        '                <button id="dataImproveBtn" type="button" title="ให้ Gemini ตรวจคำผิดและจัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด (ใช้ API key จาก ตั้งค่า OCR)">ปรับปรุง</button>',
+        '                <button id="dataImproveBtn" type="button" title="ตรวจคำผิดและจัดข้อความเป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด — เลือกใช้ AI หรือ difflib.js ได้ที่หน้า ตั้งค่า OCR">ปรับปรุง</button>',
         '                <button id="dataImproveUndoBtn" type="button" class="plain" hidden>ย้อนกลับ</button>',
         '            </div>',
         '            <p class="hint data-tools-hint">',
         '                ตรวจคำผิดและจัดข้อความใหม่เป็น “ชื่อฟิลด์: ค่า” ทีละบรรทัด ',
-        '                ด้วย Gemini — ใช้ API key และโมเดลจาก ตั้งค่า OCR',
+        '                — เลือกได้ในหน้า ตั้งค่า OCR ว่าจะใช้ AI (Gemini) หรือ difflib.js (ในเครื่อง)',
         '            </p>',
 
         // ── ผลการตรวจคำเฉพาะ (ยังไม่ส่งให้ AI) ──
@@ -600,8 +600,9 @@
         setSourceStatus('ย้อนกลับข้อความก่อนปรับปรุงแล้ว');
     }
 
-    // มี key ของ Gemini เก็บไว้แล้วหรือยัง (key จริงอยู่ใน main process)
-    async function geminiReady() {
+    // วิธีปรับปรุงที่เลือกไว้ในหน้า ตั้งค่า OCR + ว่ามี key ของ Gemini แล้วหรือยัง
+    // (key จริงอยู่ใน main process)
+    async function improveConfig() {
         try {
             const response =
                 window.electronAPI && window.electronAPI.ocrGetConfig
@@ -612,11 +613,16 @@
                 ? response.config
                 : response;
 
-            return Boolean(config && config.gemini && config.gemini.hasKey);
+            return {
+                engine: config && config.improve && config.improve.engine === 'difflib'
+                    ? 'difflib'
+                    : 'ai',
+                hasKey: Boolean(config && config.gemini && config.gemini.hasKey)
+            };
 
         } catch (error) {
             // ตรวจไม่ได้ = ปล่อยให้ main process เป็นผู้แจ้ง error
-            return true;
+            return { engine: 'ai', hasKey: true };
         }
     }
 
@@ -636,7 +642,7 @@
 
         if (!window.electronAPI || !window.electronAPI.ocrImproveText) {
             await scope.AppDialog.alert(
-                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ AI ปรับปรุงข้อความ'
+                'เปิดหน้านี้ในแอป (Electron) เพื่อใช้ปรับปรุงข้อความ'
             );
             return;
         }
@@ -647,15 +653,22 @@
         hideResults();
 
         try {
-            if (!(await geminiReady())) {
+            const improve = await improveConfig();
+
+            if (improve.engine === 'ai' && !improve.hasKey) {
                 await scope.AppDialog.alert(
                     'ยังไม่ได้ใส่ API key ของ Gemini\n\n' +
-                    'ไปที่ ตั้งค่า OCR › Gemini API แล้วบันทึก key ก่อน'
+                    'ไปที่ ตั้งค่า OCR › Gemini API แล้วบันทึก key ก่อน ' +
+                    'หรือเลือกวิธีปรับปรุงเป็น difflib.js (ในเครื่อง)'
                 );
                 return;
             }
 
-            setSourceStatus('กำลังให้ AI ตรวจคำผิดและจัดเป็น key-value...');
+            setSourceStatus(
+                improve.engine === 'difflib'
+                    ? 'กำลังปรับปรุงข้อความด้วย difflib.js...'
+                    : 'กำลังให้ AI ตรวจคำผิดและจัดเป็น key-value...'
+            );
 
             const response = await window.electronAPI.ocrImproveText({
                 text: original,
@@ -673,7 +686,11 @@
             const improved = String(response.text || '');
 
             if (improved.trim() === '') {
-                throw new Error('AI ไม่ได้ส่งข้อความกลับมา');
+                throw new Error(
+                    improve.engine === 'difflib'
+                        ? 'difflib.js ไม่ได้ส่งข้อความกลับมา'
+                        : 'AI ไม่ได้ส่งข้อความกลับมา'
+                );
             }
 
             improveUndo = original;
@@ -683,6 +700,21 @@
             updateImproveState();
 
             hideResults();
+
+            if (improve.engine === 'difflib') {
+                // ไม่มีข้อมูลออกนอกเครื่อง จึงไม่มีคำเฉพาะที่ถูกปกปิด
+                hidePrivacyResult();
+
+                setSourceStatus(
+                    'ปรับปรุงด้วย difflib.js แล้ว · ' +
+                    improved.split('\n').length + ' บรรทัด' +
+                    (Number(response.changed) > 0
+                        ? ' · แก้คำ ' + response.changed + ' คำ'
+                        : ' · ไม่พบคำที่ต้องแก้')
+                );
+
+                return;
+            }
 
             // แสดงว่าข้อมูลชุดนี้ถูกปกปิดอะไรก่อนส่งจริง (ตรวจจนจบขั้นตอน)
             renderPrivacyResult({
