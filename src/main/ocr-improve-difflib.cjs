@@ -24,6 +24,7 @@ const difflib = require('difflib');
 const levenshtein = require('js-levenshtein');
 
 const THAI_RUN = /[\u0E00-\u0E7F]+/g;
+const THAI_ONLY = /^[\u0E00-\u0E7F]+$/;
 
 const MIN_WORD_LENGTH = 2;
 const MAX_WORD_LENGTH = 40;
@@ -92,13 +93,16 @@ function loadDictionary() {
 
 // ระยะแก้ไขที่ยอมรับได้ — คำสั้นต้องใกล้มาก คำยาวผ่อนได้เล็กน้อย
 //
-// ข้อมูลหลักเป็นรายการที่ผู้ใช้ตั้งใจเพิ่ม (ชื่อคน/หน่วยงาน) และ OCR มักอ่าน
-// ชื่อเฉพาะผิดหลายตัวพร้อมกัน เช่น "สตยานริกษ" กับ "สัตยานุรักษ์" (ห่าง 4)
-// จึงผ่อนระยะสำหรับคำยาวในกลุ่ม master มากกว่ากลุ่มอื่น
+// ข้อมูลหลักและคลังคำเป็นรายการที่ผู้ใช้ตั้งใจเพิ่ม (ชื่อคน/หน่วยงาน/สถานที่)
+// และ OCR มักอ่านชื่อเฉพาะผิดหลายตัวพร้อมกัน เช่น "สตยานริกษ" กับ
+// "สัตยานุรักษ์" (ห่าง 4) หรือ "เสาธตมหาวทยาลัยทักษณ" กับ
+// "สาธิตมหาวิทยาลัยทักษิณ" (ห่าง 4) จึงผ่อนระยะสำหรับคำยาวในสองกลุ่มนี้
 function allowedDistance(length, source) {
     if (length <= 3) return 1;
     if (length <= 6) return 2;
-    if (source === 'master' && length >= 8) return 4;
+    if ((source === 'master' || source === 'wordbank') && length >= 8) {
+        return 4;
+    }
 
     return 3;
 }
@@ -150,9 +154,10 @@ function toWords(value, split) {
         return text;
     }).filter(Boolean).reduce(function (words, text) {
         // ชื่อในข้อมูลหลักอาจมีหลายคำ (เช่น "บริษัท ทดสอบ จำกัด")
+        // หรือมีวงเล็บ/จุด (เช่น "นักวิชาการ (ที่ปรึกษา)" / "ผศ.สุนิสา")
         // จึงแยกเป็นคำย่อยเพื่อเทียบกับคำที่ OCR ได้
         const parts = split
-            ? text.split(/[\s,;/|]+/)
+            ? text.split(/[\s,;/|().]+/)
             : [text];
 
         parts.forEach(function (part) {
@@ -189,7 +194,8 @@ function buildGroup(source, items, split) {
 
     return {
         source: source,
-        byLength: byLength
+        byLength: byLength,
+        set: seen
     };
 }
 
@@ -260,13 +266,63 @@ function isFullyKnown(word, knownSet) {
     return true;
 }
 
+// หาคำที่ใกล้ที่สุดในกลุ่มเดียว — คืน { word, source } หรือ null
+// lengthTolerance = ความยาวต่างได้กี่ตัว (ไม่ส่ง = ตามระยะแก้ไขของกลุ่ม)
+function matchInGroup(token, group, cutoff, counts, lengthTolerance) {
+    const limit = allowedDistance(token.length, group.source);
+    const minCommon = token.length - limit;
+    const range = lengthTolerance === undefined
+        ? limit
+        : Math.min(limit, lengthTolerance);
+
+    const candidates = candidatesOf(group, token.length, range)
+        .filter(function (candidate) {
+            // คำที่แทนได้ต้องเป็นอักษรไทยล้วน — กันคำในพจนานุกรมที่มีจุด
+            // (เช่น "ผศ.") ถูกเติมเข้าท้ายคำที่ OCR อ่านได้
+            if (!THAI_ONLY.test(candidate)) return false;
+            if (commonChars(counts, candidate) < minCommon) return false;
+
+            // กันการแทนคำที่ถูกอยู่แล้วด้วยคำอื่นที่ความคล้ายสูงแต่ห่างหลายตัว
+            return levenshtein(token, candidate) <= limit;
+        });
+
+    if (candidates.length === 0) return null;
+
+    // ตัวอักษรชุดเดียวกัน = คำเดียวกันที่ถูกสลับที่ — ใช้ก่อนเสมอ
+    if (token.length >= 4) {
+        const anagram = candidates.find(function (candidate) {
+            return sameCharacters(token, candidate);
+        });
+
+        if (anagram) {
+            return {
+                word: anagram,
+                source: group.source
+            };
+        }
+    }
+
+    // cutoff เฉพาะกลุ่ม (ถ้าผู้เรียกกำหนดมา ใช้ค่านั้นทุกกลุ่ม)
+    const limitRatio = cutoff === null
+        ? (GROUP_CUTOFFS[group.source] || DEFAULT_CUTOFF)
+        : cutoff;
+
+    const matches = difflib.getCloseMatches(
+        token,
+        candidates,
+        MATCH_LIMIT,
+        limitRatio
+    );
+
+    return matches.length > 0
+        ? { word: matches[0], source: group.source }
+        : null;
+}
+
 // หาคำที่ใกล้ที่สุดจากกลุ่มตามลำดับความสำคัญ
 // คืน { word, source } หรือ null
-function correctToken(token, groups, knownSet, cutoff) {
+function correctToken(token, groups, knownSet, cutoff, lengthTolerance) {
     if (knownSet.has(token)) return null;
-
-    // คำที่ตัดเป็นคำในรายการได้ครบ = ไม่ใช่คำผิด
-    if (isFullyKnown(token, knownSet)) return null;
 
     // คำย่อ/คำผสมที่ขึ้นต้นด้วยคำรู้จักแล้วมีท้าย 1 ตัว = ปล่อยไว้
     if (hasSingleCharTail(token, knownSet)) return null;
@@ -278,51 +334,25 @@ function correctToken(token, groups, knownSet, cutoff) {
 
         if (groupSize(group) === 0) continue;
 
-        const limit = allowedDistance(token.length, group.source);
-        const minCommon = token.length - limit;
-
-        const candidates = candidatesOf(group, token.length, limit)
-            .filter(function (candidate) {
-                if (commonChars(counts, candidate) < minCommon) return false;
-
-                // กันการแทนคำที่ถูกอยู่แล้วด้วยคำอื่นที่ความคล้ายสูงแต่ห่างหลายตัว
-                return levenshtein(token, candidate) <= limit;
-            });
-
-        if (candidates.length === 0) continue;
-
-        // ตัวอักษรชุดเดียวกัน = คำเดียวกันที่ถูกสลับที่ — ใช้ก่อนเสมอ
-        if (token.length >= 4) {
-            const anagram = candidates.find(function (candidate) {
-                return sameCharacters(token, candidate);
-            });
-
-            if (anagram) {
-                return {
-                    word: anagram,
-                    source: group.source
-                };
-            }
+        // พจนานุกรมอย่างเดียว: คำที่ตัดเป็นคำในพจนานุกรมได้ครบ = ไม่ใช่คำผิด
+        // (ข้อมูลหลัก/คลังคำเป็นรายการที่ผู้ใช้ตั้งใจเพิ่ม จึงเทียบก่อนเสมอ
+        //  แม้คำนั้นจะบังเอิญตัดเป็นคำในพจนานุกรมได้)
+        if (
+            group.source === 'dictionary' &&
+            isFullyKnown(token, group.set)
+        ) {
+            return null;
         }
 
-        // cutoff เฉพาะกลุ่ม (ถ้าผู้เรียกกำหนดมา ใช้ค่านั้นทุกกลุ่ม)
-        const limitRatio = cutoff === null
-            ? (GROUP_CUTOFFS[group.source] || DEFAULT_CUTOFF)
-            : cutoff;
-
-        const matches = difflib.getCloseMatches(
+        const hit = matchInGroup(
             token,
-            candidates,
-            MATCH_LIMIT,
-            limitRatio
+            group,
+            cutoff,
+            counts,
+            lengthTolerance
         );
 
-        if (matches.length > 0) {
-            return {
-                word: matches[0],
-                source: group.source
-            };
-        }
+        if (hit) return hit;
     }
 
     return null;
@@ -447,15 +477,16 @@ function improveText(text, options) {
             }).join('');
 
             // ทั้งช่วงเป็นคำที่รู้จักอยู่แล้ว = คงการเว้นวรรคเดิมไว้
-            if (
-                knownSet.has(joined) ||
-                isFullyKnown(joined, knownSet)
-            ) {
+            // (คำที่เพียง "ตัดเป็นคำได้" ยังต้องให้ correctToken ตรวจ
+            //  ข้อมูลหลัก/คลังคำก่อน เพราะอาจเป็นคำที่ผู้ใช้ตั้งไว้)
+            if (knownSet.has(joined)) {
                 parts.push(source.slice(start, end));
 
             } else {
+                // ช่วงที่รวมหลายคำเข้าด้วยกันจะแทนได้เฉพาะคำที่ความยาวใกล้เคียง
+                // (กันการแทนทั้งชื่อด้วยคำสั้นกว่า เช่น ตัดนามสกุลทิ้ง)
                 const hit = joined.length <= MAX_WORD_LENGTH
-                    ? correctToken(joined, groups, knownSet, cutoff)
+                    ? correctToken(joined, groups, knownSet, cutoff, 1)
                     : null;
 
                 if (hit) {
@@ -501,5 +532,6 @@ module.exports = {
     loadDictionary,
     dictionaryPath,
     allowedDistance,
-    hasSingleCharTail
+    hasSingleCharTail,
+    isFullyKnown
 };

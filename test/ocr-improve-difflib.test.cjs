@@ -86,6 +86,74 @@ test('difflib แก้ชื่อเฉพาะในข้อมูลหล
     ]);
 });
 
+test('difflib ใช้คลังคำศัพท์แก้ชื่อสถานที่ที่ OCR อ่านผิดทั้งวลี', function () {
+    const result = difflibImprove.improveText('เสาธตมหาวทยาลัยทักษณ ฝายมัธยม', {
+        master: [],
+        words: ['สาธิตมหาวิทยาลัยทักษิณ ฝ่ายมัธยม'],
+        // "ฝายมัธยม" ตัดเป็นคำในพจนานุกรมได้ แต่คลังคำต้องมาก่อน
+        dictionary: ['ฝาย', 'มัธยม']
+    });
+
+    assert.strictEqual(
+        result.text,
+        'สาธิตมหาวิทยาลัยทักษิณ ฝ่ายมัธยม'
+    );
+    assert.deepStrictEqual(result.replacements, [
+        {
+            from: 'เสาธตมหาวทยาลัยทักษณ',
+            to: 'สาธิตมหาวิทยาลัยทักษิณ',
+            source: 'wordbank'
+        },
+        {
+            from: 'ฝายมัธยม',
+            to: 'ฝ่ายมัธยม',
+            source: 'wordbank'
+        }
+    ]);
+});
+
+test('difflib ไม่แตะวลีในคลังคำศัพท์ที่ถูกอยู่แล้ว', function () {
+    const input = 'สาธิตมหาวิทยาลัยทักษิณ ฝ่ายมัธยม';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [input],
+        dictionary: ['ฝาย', 'มัธยม']
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.changed, 0);
+});
+
+test('difflib ไม่แตะชื่อในข้อมูลหลักที่มีวงเล็บหรือจุด', function () {
+    const names = [
+        'นักวิชาการ (ที่ปรึกษาหอพักหญิง)',
+        'ผศ.สุนิสา คงประสิทธิ์'
+    ];
+
+    names.forEach(function (name) {
+        const result = difflibImprove.improveText(name, {
+            master: names,
+            words: [],
+            dictionary: ['ผศ.']
+        });
+
+        assert.strictEqual(result.text, name);
+        assert.strictEqual(result.changed, 0);
+    });
+});
+
+test('difflib ไม่เติมจุดจากคำในพจนานุกรมเข้าท้ายคำไทย', function () {
+    const result = difflibImprove.improveText('ผศ.สุนิสา', {
+        master: [],
+        words: [],
+        dictionary: ['ผศ.']
+    });
+
+    assert.strictEqual(result.text, 'ผศ.สุนิสา');
+    assert.strictEqual(result.changed, 0);
+});
+
 test('difflib ไม่ตัดท้ายคำย่อที่ขึ้นต้นด้วยคำรู้จัก', function () {
     const input = 'ว่าที่ร.ต.หญิงพิชามญชุ์ ส่งนาวา';
 
