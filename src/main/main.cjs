@@ -2031,7 +2031,8 @@ ipcMain.handle(
 
                 console.log(
                     "[ปรับปรุง] difflib.js แก้คำ " +
-                    local.changed + " จุด"
+                    local.changed + " จุด" +
+                    " · แทนจุดด้วยช่องว่าง " + local.dots + " จุด"
                 );
 
                 return {
@@ -2053,6 +2054,7 @@ ipcMain.handle(
                     enabled: 0,
                     total: 0,
                     changed: local.changed,
+                    dots: local.dots,
                     phrases: local.phrases,
                     replacements: local.replacements
                 };

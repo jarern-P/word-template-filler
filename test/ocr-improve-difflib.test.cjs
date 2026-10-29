@@ -260,6 +260,157 @@ test('difflib ไม่ตัดท้ายคำย่อที่ขึ้น
     assert.strictEqual(result.changed, 0);
 });
 
+test('difflib แทนจุดที่ OCR ใส่คั่นกลางคำด้วยช่องว่างก่อนเทียบ', function () {
+    const result = difflibImprove.improveText('เห.นควรอนุมัติ', {
+        master: [],
+        words: ['เห็นควรอนุมัติ'],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'เห็นควรอนุมัติ');
+    assert.strictEqual(result.dots, 1);
+    // แทนจุดด้วยช่องว่างแล้ว difflib ยังรวมช่วงที่คั่นด้วยช่องว่างเดียว
+    // แล้วแก้เป็นคำเต็มได้
+    assert.deepStrictEqual(result.replacements, [
+        {
+            from: 'เหนควรอนุมัติ',
+            to: 'เห็นควรอนุมัติ',
+            source: 'wordbank'
+        }
+    ]);
+});
+
+test('difflib คงจุดในตัวเลขและคำย่อที่มีในระบบ', function () {
+    const input = 'ผศ.สุนิสา รับเงิน 4,000.00 บาท';
+
+    const result = difflibImprove.improveText(input, {
+        master: ['ผศ.สุนิสา'],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.dots, 0);
+});
+
+test('difflib ไม่รักษาจุดที่ไปจับคำย่อข้ามคำ', function () {
+    const result = difflibImprove.improveText('สาธิตม.หาวิทยาลัย', {
+        master: [],
+        words: [],
+        dictionary: ['ตม.']
+    });
+
+    // จุดถูกแทนด้วยช่องว่าง (difflib ไม่มีคำเต็มให้แทนที่ในเคสนี้)
+    assert.strictEqual(result.text, 'สาธิตม หาวิทยาลัย');
+    assert.strictEqual(result.dots, 1);
+});
+
+test('difflib แทนจุดติดกันหลายตัวด้วยช่องว่างเดียว', function () {
+    const result = difflibImprove.improveText('ทดสอบ...ผ่าน..แล้ว', {
+        master: [],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'ทดสอบ ผ่าน แล้ว');
+    assert.strictEqual(result.dots, 5);
+});
+
+test('difflib รวมจุดซ้ำที่ OCR ใส่ซ้อนกัน', function () {
+    const result = difflibImprove.improveText('ม..ทักษิณ', {
+        master: [],
+        words: ['ม.ทักษิณ'],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'ม.ทักษิณ');
+    assert.strictEqual(result.dots, 1);
+});
+
+test('difflib คงจุดในคำย่อมาตรฐานที่ไม่มีในพจนานุกรม', function () {
+    const input = 'วันที่ 1 ม.ค. 2569 และ พ.ศ. 2569';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.dots, 0);
+});
+
+test('difflib คงจุดในคำย่ออักษรเดียวเมื่ออยู่ต้นคำ', function () {
+    const input = 'ม.ทักษิณ';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [input],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.dots, 0);
+});
+
+test('difflib ยุบช่องว่างจากจุดเมื่อรวมแล้วเป็นคำที่รู้จัก', function () {
+    const result = difflibImprove.improveText('สาธิ.ตมหาวิทยาลัย', {
+        master: [],
+        words: ['สาธิตมหาวิทยาลัย'],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'สาธิตมหาวิทยาลัย');
+    assert.strictEqual(result.dots, 1);
+});
+
+test('difflib แก้คำที่ OCR อ่านขาดท้ายคำได้ แม้ความคล้ายต่ำกว่า 0.75', function () {
+    const result = difflibImprove.improveText('เรียน ผู้อานวยก: โรงเรียน', {
+        master: [],
+        words: ['ผู้อำนวยการ'],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'เรียน ผู้อำนวยการ: โรงเรียน');
+    assert.strictEqual(result.changed, 1);
+});
+
+test('difflib แก้คำที่ถูกจุดคั่นระหว่างคำโดยไม่ทำคำข้างเคียงเพี้ยน', function () {
+    const result = difflibImprove.improveText('เรียน.ผูอานวยก: โรงเรียน', {
+        master: [],
+        words: ['ผู้อำนวยการ'],
+        // "เรียน" ใกล้ "เกรียน" แต่ต้องไม่ถูกแก้ เพราะไม่ใช่การเติมท้ายคำ
+        dictionary: ['เกรียน']
+    });
+
+    assert.strictEqual(result.text, 'เรียน ผู้อำนวยการ: โรงเรียน');
+    assert.strictEqual(result.dots, 1);
+});
+
+test('difflib แทนจุดที่มีช่องว่างรอบข้างด้วยช่องว่างเดียว', function () {
+    const result = difflibImprove.improveText('จำนวน . เงิน', {
+        master: [],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'จำนวน เงิน');
+    assert.strictEqual(result.dots, 1);
+});
+
+test('difflib ไม่แตะจุดในข้อความภาษาอังกฤษ', function () {
+    const input = 'Mr. Abel Arama Hitler';
+
+    const result = difflibImprove.improveText(input, {
+        master: [input],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.dots, 0);
+});
+
 test('difflib รวมคำที่ OCR เว้นวรรคผิดแล้วแทนทั้งช่วง', function () {
     const result = difflibImprove.improveText('จา นวนเงนิ 4,000.00 บาท', {
         master: [],

@@ -26,10 +26,25 @@ const levenshtein = require('js-levenshtein');
 const THAI_RUN = /[\u0E00-\u0E7F]+/g;
 const THAI_ONLY = /^[\u0E00-\u0E7F]+$/;
 
+// ตัวคั่นชั่วคราวสำหรับจุดที่ถูกแทนด้วยช่องว่าง — ทำให้ difflib รู้ว่า
+// ช่องว่างนี้มาจากจุด ไม่ใช่ช่องว่างเดิม และค่อยแปลงเป็น ' ' ตอนจบ
+const NOISE_GAP = '\u0001';
+
 const MIN_WORD_LENGTH = 2;
 // รองรับวลี/ประโยคยาวที่ผู้ใช้เก็บในคลังคำ (เดิม 40 ตัวทำให้ประโยคยาว
 // ถูกตัดทิ้งก่อนนำมาเทียบ)
 const MAX_WORD_LENGTH = 120;
+
+// คำย่อมาตรฐานที่ใช้บ่อยแต่ไม่มีในพจนานุกรมกลาง — คงจุดไว้
+// (เพิ่มไว้เป็นค่าเริ่มต้นของระบบ ไม่ต้องให้ผู้ใช้เพิ่มในคลังคำเอง)
+const STANDARD_ABBREVIATIONS = [
+    'พ.ศ.', 'ร.ศ.', 'ค.ศ.',
+    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.',
+    'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+    'ร.ต.อ.', 'ร.ต.ท.', 'ร.ต.ต.',
+    'พล.ต.', 'พล.ท.', 'พล.อ.', 'พล.ต.อ.', 'พล.ต.ท.', 'พล.ต.ต.',
+    'มม.', 'ตร.ม.', 'ตร.กม.', 'ลบ.ม.', 'รศ.'
+];
 
 // ระยะห่างสูงสุดระหว่างส่วนของวลีที่จะถือว่าเป็นวลีเดียวกัน
 // (OCR อาจแยกวลีข้ามบรรทัดโดยมีข้อความอื่นคั่น)
@@ -42,8 +57,10 @@ const MAX_PHRASE_LINES = 3;
 // ความใกล้ถูกกรองด้วยระยะแก้ไข (allowedDistance) อีกชั้นหนึ่ง
 // คำที่ถูกอยู่แล้วแต่ไม่มีในพจนานุกรมจะไม่ถูกแก้ เพราะระยะห่างเกินกำหนด
 const GROUP_CUTOFFS = {
-    master: 0.75,
-    wordbank: 0.75,
+    // ข้อมูลที่ผู้ใช้ตั้งไว้ผ่อนกว่าเล็กน้อย — OCR อาจตัดท้ายคำหาย
+    // เช่น "ผูอานวยก" กับ "ผู้อำนวยการ" (ความคล้าย ~0.73)
+    master: 0.7,
+    wordbank: 0.7,
     dictionary: 0.75
 };
 
@@ -96,6 +113,361 @@ function loadDictionary() {
     }
 
     return dictionaryCache;
+}
+
+// ── แทนจุดรบกวนที่ OCR ใส่ในคำไทยด้วยช่องว่าง ──
+//
+// OCR มักใส่จุดคั่นกลางคำ (เช่น "เห.นควรอนุมัติ") ทำให้คำไทยถูกแยกเป็น
+// หลายช่วงและ difflib เทียบข้ามจุดไม่ได้ จึงแทนจุดเหล่านั้นด้วยช่องว่าง
+// หนึ่งช่องก่อนเทียบ (จุดติดกันกี่ตัวก็เหลือช่องว่างเดียว)
+// โดยคงจุดที่จำเป็นไว้ 2 กรณี
+//   1) จุดที่เกี่ยวกับตัวเลข (4,000.00 / 2.5)
+//   2) จุดในคำย่อที่มีอยู่ในระบบ (ข้อมูลหลัก/คลังคำ/พจนานุกรม
+//      และคำย่อมาตรฐาน เช่น พ.ศ. / ม.ค. / ร.ต.อ.)
+// จุดซ้ำที่ OCR ใส่ซ้อนกัน (.. / . .) เหลือจุดเดียว
+// จุดในข้อความภาษาอังกฤษ (Mr. / example.com) ไม่ถูกแตะ เพราะไม่มี
+// ตัวอักษรไทยอยู่ข้างเคียง
+
+function abbreviationLetters(value) {
+    const text = String(value == null ? '' : value);
+
+    return (text.match(/[\u0E00-\u0E7F]/g) || []).length +
+        (text.match(/[A-Za-z]/g) || []).length;
+}
+
+// คำย่อที่ติดอยู่ในชื่อ เช่น "ผศ.สุนิสา" / "ว่าที่ร.ต.หญิง" / "ม.ทักษิณ"
+// จับกลุ่มอักษรไทยสั้น ๆ ที่คั่นด้วยจุด
+function abbreviationsFromItems(items) {
+    const found = new Set();
+
+    (Array.isArray(items) ? items : []).forEach(function (item) {
+        const text = String(item == null ? '' : item).trim();
+
+        if (!text.includes('.')) return;
+
+        // "Mr." ที่แยกเป็นคำเดี่ยว
+        text.split(/\s+/).forEach(function (part) {
+            if (/^[A-Za-z]{1,5}\.$/.test(part)) {
+                found.add(part);
+            }
+        });
+
+        const pattern = new RegExp(
+            '[\\u0E00-\\u0E7F]{1,4}(?:\\.[\\u0E00-\\u0E7F]{1,4})*\\.',
+            'g'
+        );
+        let match;
+
+        while ((match = pattern.exec(text)) !== null) {
+            found.add(match[0]);
+
+            // เพิ่มส่วนท้าย เช่น "ที่ร.ต." → "ร.ต." เพราะคำย่อจริง
+            // อาจอยู่ติดกับคำนำหน้าโดยไม่มีเครื่องหมายคั่น
+            for (let offset = 1; offset < match[0].length; offset++) {
+                const suffix = match[0].slice(offset);
+
+                if (
+                    /^[\u0E00-\u0E7F]{1,4}(?:\.[\u0E00-\u0E7F]{1,4})*\.$/
+                        .test(suffix)
+                ) {
+                    found.add(suffix);
+                }
+            }
+        }
+    });
+
+    return found;
+}
+
+// รวมคำย่อจากทุกกลุ่มที่ระบบใช้เทียบคำ
+function buildAbbreviations(master, words, dictionary) {
+    const found = new Set();
+
+    abbreviationsFromItems(master).forEach(function (value) {
+        found.add(value);
+    });
+
+    abbreviationsFromItems(words).forEach(function (value) {
+        found.add(value);
+    });
+
+    // คำในพจนานุกรมที่มีจุดคือคำย่ออยู่แล้ว (ผศ. / น.ส. / ดร.)
+    (Array.isArray(dictionary) ? dictionary : []).forEach(function (item) {
+        const text = String(item == null ? '' : item).trim();
+
+        if (text.includes('.')) {
+            found.add(text);
+        }
+    });
+
+    STANDARD_ABBREVIATIONS.forEach(function (value) {
+        found.add(value);
+    });
+
+    return found;
+}
+
+// คำย่อจากพจนานุกรมที่ไม่มีในข้อมูลหลัก/คลังคำ — ต้องอยู่ต้นคำเท่านั้น
+// (กันคำย่อสั้น ๆ ไปจับข้ามคำ เช่น "สาธิตม." → "ตม.")
+function buildBoundaryRequired(master, words, dictionary) {
+    const userWords = new Set();
+
+    abbreviationsFromItems(master).forEach(function (value) {
+        userWords.add(value);
+    });
+
+    abbreviationsFromItems(words).forEach(function (value) {
+        userWords.add(value);
+    });
+
+    const strict = new Set();
+
+    (Array.isArray(dictionary) ? dictionary : []).forEach(function (item) {
+        const text = String(item == null ? '' : item).trim();
+
+        if (text.includes('.') && !userWords.has(text)) {
+            strict.add(text);
+        }
+    });
+
+    return strict;
+}
+
+// ตัวอักษรที่ขึ้นต้นคำใหม่ได้ — ใช้ตัดสินว่าจุดเป็นจุดท้ายคำย่อ
+// หรือเป็นจุดที่ OCR ใส่กลางคำ (ถ้าตามด้วยสระ/วรรณยุกต์ = อยู่กลางคำ)
+function startsNewToken(char) {
+    if (!char) return true;
+    if (!/[\u0E00-\u0E7F]/.test(char)) return true;
+
+    return /[\u0E01-\u0E2E\u0E40-\u0E44]/.test(char);
+}
+
+/**
+ * แทนจุดที่ OCR ใส่เกินในข้อความไทยด้วยช่องว่างเดียว
+ * โดยคงจุดของตัวเลขและคำย่อในระบบ
+ *
+ * @param {string} text
+ * @param {Iterable<string>} abbreviations คำย่อที่ต้องคงจุดไว้
+ * @param {Iterable<string>} [boundaryRequired] คำย่อที่ต้องอยู่ต้นคำ
+ * @returns {{text: string, removed: number}} text ใช้ NOISE_GAP แทนช่องว่าง
+ *   ที่มาจากจุด (improveText แปลงเป็น ' ' ตอนจบ)
+ */
+function replaceNoisePeriods(text, abbreviations, boundaryRequired) {
+    const original = String(text == null ? '' : text);
+    const known = abbreviations instanceof Set
+        ? abbreviations
+        : new Set(Array.isArray(abbreviations) ? abbreviations : []);
+    const needsBoundary = boundaryRequired instanceof Set
+        ? boundaryRequired
+        : new Set(
+            Array.isArray(boundaryRequired) ? boundaryRequired : []
+        );
+
+    if (!original.includes('.')) {
+        return { text: original, removed: 0 };
+    }
+
+    // จุดซ้ำจาก OCR (".." หรือ ". .") เหลือจุดเดียว
+    const source = original.replace(
+        /[ \t]*\.[ \t]*(?:\.[ \t]*)+/g,
+        '.'
+    );
+
+    // จำนวนจุดที่ถูกแทน (นับจุดซ้ำที่ยุบไปด้วย)
+    const collapsedDots =
+        (original.match(/\./g) || []).length -
+        (source.match(/\./g) || []).length;
+
+    // คำย่อที่ลงท้ายด้วยจุดนี้ (เช่น ผศ. / น.ส. / ร.ต. / Mr.)
+    function abbreviationEndingAt(index) {
+        // หลังจุดต้องเป็นต้นคำใหม่ — ถ้าเป็นสระ/วรรณยุกต์ แปลว่าจุดอยู่กลางคำ
+        if (!startsNewToken(sameLineNeighbour(index, 1))) {
+            return null;
+        }
+
+        const back = [];
+        let at = index - 1;
+
+        while (at >= 0 && back.length < 3) {
+            // ข้ามจุดซ้ำที่ OCR ใส่มาซ้อนกัน
+            while (at >= 0 && source[at] === '.') at -= 1;
+
+            // คำย่อไทยมีแต่พยัญชนะ/สระนำ — หยุดที่วรรณยุกต์/สระตาม
+            // เพื่อไม่ให้ลากคำนำหน้ามารวม เช่น "ที่ร.ต." → "ร.ต."
+            if (!/[\u0E01-\u0E2E\u0E40-\u0E44]/.test(source[at] || '')) {
+                break;
+            }
+
+            let start = at;
+
+            while (
+                start >= 0 &&
+                /[\u0E01-\u0E2E\u0E40-\u0E44]/.test(source[start])
+            ) {
+                start -= 1;
+            }
+
+            const segment = source.slice(start + 1, at + 1);
+
+            if (segment.length < 1 || segment.length > 4) break;
+
+            back.unshift(segment);
+            at = start;
+
+            if (at < 0 || source[at] !== '.') break;
+
+            at -= 1;
+        }
+
+        // คำย่อภาษาอังกฤษ เช่น Mr.
+        if (back.length === 0) {
+            let start = index - 1;
+
+            if (!/[A-Za-z]/.test(source[start] || '')) return null;
+
+            while (start >= 0 && /[A-Za-z]/.test(source[start])) {
+                start -= 1;
+            }
+
+            const word = source.slice(start + 1, index);
+
+            return word.length <= 5 && known.has(word + '.')
+                ? word + '.'
+                : null;
+        }
+
+        // ส่วนหลังจุด — ใช้กับจุดแรกของคำย่อหลายช่วง เช่น ร.ต.
+        const forward = [];
+        let position = index + 1;
+
+        while (position < source.length && forward.length < 2) {
+            let end = position;
+
+            while (
+                end < source.length &&
+                /[\u0E01-\u0E2E\u0E40-\u0E44]/.test(source[end])
+            ) {
+                end += 1;
+            }
+
+            const segment = source.slice(position, end);
+
+            if (
+                segment.length < 1 ||
+                segment.length > 4 ||
+                source[end] !== '.'
+            ) {
+                break;
+            }
+
+            forward.push(segment);
+            position = end + 1;
+        }
+
+        const backText = back.join('.') + '.';
+
+        for (let count = forward.length; count >= 0; count--) {
+            const candidate = backText +
+                (count > 0
+                    ? forward.slice(0, count).join('.') + '.'
+                    : '');            if (!known.has(candidate)) continue;
+
+            const before = source[index - backText.length];
+            const insideWord =
+                before && /[\u0E00-\u0E7F]/.test(before);
+
+            // คำย่ออักษรเดี่ยว (ม. / ก.) และคำย่อจากพจนานุกรม
+            // ต้องอยู่ต้นคำเท่านั้น กันการจับข้ามคำ
+            if (
+                insideWord &&
+                (abbreviationLetters(candidate) < 2 ||
+                    needsBoundary.has(candidate))
+            ) {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        return null;
+    }
+
+    // ตัวอักษรข้างเคียงในบรรทัดเดียวกัน (ข้ามช่องว่าง)
+    function sameLineNeighbour(index, step) {
+        let at = index + step;
+
+        while (at >= 0 && at < source.length) {
+            const char = source[at];
+
+            if (char === '\n' || char === '\r') return '';
+            if (char !== ' ' && char !== '\t') return char;
+
+            at += step;
+        }
+
+        return '';
+    }
+
+    function isNumericDot(index) {
+        return (
+            /[0-9\u0E50-\u0E59]/.test(sameLineNeighbour(index, -1)) ||
+            /[0-9\u0E50-\u0E59]/.test(sameLineNeighbour(index, 1))
+        );
+    }
+
+    function hasThaiNeighbour(index) {
+        return (
+            /[\u0E00-\u0E7F]/.test(sameLineNeighbour(index, -1)) ||
+            /[\u0E00-\u0E7F]/.test(sameLineNeighbour(index, 1))
+        );
+    }
+
+    let result = '';
+    let removed = 0;
+
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+
+        if (
+            char !== '.' ||
+            !hasThaiNeighbour(index) ||
+            isNumericDot(index) ||
+            abbreviationEndingAt(index)
+        ) {
+            result += char;
+            continue;
+        }
+
+        removed += 1;
+
+        // กลืนช่องว่างที่ติดกับจุด เพื่อไม่ให้เหลือช่องว่างซ้ำ
+        while (
+            source[index + 1] === ' ' ||
+            source[index + 1] === '\t'
+        ) {
+            index += 1;
+        }
+
+        const lineStart =
+            result === '' ||
+            result.endsWith('\n') ||
+            result.endsWith('\r');
+        const lineEnd =
+            index + 1 >= source.length ||
+            source[index + 1] === '\n' ||
+            source[index + 1] === '\r';
+
+        if (!lineStart) {
+            result = result.replace(/[ \t]+$/, '');
+        }
+
+        // แทนด้วยช่องว่างเดียว — ไม่เพิ่มช่องว่างซ้ำ/ท้ายบรรทัด/ต้นบรรทัด
+        if (!lineStart && !lineEnd) {
+            result += NOISE_GAP;
+        }
+    }
+
+    return { text: result, removed: removed + collapsedDots };
 }
 
 // ระยะแก้ไขที่ยอมรับได้ — คำสั้นต้องใกล้มาก คำยาวผ่อนได้เล็กน้อย
@@ -477,15 +849,23 @@ function correctToken(token, groups, knownSet, cutoff, lengthTolerance) {
  * @param {Array} [options.words]       คำในคลังคำศัพท์
  * @param {Array} [options.dictionary]  คำในพจนานุกรม (ไม่ส่ง = อ่านจาก th_TH.dic)
  * @param {number} [options.cutoff]     ความคล้ายขั้นต่ำของ difflib (0–1)
- * @returns {{text: string, changed: number, replacements: Array}}
+ * @returns {{text: string, changed: number, dots: number, replacements: Array}}
  */
 function improveText(text, options) {
     const opts = options && typeof options === 'object' ? options : {};
-    const source = String(text == null ? '' : text);
+    const input = String(text == null ? '' : text);
 
     const dictionary = opts.dictionary === undefined
         ? loadDictionary()
         : opts.dictionary;
+
+    // แทนจุดที่ OCR ใส่เกินด้วยช่องว่างก่อนตัดคำ
+    const cleaned = replaceNoisePeriods(
+        input,
+        buildAbbreviations(opts.master, opts.words, dictionary),
+        buildBoundaryRequired(opts.master, opts.words, dictionary)
+    );
+    const source = cleaned.text;
 
     const groups = [
         buildGroup('master', opts.master, true),
@@ -548,9 +928,26 @@ function improveText(text, options) {
         return hit ? replaceWith(token, hit) : token;
     }
 
-    // เว้นวรรคระหว่างคำไทยที่ติดกันแต่ไม่ข้ามบรรทัด
-    function isSingleSpaceGap(text) {
-        return /^[ \t]+$/.test(text);
+    // เติมท้ายคำที่ OCR อ่านขาด (เฉพาะข้อมูลหลัก/คลังคำ) — รับเฉพาะคำที่ขึ้นต้นด้วยคำเดิม
+    // (เช่น "ผู้อานวยก" → "ผู้อานวยการ") ไม่แก้คำที่ถูกอยู่แล้ว
+    function completeWord(token) {
+        const hit = correctToken(
+            token,
+            groups.slice(0, 2),
+            knownSet,
+            cutoff
+        );
+        const extra = hit ? hit.word.length - token.length : 0;
+
+        return extra > 0 && extra <= 4
+            ? replaceWith(token, hit)
+            : token;
+    }
+
+    // ช่องว่างระหว่างคำไทย (รวมช่องว่างที่มาจากจุด) แต่ไม่ข้ามบรรทัด
+    function isJoinableGap(text) {
+        return /^[ \t]+$/.test(text) ||
+            /^[ \t]*\u0001[ \t]*$/.test(text);
     }
 
     const parts = [];
@@ -565,7 +962,7 @@ function improveText(text, options) {
 
         while (
             next < tokens.length &&
-            isSingleSpaceGap(
+            isJoinableGap(
                 source.slice(tokens[next - 1].end, tokens[next].start)
             )
         ) {
@@ -575,6 +972,8 @@ function improveText(text, options) {
 
         const start = cluster[0].start;
         const end = cluster[cluster.length - 1].end;
+        const slice = source.slice(start, end);
+        const hasNoiseGap = slice.includes(NOISE_GAP);
 
         parts.push(source.slice(last, start));
 
@@ -590,7 +989,12 @@ function improveText(text, options) {
             // (คำที่เพียง "ตัดเป็นคำได้" ยังต้องให้ correctToken ตรวจ
             //  ข้อมูลหลัก/คลังคำก่อน เพราะอาจเป็นคำที่ผู้ใช้ตั้งไว้)
             if (knownSet.has(joined)) {
-                parts.push(source.slice(start, end));
+                // คำที่รู้จักแล้ว: ยุบช่องว่างที่มาจากจุด แต่คงช่องว่างจริง
+                parts.push(
+                    hasNoiseGap
+                        ? slice.split(NOISE_GAP).join('')
+                        : slice
+                );
 
             } else {
                 // ช่วงที่รวมหลายคำเข้าด้วยกันจะแทนได้เฉพาะคำที่ความยาวใกล้เคียง
@@ -602,6 +1006,25 @@ function improveText(text, options) {
                 if (hit) {
                     // แทนทั้งช่วง (ตัดช่องว่างที่ OCR ใส่ผิดออก)
                     parts.push(replaceWith(joined, hit));
+
+                } else if (hasNoiseGap) {
+                    // จุดอาจคั่นระหว่างคำเต็มสองคำ (เช่น "เรียน.ผู้อานวยก")
+                    // ถ้าเป็นเพียงสองคำยาว ๆ ให้แก้ทีละคำ — แต่ถ้าเป็นเศษคำ
+                    // ที่ถูกจุดตัดหลายท่อน ให้คงไว้ก่อนเพื่อกันข้อความเพี้ยน
+                    const gaps = (slice.match(/\u0001/g) || []).length;
+                    const twoWords =
+                        cluster.length === 2 &&
+                        gaps === 1 &&
+                        cluster[0].text.length >= 4 &&
+                        cluster[1].text.length >= 4;
+
+                    if (twoWords) {
+                        parts.push(completeWord(cluster[0].text));
+                        parts.push(' ');
+                        parts.push(completeWord(cluster[1].text));
+                    } else {
+                        parts.push(slice);
+                    }
 
                 } else {
                     // เทียบทั้งช่วงไม่ได้ = แก้ทีละคำ
@@ -627,16 +1050,20 @@ function improveText(text, options) {
 
     parts.push(source.slice(last));
 
+    // ช่องว่างที่มาจากจุดและไม่ได้ถูกยุบรวม — แปลงเป็นช่องว่างจริง
+    const improved = parts.join('').split(NOISE_GAP).join(' ');
+
     // ต่อวลีในคลังคำที่ OCR ตัดข้ามบรรทัด (หลังแก้คำแล้ว เพื่อให้ส่วนของวลี
     // สะกดตรงกับคลังคำ)
     const reassembled = reassemblePhrases(
-        parts.join(''),
+        improved,
         buildPhrases(opts.words)
     );
 
     return {
         text: reassembled.text,
         changed: replacements.length,
+        dots: cleaned.removed,
         phrases: reassembled.count,
         replacements: replacements
     };
@@ -644,6 +1071,8 @@ function improveText(text, options) {
 
 module.exports = {
     DEFAULT_CUTOFF,
+    buildAbbreviations,
+    replaceNoisePeriods,
     GROUP_CUTOFFS,
     improveText,
     parseWords,

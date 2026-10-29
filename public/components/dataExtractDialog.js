@@ -711,10 +711,15 @@
                     (Number(response.changed) > 0
                         ? ' · แก้คำ ' + response.changed + ' คำ'
                         : '') +
+                    (Number(response.dots) > 0
+                        ? ' · แทนจุดด้วยช่องว่าง ' + response.dots + ' จุด'
+                        : '') +
                     (Number(response.phrases) > 0
                         ? ' · ต่อวลี ' + response.phrases + ' จุด'
                         : '') +
-                    (Number(response.changed) > 0 || Number(response.phrases) > 0
+                    (Number(response.changed) > 0 ||
+                    Number(response.dots) > 0 ||
+                    Number(response.phrases) > 0
                         ? ''
                         : ' · ไม่พบคำที่ต้องแก้')
                 );
