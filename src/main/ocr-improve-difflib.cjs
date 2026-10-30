@@ -862,7 +862,11 @@ function alignPart(text, rest, start) {
 
         gaps.push(gap);
         skipped += gap.length;
+
+        // ข้ามไปที่ตัวอักษรที่ตรงกันแล้ว — position = at + 1 อย่างเดียว
+        // ไม่พอ เพราะ index ยังค้างที่ตัวเดิม ทำให้รอบถัดไปไปค้นตัวเดิมซ้ำ
         position = at + 1;
+        index += 1;
 
         if (skipped > MAX_PART_TEXT_SKIP) return null;
     }
