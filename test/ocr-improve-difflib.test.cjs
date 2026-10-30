@@ -240,6 +240,43 @@ test('difflib รวมบรรทัดจำนวนรายการเข
     assert.strictEqual(result.quantities, 1);
 });
 
+test('difflib รวมจำนวนนับรูปแบบอื่น เช่น ชิ้น และไม่มีคำว่าจำนวน', function () {
+    const withPrefix = difflibImprove.improveText(
+        'ค่าบริการเคลือบผิวชิ้นงาน\nจำนวน 3 ชิ้น',
+        { master: [], words: [], dictionary: [] }
+    );
+
+    assert.strictEqual(
+        withPrefix.text,
+        'ค่าบริการเคลือบผิวชิ้นงาน จำนวน 3 ชิ้น'
+    );
+    assert.strictEqual(withPrefix.quantities, 1);
+
+    const withoutPrefix = difflibImprove.improveText(
+        'ค่าบริการเคลือบผิวชิ้นงาน\n3 รายการ',
+        { master: [], words: [], dictionary: [] }
+    );
+
+    assert.strictEqual(
+        withoutPrefix.text,
+        'ค่าบริการเคลือบผิวชิ้นงาน 3 รายการ'
+    );
+    assert.strictEqual(withoutPrefix.quantities, 1);
+});
+
+test('difflib ไม่รวมบรรทัดตัวเลขที่ไม่มีหน่วยนับ', function () {
+    const input = 'ค่าบริการเคลือบผิวชิ้นงาน\n702057001';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.quantities, 0);
+});
+
 test('difflib ไม่รวมจำนวนรายการเมื่ออยู่บรรทัดแรก', function () {
     const result = difflibImprove.improveText('จำนวน 3 รายการ', {
         master: [],
