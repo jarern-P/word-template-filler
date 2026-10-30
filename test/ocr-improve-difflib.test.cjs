@@ -210,6 +210,34 @@ test('difflib ต่อวลีในคลังคำที่คั่นด
     assert.strictEqual(result.changed, 0);
 });
 
+test('difflib ตัดเลขเดี่ยวที่ OCR ใส่เกินท้ายบรรทัดหลังข้อความยาว', function () {
+    const result = difflibImprove.improveText(
+        'ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์ 9\n' +
+        'จำนวน 3 รายการ',
+        { master: [], words: [], dictionary: [] }
+    );
+
+    assert.strictEqual(
+        result.text,
+        'ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์\n' +
+        'จำนวน 3 รายการ'
+    );
+    assert.strictEqual(result.strays, 1);
+});
+
+test('difflib ไม่แตะเลขท้ายบรรทัดของป้ายสั้นหรือจำนวนเงิน', function () {
+    const input = 'ผู้ตรวจสอบ 1\nผู้ตรวจสอบ 2\nจำนวนเงิน 4,000.00';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, input);
+    assert.strictEqual(result.strays, 0);
+});
+
 test('difflib ต่อคำที่ OCR ตัดกลางคำข้ามบรรทัดแม้ไม่มีวลีในคลังคำ', function () {
     const result = difflibImprove.improveText(
         'การสอนด้านวิทยาศาสตร์และเทคโ 9\nนโลยี-โรงเรียนสาธิต (61010105)',
@@ -220,11 +248,23 @@ test('difflib ต่อคำที่ OCR ตัดกลางคำข้า�
         }
     );
 
-    // "เทคโ" + "นโลยี" = "เทคโนโลยี" — เลขท้ายบรรทัดต้องไม่หาย
+    // "เทคโ" + "นโลยี" = "เทคโนโลยี" และเลขเดี่ยวท้ายบรรทัด (9) ถูกตัดออก
     assert.strictEqual(
         result.text,
-        'การสอนด้านวิทยาศาสตร์และเทคโนโลยี 9-โรงเรียนสาธิต (61010105)'
+        'การสอนด้านวิทยาศาสตร์และเทคโนโลยี-โรงเรียนสาธิต (61010105)'
     );
+    assert.strictEqual(result.strays, 1);
+});
+
+test('difflib ต่อคำข้ามบรรทัดและเก็บเลขท้ายบรรทัดเมื่อข้อความสั้น', function () {
+    const result = difflibImprove.improveText('เทคโ 9\nนโลยี', {
+        master: [],
+        words: [],
+        dictionary: ['เทคโนโลยี']
+    });
+
+    assert.strictEqual(result.text, 'เทคโนโลยี 9');
+    assert.strictEqual(result.strays, 0);
 });
 
 test('difflib ต่อคำที่ถูกตัดข้ามบรรทัดโดยไม่มีตัวเลขคั่น', function () {

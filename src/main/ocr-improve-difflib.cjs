@@ -557,7 +557,36 @@ function replaceNoisePeriods(text, abbreviations, boundaryRequired) {
     };
 }
 
-// ระยะแก้ไขที่ยอมรับได้ — คำสั้นต้องใกล้มาก คำยาวผ่อนได้เล็กน้อย
+// ความยาวขั้นต่ำของข้อความไทยก่อนเลขเดี่ยวท้ายบรรทัดที่จะถือว่าเป็นเลขเกิน
+// จากรอยตาราง/ตราประทับ — ป้ายสั้น ๆ (เช่น "ผู้ตรวจสอบ 1") ต้องไม่ถูกแตะ
+const STRAY_DIGIT_MIN_THAI = 20;
+
+/**
+ * ตัดเลขเดี่ยวที่ OCR ใส่เกินท้ายบรรทัดหลังข้อความยาว
+ * เช่น "ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์ 9"
+ *
+ * ตัดเฉพาะเมื่อข้อความไทยก่อนหน้าเป็นข้อความยาว (STRAY_DIGIT_MIN_THAI ตัวขึ้นไป)
+ * และเลขนั้นอยู่ท้ายบรรทัดล้วน ๆ — เลขของจำนวน/เงิน/ป้ายสั้นจึงไม่ถูกแตะ
+ *
+ * @param {string} text
+ * @returns {{text: string, removed: number}}
+ */
+function dropStrayLineDigits(text) {
+    let removed = 0;
+
+    const result = String(text == null ? '' : text).replace(
+        /([\u0E00-\u0E7F]{20,})[ \t]+[0-9][ \t]*(?=\r?\n|$)/g,
+        function (match, thai) {
+            removed += 1;
+
+            return thai;
+        }
+    );
+
+    return { text: result, removed: removed };
+}
+
+// ระยะแก้ไขที่ยอมรับได้ — คำสั้นต้องใกล้���าก คำยาวผ่อนได้เล็กน้อย
 //
 // ข้อมูลหลักและคลังคำเป็นรายการที่ผู้ใช้ตั้งใจเพิ่ม (ชื่อคน/หน่วยงาน/สถานที่/
 // ประโยคที่ใช้บ่อย) และ OCR มักอ่านผิดหลายตัวพร้อมกัน เช่น "สตยานริกษ" กับ
@@ -1535,7 +1564,10 @@ function improveText(text, options) {
         buildAbbreviations(opts.master, opts.words, dictionary),
         buildBoundaryRequired(opts.master, opts.words, dictionary)
     );
-    let source = cleaned.text;
+    // เลขเดี่ยวที่ OCR ใส่เกินท้ายบรรทัดหลังข้อความยาว
+    const strayed = dropStrayLineDigits(cleaned.text);
+
+    let source = strayed.text;
 
     const groups = [
         buildGroup('master', opts.master, true),
@@ -1761,6 +1793,7 @@ function improveText(text, options) {
         text: reassembled.text,
         changed: replacements.length,
         dots: cleaned.removed,
+        strays: strayed.removed,
         phrases: reassembled.count,
         replacements: replacements
     };
