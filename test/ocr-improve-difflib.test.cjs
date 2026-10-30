@@ -210,6 +210,45 @@ test('difflib ต่อวลีในคลังคำที่คั่นด
     assert.strictEqual(result.changed, 0);
 });
 
+test('difflib ต่อคำที่ OCR ตัดกลางคำข้ามบรรทัดแม้ไม่มีวลีในคลังคำ', function () {
+    const result = difflibImprove.improveText(
+        'การสอนด้านวิทยาศาสตร์และเทคโ 9\nนโลยี-โรงเรียนสาธิต (61010105)',
+        {
+            master: [],
+            words: [],
+            dictionary: ['การสอน', 'ด้าน', 'วิทยาศาสตร์', 'เทคโนโลยี']
+        }
+    );
+
+    // "เทคโ" + "นโลยี" = "เทคโนโลยี" — เลขท้ายบรรทัดต้องไม่หาย
+    assert.strictEqual(
+        result.text,
+        'การสอนด้านวิทยาศาสตร์และเทคโนโลยี 9-โรงเรียนสาธิต (61010105)'
+    );
+});
+
+test('difflib ต่อคำที่ถูกตัดข้ามบรรทัดโดยไม่มีตัวเลขคั่น', function () {
+    const result = difflibImprove.improveText('เทคโ\nนโลยี', {
+        master: [],
+        words: [],
+        dictionary: ['เทคโนโลยี']
+    });
+
+    assert.strictEqual(result.text, 'เทคโนโลยี');
+});
+
+test('difflib ไม่ต่อคำที่เป็นคำเต็มอยู่แล้วท้ายบรรทัด', function () {
+    const input = 'จำนวน\nเงิน';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [],
+        dictionary: ['จำนวน', 'เงิน']
+    });
+
+    assert.strictEqual(result.text, input);
+});
+
 test('difflib ต่อวลีในคลังคำที่ OCR ตัดกลางส่วนและมีคอลัมน์อื่นคั่น', function () {
     const phrase =
         'ขยายโอกาสและพัฒนาคุณภาพการศึกษา/' +

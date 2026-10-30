@@ -1221,6 +1221,101 @@ function closestKnown(sub, groups, cutoff) {
  * @param {Function} replaceWith บันทึกการแทนคำเพื่อนับจำนวนที่แก้
  * @returns {string|null} ข้อความใหม่ หรือ null เมื่อไม่พบการแทนที่ปลอดภัย
  */
+// ความยาวสูงสุดของส่วนที่นำมาต่อกันข้ามบรรทัด
+// (คำไทยส่วนใหญ่สั้นกว่านี้ — กันการต่อข้อความยาวทั้งบรรทัด)
+const MAX_JOIN_PART = 12;
+
+/**
+ * ต่อคำที่ OCR ตัดกลางคำข้ามบรรทัด เช่น "เทคโ\nนโลยี" → "เทคโนโลยี"
+ *
+ * ใช้เมื่อไม่มีวลีในคลังคำรองรับ: คำท้ายบรรทัดต้องยังตัดเป็นคำที่รู้จัก
+ * ไม่ได้ (คำที่สมบูรณ์แล้วจะไม่ถูกแตะ) และคำที่ต่อแล้วต้องเป็นคำที่รู้จัก
+ * หรือแก้ให้เป็นคำที่รู้จักได้ด้วยระยะแก้ไข 1 ตัว
+ *
+ * ตัวเลขที่คั่นอยู่ระหว่างสองส่วน (เช่นเลขท้ายบรรทัด) ถูกย้ายไปไว้หลัง
+ * คำที่ต่อแล้ว เพื่อไม่ให้ข้อมูลหาย
+ *
+ * @param {string} text
+ * @param {Array} groups กลุ่มคำเรียงตามลำดับความสำคัญ
+ * @param {Set} knownSet คำที่รู้จักทั้งหมด
+ * @param {number|null} cutoff ความคล้ายขั้นต่ำของ difflib (ไม่ส่ง = ตามปกติ)
+ * @param {Function} [onJoin] แจ้งการต่อคำ (from, to, source)
+ * @returns {string}
+ */
+function joinSplitWords(text, groups, knownSet, cutoff, onJoin) {
+    const source = String(text == null ? '' : text);
+
+    function groupOf(word) {
+        for (let index = 0; index < groups.length; index++) {
+            if (groups[index].set.has(word)) return groups[index].source;
+        }
+
+        return 'dictionary';
+    }
+
+    return source.replace(
+        /([\u0E00-\u0E7F]+)([ \t]*(?:[0-9]{1,3})?[ \t]*\r?\n[ \t]*)([\u0E00-\u0E7F]+)/g,
+        function (match, left, gap, right) {
+            if (right.length > MAX_JOIN_PART) return match;
+
+            // ลองตัดท้ายบรรทัดทีละความยาว (ยาวไปสั้น) — พจนานุกรมอาจตัดคำ
+            // ท้ายบรรทัดเป็นคำสั้นที่ถูกต้องอยู่แล้ว (เช่น "เทค" + "โ")
+            // ทำให้ใช้ชิ้นคำสุดท้ายเพียงอย่างเดียวไม่พอ
+            const maxSize = Math.min(MAX_JOIN_PART, left.length);
+
+            for (let size = maxSize; size >= 2; size--) {
+                const tail = left.slice(left.length - size);
+                const prefix = left.slice(0, left.length - size);
+
+                // คำท้ายต้องไม่ใช่คำที่รู้จักอยู่แล้ว (ไม่งั้นคือคำเต็ม)
+                if (knownSet.has(tail)) continue;
+
+                // ส่วนหน้าต้องตัดเป็นคำที่รู้จักได้ครบ — ไม่ตัดกลางคำเดิม
+                if (
+                    prefix !== '' &&
+                    segmentPieces(prefix, knownSet).some(function (piece) {
+                        return !piece.known;
+                    })
+                ) {
+                    continue;
+                }
+
+                const joined = tail + right;
+
+                if (joined.length > MAX_WORD_LENGTH) continue;
+
+                let word = knownSet.has(joined) ? joined : null;
+
+                if (word === null) {
+                    const hit = correctToken(
+                        joined,
+                        groups,
+                        knownSet,
+                        cutoff
+                    );
+
+                    // ต้องต่างกันแค่ตัวเดียว — การต่อผิดคำจะทำข้อความเพี้ยน
+                    if (hit && levenshtein(joined, hit.word) <= 1) {
+                        word = hit.word;
+                    }
+                }
+
+                if (word === null) continue;
+
+                const digits = gap.match(/[0-9]{1,3}/);
+
+                if (typeof onJoin === 'function') {
+                    onJoin(tail + gap + right, word, groupOf(word));
+                }
+
+                return prefix + word + (digits ? ' ' + digits[0] : '');
+            }
+
+            return match;
+        }
+    );
+}
+
 function correctRun(token, groups, knownSet, cutoff, replaceWith) {
     if (token.length > MAX_SOLVE_LENGTH) return null;
 
@@ -1440,7 +1535,7 @@ function improveText(text, options) {
         buildAbbreviations(opts.master, opts.words, dictionary),
         buildBoundaryRequired(opts.master, opts.words, dictionary)
     );
-    const source = cleaned.text;
+    let source = cleaned.text;
 
     const groups = [
         buildGroup('master', opts.master, true),
@@ -1464,6 +1559,17 @@ function improveText(text, options) {
         : null;
 
     const replacements = [];
+
+    // ต่อคำที่ OCR ตัดกลางคำข้ามบรรทัด (ต้องรู้คำทั้งหมดก่อน)
+    source = joinSplitWords(
+        source,
+        groups,
+        knownSet,
+        cutoff,
+        function (from, to, origin) {
+            replacements.push({ from: from, to: to, source: origin });
+        }
+    );
 
     // คำไทยที่ OCR ได้ (เรียงตามตำแหน่งในข้อความ)
     const tokens = [];
