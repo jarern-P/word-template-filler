@@ -47,9 +47,23 @@ const STANDARD_ABBREVIATIONS = [
 ];
 
 // ระยะห่างสูงสุดระหว่างส่วนของวลีที่จะถือว่าเป็นวลีเดียวกัน
-// (OCR อาจแยกวลีข้ามบรรทัดโดยมีข้อความอื่นคั่น)
-const MAX_PHRASE_GAP = 200;
-const MAX_PHRASE_LINES = 3;
+// (OCR อาจแยกวลีข้ามบรรทัดโดยมีเนื้อหาคอลัมน์อื่นในตารางคั่น
+//  ยาวหลายบรรทัด เช่น แผนงาน/หน่วยงาน/กองทุน ที่อ่านสลับกัน)
+const MAX_PHRASE_GAP = 400;
+const MAX_PHRASE_LINES = 20;
+
+// ระยะจากจุดจบของส่วนหนึ่งถึงจุดเริ่มของส่วนถัดไปของวลีเดียวกัน
+const MAX_PART_REACH = 200;
+
+// การเทียบส่วนของวลีแบบผ่อน — OCR อาจตัดกลางคำ (เช่น "เทคโ"/"นโลยี")
+// และมีข้อความอื่นคั่นกลางส่วน ส่วนต้องขึ้นต้นด้วยอักษรที่ตรงกัน
+// ติดกันอย่างน้อย PART_PROBE ตัว (กันจับผิดเริ่มกลางคำ) แล้วจึงเทียบ
+// ส่วนที่เหลือแบบข้ามข้อความคั่น
+const PART_PROBE = 4;
+const MAX_LEAD_SKIP = 4;        // อักษรต้นส่วนที่ OCR อ่านตก
+const MAX_MID_SKIP = 4;         // อักษรกลางส่วนที่ OCR อ่านตก
+const MAX_PART_TEXT_SKIP = 100; // ข้อความคั่นรวมกันภายในหนึ่งส่วน
+const MAX_INLINE_SKIP = 12;     // ข้อความคั่นที่ไม่ข้ามบรรทัด
 
 // ค่าความคล้ายขั้นต่ำของ difflib (0–1) — สูงเกินไปจะไม่แก้อะไร
 // ต่ำเกินไปจะแทนคำที่ไม่เกี่ยวข้อง
@@ -65,6 +79,52 @@ const GROUP_CUTOFFS = {
 };
 
 const DEFAULT_CUTOFF = GROUP_CUTOFFS.dictionary;
+
+// เกณฑ์ความคล้ายของช่วงคำย่อย — เข้มกว่าเกณฑ์ปกติ เพราะช่วงสั้น
+// จับคู่กับคำใกล้เคียงได้ง่าย (เช่น "นม" กับ "อนัม")
+const FRAGMENT_CUTOFF = 0.88;
+
+// ความยาวช่วงที่ยอมให้แทนในการแก้รันแบบค้นหา
+// (สั้นกว่านี้มักเป็นเศษคำที่ตัดผิด แก้แล้วมักเพี้ยน)
+const MIN_FRAGMENT_LENGTH = 4;
+
+// ข้อจำกัดของการค้นหาการแทนในหนึ่งรัน — กันค้นนานเกินไป
+// เท่ากับความยาวคำสูงสุด เพราะบรรทัดยาวที่มีคำผิดหนึ่งคำก็ต้องแก้ได้
+// (เช่น "เห็นควรอนุมัตให้เบิกจ่ายได้ตามจำนวนเงินข้างต้น")
+const MAX_SOLVE_LENGTH = MAX_WORD_LENGTH;
+const MAX_SOLVE_PASSES = 6;
+
+// อักษรที่ไม่รู้จักปนอยู่ในช่วงที่จะแทนได้สูงสุด
+// (เกินนี้แปลว่าช่วงกินคำที่ไม่รู้จักจำนวนมาก = สุ่มเกินไป)
+// คำไทยที่ OCR อ่านผิดมักยาว 5–8 ตัว จึงต้องเผื่อไว้มากกว่าหนึ่งคำสั้น
+const MAX_RUN_UNKNOWN = 12;
+
+// ช่วงที่ยังมีคำที่ตัดได้คั่นอยู่ ต้องไม่รู้จักปนไม่เกินนี้ — กันการแทน
+// ช่วงยาวที่กลืนคำถูกต้องเข้าไปด้วย
+const MAX_MIXED_UNKNOWN = 4;
+
+// ความยาวสูงสุดของช่วงที่ไม่รู้จักล้วนที่จะลองแบ่งเป็นสองคำ
+// (คำผิดสองคำติดกันโดยไม่มีคำที่รู้จักคั่น เช่น "นวตกรรมสงคม")
+const MAX_SPLIT_LENGTH = 16;
+
+// อักษรไม่รู้จักในช่วงที่ยอมให้หายไปจากการแทน (ไม่เกิน 1 ตัว)
+// กันการแทนแบบลบท้ายช่วง เช่น "เงินอุดหนุนทัว" → "เงินอุดหนุน"
+// ที่ผลลัพธ์ดูเป็นคำถูกแต่ทำข้อมูลจริงหาย
+const MAX_UNKNOWN_DROPPED = 1;
+
+// ระยะแก้ไขสูงสุดของการแทนช่วงในรัน — เข้มกว่าเกณฑ์ปกติ เพราะการแทน
+// ช่วงกลางรันเลื่อนได้หลายอักษร เช่น "ทัวไป" → "ทั่วไป" (ระยะ 1)
+// แต่ "เพื่อการศึกษา" → "สื่อการศึกษา" (ระยะ 3) ต้องไม่ถูกแทน
+function solveDistance(length) {
+    return Math.max(1, Math.ceil(length * 0.15));
+}
+
+// คำสั้นที่ใช้เป็นจุดยึดตอนตัดช่วงคำ — พจนานุกรมกลางไม่มีคำเหล่านี้
+// (เช่น "และ" ไม่มีใน dictionary/th_TH.dic) ถ้าไม่กำหนดเอง ช่วงไม่รู้จัก
+// จะยาวรวมกันไปถึงคำที่ควรแก้ด้วย
+const SEGMENT_ANCHORS = new Set([
+    'และ', 'หรือ', 'ไม่', 'แล้ว', 'ให้', 'ก็', 'หรือไม่'
+]);
 
 // จำนวนผลลัพธ์ที่ขอจาก difflib ก่อนเลือกตัวแรก
 const MATCH_LIMIT = 3;
@@ -268,15 +328,28 @@ function replaceNoisePeriods(text, abbreviations, boundaryRequired) {
     }
 
     // จุดซ้ำจาก OCR (".." หรือ ". .") เหลือจุดเดียว
-    const source = original.replace(
+    const collapsed = original.replace(
         /[ \t]*\.[ \t]*(?:\.[ \t]*)+/g,
         '.'
+    );
+
+    // จุดที่ OCR ใส่คั่นกลางวันที่ เช่น "1.4/10/2569" → "14/10/2569"
+    // (ตัดเฉพาะจุด ตัวเลขต้องอยู่ครบ — ไม่แตะทศนิยมอย่าง 4,000.00)
+    let dateDots = 0;
+
+    const source = collapsed.replace(
+        /([0-9\u0E50-\u0E59]{1,2})\.([0-9\u0E50-\u0E59]{1,2}\/[0-9\u0E50-\u0E59]{1,2}\/[0-9\u0E50-\u0E59]{2,4})/g,
+        function (match, day, rest) {
+            dateDots += 1;
+
+            return day + rest;
+        }
     );
 
     // จำนวนจุดที่ถูกแทน (นับจุดซ้ำที่ยุบไปด้วย)
     const collapsedDots =
         (original.match(/\./g) || []).length -
-        (source.match(/\./g) || []).length;
+        (collapsed.match(/\./g) || []).length;
 
     // คำย่อที่ลงท้ายด้วยจุดนี้ (เช่น ผศ. / น.ส. / ร.ต. / Mr.)
     function abbreviationEndingAt(index) {
@@ -422,16 +495,27 @@ function replaceNoisePeriods(text, abbreviations, boundaryRequired) {
         );
     }
 
+    // จุดนี้อยู่หน้าวันที่รูปแบบ d/m/yyyy (เช่น "วันที่.14/10/2569")
+    // = จุดที่ OCR ใส่เกิน ไม่ใช่จุดของทศนิยม
+    function startsDate(index) {
+        return /^[ \t]*[0-9\u0E50-\u0E59]{1,2}\/[0-9\u0E50-\u0E59]{1,2}\/[0-9\u0E50-\u0E59]{2,4}/
+            .test(source.slice(index + 1));
+    }
+
     let result = '';
     let removed = 0;
 
     for (let index = 0; index < source.length; index++) {
         const char = source[index];
 
+        // จุดที่ติดตัวเลขปกติ (ทศนิยม) คงไว้ — ยกเว้นจุดที่นำหน้าวันที่
+        const noiseDot =
+            hasThaiNeighbour(index) &&
+            (startsDate(index) || !isNumericDot(index));
+
         if (
             char !== '.' ||
-            !hasThaiNeighbour(index) ||
-            isNumericDot(index) ||
+            !noiseDot ||
             abbreviationEndingAt(index)
         ) {
             result += char;
@@ -467,7 +551,10 @@ function replaceNoisePeriods(text, abbreviations, boundaryRequired) {
         }
     }
 
-    return { text: result, removed: removed + collapsedDots };
+    return {
+        text: result,
+        removed: removed + collapsedDots + dateDots
+    };
 }
 
 // ระยะแก้ไขที่ยอมรับได้ — คำสั้นต้องใกล้มาก คำยาวผ่อนได้เล็กน้อย
@@ -537,10 +624,10 @@ function toWords(value, split) {
         return text;
     }).filter(Boolean).reduce(function (words, text) {
         // ชื่อในข้อมูลหลักอาจมีหลายคำ (เช่น "บริษัท ทดสอบ จำกัด")
-        // หรือมีวงเล็บ/จุด (เช่น "นักวิชาการ (ที่ปรึกษา)" / "ผศ.สุนิสา")
-        // จึงแยกเป็นคำย่อยเพื่อเทียบกับคำที่ OCR ได้
+        // หรือมีวงเล็บ/จุด/ขีด (เช่น "นักวิชาการ (ที่ปรึกษา)" /
+        // "สำคัญค้างจ่าย-ม.ทักษิณ") จึงแยกเป็นคำย่อยเพื่อเทียบกับคำที่ OCR ได้
         const parts = split
-            ? text.split(/[\s,;/|().]+/)
+            ? text.split(/[\s,;/|().-]+/)
             : [text];
 
         parts.forEach(function (part) {
@@ -699,40 +786,134 @@ function buildPhrases(items) {
         });
 }
 
-// หาตำแหน่งของวลีที่ส่วนต่าง ๆ ปรากฏเรียงกันภายในระยะที่กำหนด
-function findPhraseSpan(text, parts, from) {
-    let first = text.indexOf(parts[0], from);
+// หาตำแหน่งของส่วนหนึ่งของวลีในข้อความ — ตรงตัวก่อน แล้วค่อยเทียบแบบผ่อน
+// reach = ระยะสูงสุดจากจุดค้นหา (ไม่ส่ง = ไม่จำกัด ใช้กับส่วนแรกของวลี)
+// คืน { start, end, gaps } โดย gaps คือข้อความที่คั่นอยู่ภายในส่วน
+function matchPart(text, part, from, reach) {
+    const exact = text.indexOf(part, from);
 
-    while (first !== -1) {
-        let lastEnd = first + parts[0].length;
-        let position = lastEnd;
+    if (
+        exact !== -1 &&
+        (reach === undefined || exact - from <= reach)
+    ) {
+        return { start: exact, end: exact + part.length, gaps: [] };
+    }
+
+    for (
+        let lead = 0;
+        lead <= MAX_LEAD_SKIP && lead < part.length;
+        lead++
+    ) {
+        const rest = part.slice(lead);
+
+        // ข้ามอักษรต้นได้ก็ต่อเมื่อส่วนที่เหลือยังมีความยาวพอ
+        // ที่จะเทียบติดกันได้ครบ PART_PROBE — กันส่วนสั้นถูกยุบ
+        // จนเหลืออักษรเดียวแล้วไปจับอักษรมั่วในข้อความ
+        if (lead > 0 && rest.length < PART_PROBE) break;
+
+        const probe = rest.slice(0, Math.min(PART_PROBE, rest.length));
+        let at = text.indexOf(probe, from);
+
+        while (at !== -1) {
+            if (reach !== undefined && at - from > reach) break;
+
+            const span = alignPart(text, rest, at);
+
+            if (span) return span;
+
+            at = text.indexOf(probe, at + 1);
+        }
+    }
+
+    return null;
+}
+
+// เทียบส่วนของวลีแบบยอมข้ามข้อความคั่น (คอลัมน์อื่นที่ OCR อ่านแทรก)
+// และข้ามอักษรที่ OCR อ่านตก (จำกัดจำนวนเพื่อกันเทียบผิดตำแหน่ง)
+function alignPart(text, rest, start) {
+    let index = 0;
+    let position = start;
+    let skipped = 0;
+    let dropped = 0;
+    const gaps = [];
+
+    while (index < rest.length) {
+        if (text[position] === rest[index]) {
+            position += 1;
+            index += 1;
+            continue;
+        }
+
+        const at = text.indexOf(rest[index], position);
+        const gap = at === -1 ? null : text.slice(position, at);
+        const tooLong =
+            gap === null ||
+            gap.length > MAX_PART_TEXT_SKIP ||
+            (!gap.includes('\n') && gap.length > MAX_INLINE_SKIP);
+
+        if (tooLong) {
+            // ไม่พบอักษรตัวนี้ข้างหน้า = อาจเป็นอักษรที่ OCR อ่านตก
+            if (dropped >= MAX_MID_SKIP) return null;
+
+            dropped += 1;
+            index += 1;
+            continue;
+        }
+
+        gaps.push(gap);
+        skipped += gap.length;
+        position = at + 1;
+
+        if (skipped > MAX_PART_TEXT_SKIP) return null;
+    }
+
+    return { start: start, end: position, gaps: gaps };
+}
+
+// หาตำแหน่งของวลีที่ส่วนต่าง ๆ ปรากฏเรียงกันภายในระยะที่กำหนด
+// ส่วนที่ OCR ตัดกลางคำ/มีข้อความคั่น จะเทียบแบบผ่อนด้วย matchPart
+function findPhraseSpan(text, parts, from) {
+    let first = matchPart(text, parts[0], from);
+
+    while (first) {
+        let position = first.end;
         let found = true;
-        // ข้อความระหว่างส่วนของวลี (ไม่รวมตัวส่วนเอง) — ใช้ย้ายไปไว้หลังวลี
-        const gaps = [];
+        // ข้อความระหว่างส่วนของวลี (รวมข้อความคั่นภายในส่วน)
+        // — ใช้ย้ายไปไว้หลังวลี (เช่น ชื่อคนที่ OCR อ่านคั่นกลางชื่อโครงการ)
+        const gaps = first.gaps.slice();
 
         for (let index = 1; index < parts.length; index++) {
-            const at = text.indexOf(parts[index], position);
+            const next = matchPart(
+                text,
+                parts[index],
+                position,
+                MAX_PART_REACH
+            );
 
-            if (at === -1 || at - position > MAX_PHRASE_GAP) {
+            if (!next) {
                 found = false;
                 break;
             }
 
-            gaps.push(text.slice(position, at));
+            gaps.push(text.slice(position, next.start));
 
-            lastEnd = at + parts[index].length;
-            position = lastEnd;
+            next.gaps.forEach(function (gap) {
+                gaps.push(gap);
+            });
+
+            position = next.end;
         }
 
         if (found) {
             return {
-                start: first,
-                end: lastEnd,
+                start: first.start,
+                end: position,
                 gaps: gaps
             };
         }
 
-        first = text.indexOf(parts[0], first + 1);
+        from = first.start + 1;
+        first = matchPart(text, parts[0], from);
     }
 
     return null;
@@ -830,9 +1011,24 @@ function matchInGroup(token, group, cutoff, counts, lengthTolerance) {
         limitRatio
     );
 
-    return matches.length > 0
-        ? { word: matches[0], source: group.source }
-        : null;
+    if (matches.length === 0) return null;
+
+    // เลือกคำที่เก็บตัวอักษรเดิมไว้ได้ครบที่สุด — difflib ดูแค่ความคล้าย
+    // จึงอาจเลือกคำที่สั้นกว่าซึ่งทำให้ตัวอักษรหาย เช่น "บสำคัญ" → "สำคัญ"
+    // (ข้อมูลหาย) ทั้งที่ "ใบสำคัญ" ใกล้เท่ากันและเก็บอักษรเดิมครบทุกตัว
+    let best = matches[0];
+    let bestCoverage = commonChars(counts, best);
+
+    for (let index = 1; index < matches.length; index++) {
+        const coverage = commonChars(counts, matches[index]);
+
+        if (coverage > bestCoverage) {
+            best = matches[index];
+            bestCoverage = coverage;
+        }
+    }
+
+    return { word: best, source: group.source };
 }
 
 // หาคำที่ใกล้ที่สุดจากกลุ่มตามลำดับความสำคัญ
@@ -872,6 +1068,347 @@ function correctToken(token, groups, knownSet, cutoff, lengthTolerance) {
     }
 
     return null;
+}
+
+// ── แก้รันคำไทยที่ทั้งรันไม่ตรงกับคำใด โดยค้นหาการแทนช่วงเดียว ──
+//
+// ภาษาไทยไม่มีช่องว่างคั่นคำ คำที่ OCR อ่านผิดบางช่วงจึงทำให้ทั้งรัน
+// (เช่น "เงินอุดหนุนทัวไป" / "แบบขออนมัติ") ไม่ตรงกับคำใดในคลังคำ/
+// พจนานุกรมเลย การเทียบทั้งรันจึงไม่ได้ผล
+//
+// วิธีนี้ค้นหาช่วงความยาวอย่างน้อย MIN_FRAGMENT_LENGTH ที่เมื่อแทนด้วย
+// คำในระบบแล้ว "ทั้งรันตัดเป็นคำที่รู้จักได้ครบ" จึงยอมรับ — การตรวจว่า
+// ผลลัพธ์ตัดได้ครบเป็นตัวกันแก้ผิด เช่น "กองทุนเพื่อการศึกษา" ที่ถูก
+// ต้องอยู่แล้วแต่ longest match ตัดได้ช่วงแปลก ๆ จะต้องไม่ถูกแตะ
+
+// ตัดคำแบบ longest match — คืนช่วงคำตามลำดับ { known, text }
+function segmentPieces(token, knownSet) {
+    function isKnown(text) {
+        return knownSet.has(text) || SEGMENT_ANCHORS.has(text);
+    }
+
+    const pieces = [];
+    let index = 0;
+    let unknownStart = -1;
+
+    while (index < token.length) {
+        let length = 0;
+        const max = Math.min(MAX_WORD_LENGTH, token.length - index);
+
+        for (let size = max; size >= MIN_WORD_LENGTH; size--) {
+            if (isKnown(token.slice(index, index + size))) {
+                length = size;
+                break;
+            }
+        }
+
+        if (length > 0) {
+            if (unknownStart !== -1) {
+                pieces.push({
+                    known: false,
+                    text: token.slice(unknownStart, index)
+                });
+                unknownStart = -1;
+            }
+
+            pieces.push({
+                known: true,
+                text: token.slice(index, index + length)
+            });
+
+            index += length;
+
+        } else {
+            if (unknownStart === -1) unknownStart = index;
+            index += 1;
+        }
+    }
+
+    if (unknownStart !== -1) {
+        pieces.push({ known: false, text: token.slice(unknownStart) });
+    }
+
+    return pieces;
+}
+
+// แก้ช่วงที่ไม่รู้จักล้วนซึ่งมีคำผิดติดกันสองคำ โดยลองแบ่งเป็นสองส่วน
+// แล้วแก้ทีละส่วน — คืน { word, source } ของส่วนแรก หรือ null
+//
+// เลือกจุดแบ่งที่ระยะแก้ไขรวมน้อยที่สุด เพื่อไม่ให้ตัดผิดคำ
+function splitCorrection(sub, groups, knownSet, cutoff) {
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (let cut = 3; cut <= sub.length - 3; cut++) {
+        const left = sub.slice(0, cut);
+        const right = sub.slice(cut);
+
+        const first = correctToken(left, groups, knownSet, cutoff);
+
+        if (!first) continue;
+
+        const second = correctToken(right, groups, knownSet, cutoff);
+
+        if (!second) continue;
+
+        const distance =
+            levenshtein(left, first.word) + levenshtein(right, second.word);
+
+        // ต้องใกล้ทั้งสองส่วน — การแบ่งผิดคำจะทำให้ระยะรวมโต
+        if (
+            distance >
+            solveDistance(left.length) + solveDistance(right.length)
+        ) {
+            continue;
+        }
+
+        if (distance < bestDistance) {
+            bestDistance = distance;
+
+            best = {
+                word: first.word + second.word,
+                source: first.source
+            };
+        }
+    }
+
+    return best;
+}
+
+// คำที่รู้จักใกล้ที่สุด โดยไม่ตรวจว่าคำเดิมตัดเป็นคำได้ครบหรือไม่
+// ใช้กับช่วงที่ตัดคำแล้วดูเหมือนรู้จัก แต่เกิดจากคำสั้นมาต่อกันผิดคำ
+// (เช่น "สงคม" ที่ตัดเป็น "สง" + "คม") ซึ่ง correctToken จะปล่อยผ่าน
+function closestKnown(sub, groups, cutoff) {
+    const counts = charCounts(sub);
+
+    for (let index = 0; index < groups.length; index++) {
+        const group = groups[index];
+
+        if (groupSize(group) === 0) continue;
+
+        const hit = matchInGroup(sub, group, cutoff, counts);
+
+        if (hit && hit.word !== sub) return hit;
+    }
+
+    return null;
+}
+
+/**
+ * แก้รันคำไทยที่ทั้งรันไม่ตรงกับคำใด — ค้นหาช่วงที่แทนแล้วทำให้รัน
+ * ตัดเป็นคำรู้จักได้ดีขึ้น แล้วจึงยอมรับ (ทำซ้ำได้หลายช่วงในรันเดียว)
+ *
+ * ช่วงที่แทนต้องเป็นผลรวมของช่วงคำที่ตัดได้เท่านั้น (จับขอบช่วงกับ
+ * การตัดคำ) — เว้นแต่ช่วงที่ตัดเป็นคำสั้น ๆ มาต่อกัน ซึ่งอาจเป็นคำเดียว
+ * ที่ OCR อ่านผิด (เช่น "สง"/"คม" → "สังคม")
+ *
+ * การตรวจว่า "จำนวนอักษรที่ยังไม่รู้จักต้องลดลง" (หรือจำนวนคำที่ตัดได้
+ * ลดลง) เป็นตัวกันแก้ผิด เช่น "กองทุนเพื่อการศึกษา" ที่ถูกต้องอยู่แล้ว
+ * แต่ longest match ตัดได้ช่วงแปลก ๆ ("เพื่"/"อก"/"าร")
+ *
+ * ไม่บังคับให้ทั้งรันกลายเป็นคำรู้จักครบ เพราะบรรทัดหนึ่งมักมีคำผิด
+ * มากกว่าหนึ่งคำและอาจมีชื่อเฉพาะที่ยังไม่รู้จักคั่นอยู่ (เช่น
+ * "นวตกรรมสงคมและนวตกรร") — แก้ทีละช่วงได้ตราบใดที่ยังดีขึ้นจริง
+ *
+ * @param {string} token    รันคำไทยที่ correctToken แก้ทั้งรันไม่ได้
+ * @param {Array} groups    กลุ่มคำเรียงตามลำดับความสำคัญ
+ * @param {Set} knownSet    คำที่รู้จักทั้งหมด
+ * @param {number|null} cutoff ความคล้ายที่ผู้ใช้กำหนด (ไม่ส่ง = ตามปกติ)
+ * @param {Function} replaceWith บันทึกการแทนคำเพื่อนับจำนวนที่แก้
+ * @returns {string|null} ข้อความใหม่ หรือ null เมื่อไม่พบการแทนที่ปลอดภัย
+ */
+function correctRun(token, groups, knownSet, cutoff, replaceWith) {
+    if (token.length > MAX_SOLVE_LENGTH) return null;
+
+    function piecesOf(text) {
+        return segmentPieces(text, knownSet);
+    }
+
+    function fullyKnown(pieces) {
+        for (let index = 0; index < pieces.length; index++) {
+            if (!pieces[index].known) return false;
+        }
+
+        return true;
+    }
+
+    // จำนวนอักษรที่ยังตัดเป็นคำรู้จักไม่ได้ — ใช้เทียบว่าการแทนดีขึ้นจริง
+    function unknownChars(pieces) {
+        let total = 0;
+
+        for (let index = 0; index < pieces.length; index++) {
+            if (!pieces[index].known) total += pieces[index].text.length;
+        }
+
+        return total;
+    }
+
+    const firstPieces = piecesOf(token);
+
+    if (fullyKnown(firstPieces)) return null;
+
+    const fragmentCutoff = cutoff === null ? FRAGMENT_CUTOFF : cutoff;
+
+    let current = token;
+    let currentPieces = firstPieces;
+    let count = 0;
+
+    for (let pass = 0; pass < MAX_SOLVE_PASSES; pass++) {
+        let applied = false;
+
+        for (
+            let start = 0;
+            start < currentPieces.length && !applied;
+            start++
+        ) {
+            let unknown = 0;
+            let unknownText = '';
+            let knownText = '';
+            let position = 0;
+
+            for (let index = 0; index < start; index++) {
+                position += currentPieces[index].text.length;
+            }
+
+            for (
+                let finish = start;
+                finish < currentPieces.length;
+                finish++
+            ) {
+                const piece = currentPieces[finish];
+
+                if (!piece.known) {
+                    unknown += piece.text.length;
+                    unknownText += piece.text;
+                } else {
+                    knownText += piece.text;
+                }
+
+                const sub = currentPieces
+                    .slice(start, finish + 1)
+                    .map(function (item) { return item.text; })
+                    .join('');
+                position += piece.text.length;
+
+                // ช่วงที่ตัดเป็นคำสั้น ๆ มาต่อกัน (เช่น "สง"/"คม") อาจเป็นคำที่
+                // OCR อ่านผิดทั้งคำ แม้จะดูเหมือนรู้จักแล้ว — ลองเทียบเฉพาะ
+                // ช่วงสั้น (ไม่เกิน 3 ชิ้น) และต้องเก็บอักษรเดิมไว้ครบ
+                const shortSpan =
+                    unknown === 0 &&
+                    finish - start <= 2 &&
+                    currentPieces
+                        .slice(start, finish + 1)
+                        .every(function (item) {
+                            return item.text.length <= 2;
+                        });
+
+                if (
+                    sub.length < MIN_FRAGMENT_LENGTH ||
+                    (unknown === 0 && !shortSpan) ||
+                    unknown > MAX_RUN_UNKNOWN
+                ) {
+                    continue;
+                }
+
+                // ช่วงที่ยังมีคำที่ตัดได้คั่นอยู่ = ต้องไม่รู้จักปนกันไม่เกิน
+                // MAX_MIXED_UNKNOWN ตัว กันการแทนช่วงยาวที่กลืนคำถูกต้อง
+                const allUnknown = unknown === sub.length;
+
+                if (unknown > 0 && !allUnknown && unknown > MAX_MIXED_UNKNOWN) {
+                    continue;
+                }
+
+                const hit = unknown === 0
+                    ? closestKnown(sub, groups, fragmentCutoff)
+                    : (correctToken(sub, groups, knownSet, fragmentCutoff) ||
+                        (allUnknown && sub.length <= MAX_SPLIT_LENGTH
+                            ? splitCorrection(
+                                sub,
+                                groups,
+                                knownSet,
+                                fragmentCutoff
+                            )
+                            : null));
+
+                if (!hit) continue;
+
+                // ต้องใกล้มากจริง ๆ — การแทนช่วงกลางรันอันตรายกว่า
+                // การแทนทั้งรัน จึงคุมระยะให้สั้นกว่าเกณฑ์ปกติ
+                if (levenshtein(sub, hit.word) > solveDistance(sub.length)) {
+                    continue;
+                }
+
+                // อักษรที่ไม่รู้จักต้องยังอยู่ในคำใหม่ (หายได้ไม่เกิน 1 ตัว)
+                // กันแทนแบบลบท้ายช่วง เช่น ตัด "ทัว" ทิ้งเฉย ๆ
+                const kept = commonChars(charCounts(unknownText), hit.word);
+
+                if (unknownText.length - kept > MAX_UNKNOWN_DROPPED) {
+                    continue;
+                }
+
+                // อักษรของคำที่ตัดได้ต้องไม่หายไป — เช่น "อ" ใน "อก" ของ
+                // "อการศึกษา" → "การศึกษา" (ข้อความที่ถูกอยู่แล้วจะเสีย)
+                if (
+                    commonChars(charCounts(knownText), hit.word) <
+                    knownText.length
+                ) {
+                    continue;
+                }
+
+                // ช่วงที่ดูเหมือนรู้จักครบ (ตัดเป็นคำสั้น ๆ ได้) รับได้เฉพาะ
+                // เมื่อคำใหม่เก็บอักษรเดิมครบทุกตัว ไม่งั้นจะกลายเป็นลบข้อมูล
+                if (
+                    unknown === 0 &&
+                    commonChars(charCounts(sub), hit.word) < sub.length
+                ) {
+                    continue;
+                }
+
+                // กันการเติมอักษรซ้ำกับคำก่อนหน้า — เช่น "เพื่อก" + "การศึกษา"
+                // กลายเป็น "เพื่อกการศึกษา" เพราะ "อก" ถูกตัดข้ามคำไปแล้ว
+                const beforeChar =
+                    current[position - sub.length - 1] || '';
+
+                if (
+                    beforeChar !== '' &&
+                    hit.word[0] === beforeChar &&
+                    hit.word[0] !== sub[0]
+                ) {
+                    continue;
+                }
+
+                const before = current.slice(0, position - sub.length);
+                const after = current.slice(position);
+                const next = before + hit.word + after;
+                const nextPieces = piecesOf(next);
+
+                // ผลลัพธ์ต้องดีขึ้นจริง — อักษรที่ยังไม่รู้จักต้องลดลง
+                // หรืออย่างน้อยจำนวนคำที่ตัดได้ต้องลดลง (ตัดคำได้ยาวขึ้น)
+                const nextUnknown = unknownChars(nextPieces);
+                const nowUnknown = unknownChars(currentPieces);
+
+                if (nextUnknown > nowUnknown) continue;
+
+                if (
+                    nextUnknown === nowUnknown &&
+                    nextPieces.length >= currentPieces.length
+                ) {
+                    continue;
+                }
+
+                replaceWith(sub, hit);
+                current = next;
+                currentPieces = nextPieces;
+                count += 1;
+                applied = true;
+                break;
+            }
+        }
+
+        if (!applied) break;
+    }
+
+    return count > 0 ? current : null;
 }
 
 /**
@@ -959,7 +1496,19 @@ function improveText(text, options) {
 
         const hit = correctToken(token, groups, knownSet, cutoff);
 
-        return hit ? replaceWith(token, hit) : token;
+        if (hit) return replaceWith(token, hit);
+
+        // ทั้งรันไม่ตรงคำใด — ค้นหาการแทนช่วงเดียวที่ทำให้รันตัดเป็น
+        // คำที่รู้จักได้ครบ (กันแก้ผิด ถ้ายังตัดไม่ได้ครบจะไม่แตะ)
+        const fixed = correctRun(
+            token,
+            groups,
+            knownSet,
+            cutoff,
+            replaceWith
+        );
+
+        return fixed === null ? token : fixed;
     }
 
     // เติมท้ายคำที่ OCR อ่านขาด (เฉพาะข้อมูลหลัก/คลังคำ) — รับเฉพาะคำที่ขึ้นต้นด้วยคำเดิม
@@ -1120,5 +1669,8 @@ module.exports = {
     reassemblePhrases,
     allowedDistance,
     hasSingleCharTail,
-    isFullyKnown
+    isFullyKnown,
+    // DEBUG-TEMP
+    matchPart,
+    segmentPieces
 };

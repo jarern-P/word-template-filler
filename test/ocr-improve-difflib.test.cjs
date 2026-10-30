@@ -424,6 +424,19 @@ test('difflib แก้คำที่ถูกจุดคั่นระหว
     assert.strictEqual(result.dots, 1);
 });
 
+test('difflib เอาจุดที่ OCR ใส่เกินในวันที่ออก โดยคงทศนิยมไว้', function () {
+    const result = difflibImprove.improveText(
+        'วันที่.1.4/10/2569 จำนวน 4,000.00 บาท',
+        { master: [], words: [], dictionary: [] }
+    );
+
+    assert.strictEqual(
+        result.text,
+        'วันที่ 14/10/2569 จำนวน 4,000.00 บาท'
+    );
+    assert.strictEqual(result.dots, 2);
+});
+
 test('difflib แทนจุดที่มีช่องว่างรอบข้างด้วยช่องว่างเดียว', function () {
     const result = difflibImprove.improveText('จำนวน . เงิน', {
         master: [],
@@ -490,6 +503,48 @@ test('difflib อ่านพจนานุกรมกลางจาก dicti
     });
 
     assert.strictEqual(result.text, 'เงิน');
+});
+
+test('difflib แก้คำผิดติดกันสองคำในบรรทัดเดียวกันได้', function () {
+    const result = difflibImprove.improveText('นวตกรรมสงคม', {
+        master: [],
+        words: [],
+        dictionary: ['นวัตกรรม', 'สังคม']
+    });
+
+    assert.strictEqual(result.text, 'นวัตกรรมสังคม');
+    assert.strictEqual(result.changed, 1);
+});
+
+test('difflib แก้คำผิดในบรรทัดยาวที่ยังมีคำอื่นไม่รู้จักคั่นอยู่', function () {
+    const input = 'เห็นควรอนุมัตให้เบิกจ่ายได้ตามจำนวนเงินข้างต้น';
+
+    const result = difflibImprove.improveText(input, {
+        master: [],
+        words: [],
+        dictionary: [
+            'เห็น', 'ควร', 'อนุมัติ', 'ให้', 'เบิก', 'จ่าย',
+            'ได้', 'ตาม', 'จำนวนเงิน'
+        ]
+    });
+
+    assert.strictEqual(
+        result.text,
+        'เห็นควรอนุมัติให้เบิกจ่ายได้ตามจำนวนเงินข้างต้น'
+    );
+    assert.strictEqual(result.changed, 1);
+});
+
+test('difflib เลือกคำที่เก็บตัวอักษรเดิมไว้ครบเมื่อความใกล้เท่ากัน', function () {
+    const result = difflibImprove.improveText('บสำคัญค้างจ่าย', {
+        master: [],
+        words: [],
+        dictionary: ['สำคัญ', 'ใบสำคัญ', 'ค้างจ่าย']
+    });
+
+    // "สำคัญ" ก็ใกล้เท่ากันแต่ทำให้ "บ" หาย — ต้องเลือก "ใบสำคัญ"
+    assert.strictEqual(result.text, 'ใบสำคัญค้างจ่าย');
+    assert.strictEqual(result.changed, 1);
 });
 
 test('ocr-config ค่าเริ่มต้นใช้ AI และบันทึก/คืนค่า difflib ได้', function () {
