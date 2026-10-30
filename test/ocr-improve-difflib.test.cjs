@@ -219,10 +219,36 @@ test('difflib ตัดเลขเดี่ยวที่ OCR ใส่เก�
 
     assert.strictEqual(
         result.text,
-        'ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์\n' +
+        'ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์ ' +
         'จำนวน 3 รายการ'
     );
     assert.strictEqual(result.strays, 1);
+});
+
+test('difflib รวมบรรทัดจำนวนรายการเข้ากับคำอธิบายรายการก่อนหน้า', function () {
+    const result = difflibImprove.improveText(
+        'ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์\n' +
+        'จำนวน 3 รายการ',
+        { master: [], words: [], dictionary: [] }
+    );
+
+    assert.strictEqual(
+        result.text,
+        'ค่าบริการถ่ายภาพตัวอย่างและวิเคราะห์ธาตุด้วยกล้องจุลทรรศน์ ' +
+        'จำนวน 3 รายการ'
+    );
+    assert.strictEqual(result.quantities, 1);
+});
+
+test('difflib ไม่รวมจำนวนรายการเมื่ออยู่บรรทัดแรก', function () {
+    const result = difflibImprove.improveText('จำนวน 3 รายการ', {
+        master: [],
+        words: [],
+        dictionary: []
+    });
+
+    assert.strictEqual(result.text, 'จำนวน 3 รายการ');
+    assert.strictEqual(result.quantities, 0);
 });
 
 test('difflib ไม่แตะเลขท้ายบรรทัดของป้ายสั้นหรือจำนวนเงิน', function () {

@@ -996,6 +996,45 @@ function reassemblePhrases(text, phrases) {
     return { text: result, count: count };
 }
 
+// บรรทัดจำนวนรายการที่ OCR อ่านแยกจากคำอธิบาย เช่น "จำนวน 3 รายการ"
+const QUANTITY_LINE = /^จำนวน[ \t]+[0-9\u0E50-\u0E59]+[ \t]+รายการ$/;
+
+/**
+ * รวมบรรทัดจำนวนรายการ ("จำนวน 3 รายการ") เข้ากับบรรทัดคำอธิบายก่อนหน้า
+ *
+ * OCR อ่านตารางแล้วมักแยกคำอธิบายกับจำนวนเป็นคนละบรรทัด — รวมให้เป็นค่า
+ * เดียวโดยคั่นด้วยช่องว่าง (เฉพาะเมื่อมีบรรทัดก่อนหน้าที่ไม่ว่าง)
+ *
+ * @param {string} text
+ * @returns {{text: string, count: number}}
+ */
+function mergeItemQuantities(text) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const out = [];
+    let count = 0;
+
+    lines.forEach(function (line) {
+        const value = line.trim();
+        const previous = out.length > 0 ? out[out.length - 1].trim() : '';
+
+        if (
+            QUANTITY_LINE.test(value) &&
+            previous !== '' &&
+            !QUANTITY_LINE.test(previous)
+        ) {
+            out[out.length - 1] =
+                out[out.length - 1].replace(/[ \t]+$/, '') + ' ' + value;
+
+            count += 1;
+            return;
+        }
+
+        out.push(line);
+    });
+
+    return { text: out.join('\n'), count: count };
+}
+
 // หาคำที่ใกล้ที่สุดในกลุ่มเดียว — คืน { word, source } หรือ null
 // lengthTolerance = ความยาวต่างได้กี่ตัว (ไม่ส่ง = ตามระยะแก้ไขของกลุ่ม)
 function matchInGroup(token, group, cutoff, counts, lengthTolerance) {
@@ -1789,12 +1828,16 @@ function improveText(text, options) {
         buildPhrases(opts.words)
     );
 
+    // รวมบรรทัดจำนวนรายการเข้ากับคำอธิบายรายการก่อนหน้า
+    const merged = mergeItemQuantities(reassembled.text);
+
     return {
-        text: reassembled.text,
+        text: merged.text,
         changed: replacements.length,
         dots: cleaned.removed,
         strays: strayed.removed,
         phrases: reassembled.count,
+        quantities: merged.count,
         replacements: replacements
     };
 }
