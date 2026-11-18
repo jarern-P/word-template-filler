@@ -162,7 +162,9 @@ contextBridge.exposeInMainWorld(
             ),
 
         // ดึงข้อความจากไฟล์ PDF (ใช้กับปุ่ม "ข้อมูล")
-        // payload = { data, joinLines } — คืน { ok, text, joined, ocrPages, ocrError }
+        // payload = { data, joinLines, layout }
+        // คืน { ok, text, joined, ocrPages, ocrError, layout }
+        // layout = true → ข้อความถูกจัดย่อหน้า/เว้นวรรคตามพิกัดของบรรทัด
         // หน้าที่เป็นรูป (ไฟล์สแกน) ถูก OCR ด้วย PaddleOCR ตามค่าที่ตั้งไว้
         extractPdfText: (payload) =>
             ipcRenderer.invoke(

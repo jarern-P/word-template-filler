@@ -3307,6 +3307,11 @@ ipcMain.handle(
             const joinLines =
                 !payload || payload.joinLines !== false;
 
+            // จัดข้อความตามพิกัดที่อ่านได้ (ย่อหน้า/เว้นวรรคตามตำแหน่งจริง)
+            // ปิดได้ด้วย payload.layout = false
+            const preserveLayout =
+                !payload || payload.layout !== false;
+
             const sendProgress = function (progress) {
 
                 if (event.sender.isDestroyed()) {
@@ -3343,7 +3348,8 @@ ipcMain.handle(
                         pageCount: base.pageCount || 0,
                         ocrPages: [],
                         ocrError: null,
-                        provider: "iloveapi"
+                        provider: "iloveapi",
+                        layout: base.layout === true
                     };
                 }
 
@@ -3367,7 +3373,8 @@ ipcMain.handle(
 
                     const converted =
                         await extractPdfText(ocrPdf, {
-                            joinLines: joinLines
+                            joinLines: joinLines,
+                            layout: preserveLayout
                         });
 
                     if (String(converted.text || "").trim() === "") {
@@ -3389,7 +3396,8 @@ ipcMain.handle(
                         pageCount: converted.pageCount || 0,
                         ocrPages: ocrPages,
                         ocrError: null,
-                        provider: "iloveapi"
+                        provider: "iloveapi",
+                        layout: converted.layout === true
                     };
 
                 } catch (error) {
@@ -3409,7 +3417,8 @@ ipcMain.handle(
                         ocrError:
                             (error && error.message) ||
                             "OCR ด้วย i love api ไม่สำเร็จ",
-                        provider: "iloveapi"
+                        provider: "iloveapi",
+                        layout: false
                     };
                 }
             }
@@ -3488,6 +3497,8 @@ ipcMain.handle(
                         ocr: useOcr,
                         ocrAll: useOcr && settings.mode === "always",
                         ocrPage: ocrPage,
+                        // จัดข้อความตามพิกัดที่ OCR/ชั้นข้อความให้มา
+                        layout: preserveLayout,
                         onProgress: sendProgress
                     }
                 );
@@ -3502,6 +3513,8 @@ ipcMain.handle(
                 ocrPages: result.ocrPages || [],
                 // แจ้งเตือนเมื่อ OCR ล้มเหลว (ข้อความจากชั้นข้อความยังใช้ได้)
                 ocrError: result.ocrError || null,
+                // true = ข้อความมีย่อหน้า/ช่องว่างตามพิกัด (หน้าจอต้องคงช่องว่างไว้)
+                layout: result.layout === true,
                 provider: settings.provider
             };
 

@@ -4243,6 +4243,16 @@ body.table-ratio-dragging .table-ratio-handle {
     border-radius: var(--radius);
 }
 
+/* ข้อความที่จัดตามพิกัด (OCR/PDF) — ใช้ฟอนต์ความกว้างเท่ากัน
+   เพื่อให้ช่องว่างนำหน้า/คั่นทำให้คอลัมน์ตรงกัน */
+.data-source-text.is-layout {
+    font-family: ui-monospace, "Cascadia Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: pre;
+    overflow-x: auto;
+}
+
 /* ── ฝึก OCR: รายการบรรทัด + ช่องแก้ข้อความ ── */
 
 .ocr-training-list {

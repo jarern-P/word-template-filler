@@ -139,13 +139,19 @@
             throw error;
         }
 
+        // layout = ข้อความถูกจัดตามพิกัด (มีย่อหน้า/ช่องว่างคั่น)
+        const layout = result.layout === true;
+
         return {
-            text: normalizeText(result.text || ''),
+            text: normalizeText(result.text || '', {
+                preserveLayout: layout
+            }),
             joined: Number(result.joined) || 0,
             ocrPages: Array.isArray(result.ocrPages)
                 ? result.ocrPages
                 : [],
-            ocrError: result.ocrError || null
+            ocrError: result.ocrError || null,
+            layout: layout
         };
     }
 
@@ -155,13 +161,23 @@
 
     // รวมช่องว่างซ้ำ, ตัดช่องว่างหัวท้ายแต่ละบรรทัด
     // และยุบบรรทัดว่างติดกันให้เหลือบรรทัดเดียว
-    function normalizeText(text) {
+    //
+    // options.preserveLayout = true → เก็บช่องว่างนำหน้า/ช่องว่างคั่นไว้
+    // (ใช้กับข้อความที่จัดตามพิกัดจาก OCR/PDF — ดู src/main/layout-text.cjs)
+    function normalizeText(text, options) {
+        const preserveLayout = Boolean(options && options.preserveLayout);
+
         const lines = String(text == null ? '' : text)
             .replace(/\r\n?/g, '\n')
             .replace(/\u00a0/g, ' ')
             .replace(/[\u200b\u200e\u200f\ufeff]/g, '')
             .split('\n')
             .map(function (line) {
+                if (preserveLayout) {
+                    // เก็บช่องว่างนำหน้า/ระหว่างคอลัมน์ แต่ตัดช่องว่างท้ายบรรทัด
+                    return line.replace(/\t/g, ' ').replace(/[ ]+$/, '');
+                }
+
                 return line.replace(/[ \t]+/g, ' ').trim();
             });
 
@@ -216,7 +232,9 @@
             ocrPages: Array.isArray(result.ocrPages)
                 ? result.ocrPages
                 : [],
-            ocrError: result.ocrError || null
+            ocrError: result.ocrError || null,
+            // ข้อความ PDF อาจถูกจัดตามพิกัด (docx ไม่มีพิกัด)
+            layout: result.layout === true
         };
     }
 

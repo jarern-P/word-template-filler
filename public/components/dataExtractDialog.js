@@ -106,6 +106,9 @@
     let settings = null;   // ค่าที่ส่งมาตอน open
     let mode = 'report';
 
+    // ข้อความในช่องถูกจัดตามพิกัด (รูปแบบ/ช่องว่างจาก OCR) หรือไม่
+    let layoutText = false;
+
     // กำลังอ่านไฟล์อยู่หรือไม่ — ใช้ตัดสินว่าจะแสดงความคืบหน้าหรือไม่
     let readingFile = false;
 
@@ -405,7 +408,17 @@
 
     function sourceText() {
         const textarea = el('dataSourceText');
-        return scope.DataExtract.normalizeText(textarea ? textarea.value : '');
+
+        const text = scope.DataExtract.normalizeText(
+            textarea ? textarea.value : '',
+            { preserveLayout: layoutText }
+        );
+
+        // ช่องว่างนำหน้าจากการจัดตามพิกัดเป็นเพียงการแสดงผล
+        // (ไม่ใช่ข้อมูล) — ตัดออกก่อนจับ regex เพื่อให้ pattern ที่ใช้ ^ ยังทำงาน
+        return layoutText
+            ? text.replace(/^[ \t]+/gm, '')
+            : text;
     }
 
     function setSourceStatus(text, kind) {
@@ -443,6 +456,11 @@
 
             const textarea = el('dataSourceText');
 
+            // ข้อความจาก PDF ที่มีพิกัดถูกจัดย่อหน้า/เว้นวรรคมาแล้ว
+            // (ใช้ฟอนต์ความกว้างเท่ากันเพื่อให้คอลัมน์ตรงกัน)
+            layoutText = Boolean(result && result.layout);
+            textarea.classList.toggle('is-layout', layoutText);
+
             textarea.value = text;
 
             // ข้อความชุดใหม่ — ย้อนกลับไปชุดก่อนหน้าไม่ได้แล้ว
@@ -465,6 +483,9 @@
                 (ocrPages.length > 0
                     ? ' · OCR ' + ocrPages.length + ' หน้า'
                     : '') +
+                (layoutText
+                    ? ' · จัดข้อความตามพิกัด'
+                    : '') +
                 (result && result.ocrError && text !== ''
                     ? ' · OCR บางหน้าไม่สำเร็จ'
                     : ''),
@@ -476,7 +497,11 @@
             hideResults();
 
             // เก็บบรรทัดไว้ให้ผู้ใช้ตรวจ/แก้ในหน้า ฝึก OCR (ใช้เป็น few-shot)
-            saveTrainingLines(file.name, text);
+            // — ยุบช่องว่างจากการจัดตามพิกัดก่อนเก็บ (คลังฝึกใช้ข้อความล้วน)
+            saveTrainingLines(
+                file.name,
+                scope.DataExtract.normalizeText(text)
+            );
 
             // OCR อ่านไม่ได้และไม่มีข้อความจากชั้นข้อความ = บอกสาเหตุให้ผู้ใช้รู้
             // (ไฟล์ที่มีชั้นข้อความยังใช้ต่อได้ จึงไม่ต้องรบกวนด้วยกล่องข้อความ)

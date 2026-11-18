@@ -35,6 +35,12 @@ const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
 
 const { joinWrappedLines } = require("./line-join.cjs");
 
+const {
+    joinParts,
+    estimateCellWidth,
+    layoutLines
+} = require("./layout-text.cjs");
+
 let ocrPaddle = null;
 
 function getOcrPaddle() {
@@ -149,30 +155,18 @@ function pageLines(items) {
                 return a.x - b.x;
             });
 
-            let text = "";
-            let previousEnd = null;
+            // ความกว้างตัวอักษรของบรรทัดนี้ — ใช้เติมช่องว่างตามระยะจริง
+            // (ช่องว่างระหว่างคำ 1 ช่อง, ระหว่างคอลัมน์หลายช่อง)
+            const cell = estimateCellWidth([{ parts: line.parts }]);
 
-            line.parts.forEach(function (part) {
-                if (previousEnd !== null) {
-                    const gap = part.x - previousEnd;
-
-                    // เติมช่องว่างเฉพาะเมื่อมีช่องว่างจริงในเอกสาร
-                    if (
-                        gap > WORD_GAP &&
-                        !/\s$/.test(text) &&
-                        !/^\s/.test(part.text)
-                    ) {
-                        text += " ";
-                    }
-                }
-
-                text += part.text;
-                previousEnd = part.x + part.width;
+            const text = joinParts(line.parts, {
+                cellWidth: cell,
+                wordGap: WORD_GAP
             });
 
             const raw = text
                 .replace(/\u00a0/g, " ")
-                .replace(/[ \t]+/g, " ")
+                .replace(/\t/g, " ")
                 .replace(/[\u200b\u200e\u200f\ufeff]/g, "");
 
             const left = Math.min.apply(null, line.parts.map(function (part) {
@@ -192,6 +186,8 @@ function pageLines(items) {
                 text: raw.trim(),
                 left: left,
                 right: right,
+                // ชิ้นข้อความของบรรทัด (ใช้จัดช่องว่างภายในบรรทัด/ประมาณความกว้างตัวอักษร)
+                parts: line.parts,
                 // กลับทิศ y ของ PDF (เพิ่มขึ้น = ลงล่าง) ให้เทียบระยะบรรทัดง่าย
                 top: -line.y,
                 bottom: -line.y + (height || 0),
@@ -204,6 +200,79 @@ function pageLines(items) {
         });
 }
 
+// คืนพิกัดของแต่ละบรรทัดหลังเย็บ (1 บรรทัดผลลัพธ์อาจมาจากหลายบรรทัดต้นฉบับ)
+//   ใช้พิกัดของทุกบรรทัดในกลุ่ม: ซ้ายสุด/ขวาสุด/บนสุด/ล่างสุด
+//   บรรทัดที่ไม่มีพิกัด (เช่น Gemini) จะถูกจัดวางต่อท้ายตามลำดับเดิม
+function joinedGeometry(sourceLines, joined) {
+    const decisions = Array.isArray(joined && joined.decisions)
+        ? joined.decisions
+        : [];
+
+    const groups = [];
+    let start = 0;
+
+    for (let index = 1; index < sourceLines.length; index++) {
+        const decision = decisions[index - 1];
+
+        if (!decision || decision.join !== true) {
+            groups.push([start, index - 1]);
+            start = index;
+        }
+    }
+
+    if (sourceLines.length > 0) {
+        groups.push([start, sourceLines.length - 1]);
+    }
+
+    return groups.map(function (group, groupIndex) {
+        const members = sourceLines.slice(group[0], group[1] + 1);
+
+        const withGeometry = members.filter(function (line) {
+            return (
+                Number.isFinite(Number(line.left)) &&
+                Number.isFinite(Number(line.top))
+            );
+        });
+
+        const text = joined && Array.isArray(joined.lines)
+            ? joined.lines[groupIndex]
+            : members.map(function (line) {
+                return line.text;
+            }).join(" ");
+
+        if (withGeometry.length === 0) {
+            return { text: String(text == null ? "" : text) };
+        }
+
+        return {
+            text: String(text == null ? "" : text),
+            left: Math.min.apply(null, withGeometry.map(function (line) {
+                return Number(line.left);
+            })),
+            right: Math.max.apply(null, withGeometry.map(function (line) {
+                const right = Number(line.right);
+
+                return Number.isFinite(right)
+                    ? right
+                    : Number(line.left);
+            })),
+            top: Math.min.apply(null, withGeometry.map(function (line) {
+                return Number(line.top);
+            })),
+            bottom: Math.max.apply(null, withGeometry.map(function (line) {
+                const bottom = Number(line.bottom);
+
+                return Number.isFinite(bottom)
+                    ? bottom
+                    : Number(line.top);
+            })),
+            // ใช้ชิ้นข้อความของบรรทัดแรกเพื่อประมาณความกว้างตัวอักษร
+            // (พิกัดของกลุ่มที่เย็บแล้วกว้างกว่าบรรทัดจริง)
+            parts: members[0].parts
+        };
+    });
+}
+
 /**
  * อ่านข้อความทุกหน้าของ PDF (เฉพาะชั้นข้อความในไฟล์)
  *
@@ -213,6 +282,8 @@ function pageLines(items) {
  * @param {Uint8Array|Buffer} data เนื้อไฟล์ PDF
  * @param {Object} [options]
  *   joinLines  = false เพื่อไม่เย็บบรรทัดที่ถูกตัดขึ้นบรรทัดใหม่ (ค่าเริ่มต้น = เย็บ)
+ *   layout     = false เพื่อไม่จัดข้อความตามพิกัด (ค่าเริ่มต้น = จัด)
+ *                ข้อความที่จัดแล้วจะมีย่อหน้า/เว้นวรรคตามตำแหน่ง x ของบรรทัด
  *   ocr        = true เพื่อ OCR หน้าที่ไม่มีชั้นข้อความ (ค่าเริ่มต้น = ปิด)
  *   ocrAll     = true เพื่อ OCR ทุกหน้า แม้มีชั้นข้อความอยู่แล้ว
  *   ocrPage    = ฟังก์ชัน OCR หนึ่งหน้า (ไม่ส่ง = ใช้ PaddleOCR ในเครื่อง)
@@ -220,8 +291,10 @@ function pageLines(items) {
  *   onProgress = ฟังก์ชันรับความคืบหน้า
  *                { page, pageCount, status: 'reading' | 'ocr' | 'ocr-prepare' }
  * @returns {Promise<{text:string, joined:number, pageCount:number,
- *                    emptyPages:number[], ocrPages:number[], ocrError:string|null}>}
+ *                    emptyPages:number[], ocrPages:number[], ocrError:string|null,
+ *                    layout:boolean}>}
  *   joined     = จำนวนจุดที่เย็บบรรทัดเข้าด้วยกัน
+ *   layout     = true เมื่อข้อความถูกจัดตามพิกัด (มีช่องว่างนำหน้า/คั่น)
  *   emptyPages = หน้าที่อ่านไม่ได้ทั้งชั้นข้อความและ OCR (ไม่มีข้อความ)
  *   ocrPages   = เลขหน้าที่ใช้ข้อความจาก OCR
  *   ocrError   = ข้อความแจ้งเมื่อ OCR ล้มเหลว (ไม่ทำให้การอ่าน PDF ทั้งไฟล์ล้มเหลว)
@@ -229,6 +302,7 @@ function pageLines(items) {
 async function extractPdfText(data, options) {
     const opts = options || {};
     const joinLines = opts.joinLines !== false;
+    const preserveLayout = opts.layout !== false;
     const useOcr = opts.ocr === true;
     const ocrAll = opts.ocrAll === true;
 
@@ -261,6 +335,9 @@ async function extractPdfText(data, options) {
 
     // จำนวนจุดที่เย็บบรรทัด (รายงานให้หน้าจอรู้ว่าทำอะไรไปบ้าง)
     let joinedCount = 0;
+
+    // มีหน้าที่ข้อความถูกจัดตามพิกัดจริงหรือไม่ (ส่งให้หน้าจอรู้ว่าต้องคงช่องว่าง)
+    let layoutApplied = false;
 
     try {
         for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
@@ -367,10 +444,15 @@ async function extractPdfText(data, options) {
                     continue;
                 }
 
+                // บรรทัดว่างถูกข้ามตั้งแต่ต้น เพื่อให้ index ของผลเย็บตรงกับพิกัด
+                const geometrySource = sourceLines.filter(function (line) {
+                    return line && String(line.text == null ? "" : line.text).trim() !== "";
+                });
+
                 const result = joinLines
-                    ? joinWrappedLines(sourceLines)
+                    ? joinWrappedLines(geometrySource)
                     : {
-                        lines: sourceLines.map(function (line) {
+                        lines: geometrySource.map(function (line) {
                             return line.text;
                         }),
                         joined: 0
@@ -378,7 +460,16 @@ async function extractPdfText(data, options) {
 
                 joinedCount += result.joined;
 
-                const text = result.lines.join("\n");
+                const plainText = result.lines.join("\n");
+
+                // จัดบรรทัดตามพิกัด x/y (พิกัดของบรรทัดที่ถูกเย็บ = ครอบคลุมทุกบรรทัด)
+                const text = preserveLayout
+                    ? layoutLines(
+                        joinedGeometry(geometrySource, result)
+                    ).join("\n")
+                    : plainText;
+
+                if (text !== plainText) layoutApplied = true;
 
                 if (text !== "") lines.push(text);
 
@@ -396,10 +487,13 @@ async function extractPdfText(data, options) {
         pageCount: pageCount,
         emptyPages: emptyPages,
         ocrPages: ocrPages,
-        ocrError: ocrError
+        ocrError: ocrError,
+        layout: layoutApplied
     };
 }
 
 module.exports = {
-    extractPdfText: extractPdfText
+    extractPdfText: extractPdfText,
+    // เปิดให้เทสต์ตรวจการจับคู่พิกัดหลังเย็บบรรทัด
+    joinedGeometry: joinedGeometry
 };

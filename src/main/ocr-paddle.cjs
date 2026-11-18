@@ -16,6 +16,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { joinParts, estimateCellWidth } = require('./layout-text.cjs');
+
 // ความละเอียดที่ใช้วาดหน้า (~200 DPI)
 // น้อยกว่านี้ตัวอักษรไทยเล็ก ๆ จะอ่านผิดมาก, มากกว่านี้ช้ามากโดยไม่คุ้ม
 const OCR_SCALE = 200 / 72;
@@ -275,12 +277,29 @@ function toPositionedLines(result) {
                 return Number.isFinite(Number(box.x)) && Number.isFinite(Number(box.y));
             });
 
-        const text = parts
-            .map(function (item) {
-                return String(item.text || '').trim();
+        // ชิ้นข้อความพร้อมพิกัด — ใช้เติมช่องว่างตามระยะจริง
+        // (คำติดกัน 1 ช่อง, คอลัมน์ห่างกันหลายช่อง)
+        const textParts = parts.map(function (item) {
+            const box = item.box || {};
+
+            return {
+                x: Number.isFinite(Number(box.x)) ? Number(box.x) : null,
+                width: Number(box.width) || 0,
+                text: String(item.text || '').trim()
+            };
+        });
+
+        const text = boxes.length > 0
+            ? joinParts(textParts, {
+                // OCR แยกคำมาแล้ว จึงไม่มีระยะ "ติดกัน" ภายในคำให้กัน
+                wordGap: 0,
+                cellWidth: estimateCellWidth([{ parts: textParts }])
             })
-            .filter(Boolean)
-            .join(' ');
+            : textParts
+                .map(function (part) {
+                    return part.text;
+                })
+                .join(' ');
 
         if (text === '') return;
 
@@ -326,6 +345,7 @@ function toPositionedLines(result) {
             right: right,
             top: top,
             bottom: bottom,
+            parts: textParts,
             confidence: confidence,
             hadSpaceAfter: / $/.test(text)
         });
