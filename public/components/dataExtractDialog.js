@@ -5,6 +5,10 @@
 //       - แก้ regex ของแต่ละ field
 //       - อัปโหลด/วางข้อความเพื่อ "ทดสอบ" เท่านั้น (ไม่บันทึกค่าที่ทดสอบ)
 //       - ปุ่ม "บันทึก regex" เขียนกลับลงแม่แบบ
+//   mode = 'kv'      (หน้าตั้งค่าแม่แบบ → ปุ่ม "คีย์-ค่า")
+//       - แก้ regex ชุด "คีย์-ค่า" ของแต่ละ field (Key-Value Pair Extraction)
+//       - หน้าตาเหมือนโหมด config — ต่างแค่คนละชุด regex
+//       - ชุดนี้ถูกใช้เมื่อกด "ปรับปรุง": จับค่าแล้วเขียนเป็น "field: ค่า"
 //   mode = 'report'  (หน้ารายงาน → ปุ่ม "ใส่ข้อมูล")
 //       - ใช้ regex ที่บันทึกไว้กับแม่แบบ
 //       - ปุ่ม "เติมข้อมูลลงฟอร์ม" เอาค่าที่จับได้ไปใส่ช่องกรอกของหน้ารายงาน
@@ -37,7 +41,8 @@
         '    <p id="dataDialogMeta" class="preview-meta"></p>',
         '    <div class="data-body">',
         '        <section id="dataPatternSection" class="data-patterns">',
-        '            <h3>Regex ของแต่ละ field</h3>',            '            <p class="hint">พิมพ์ regex ที่ใช้ดึงค่าของช่องนั้นจากข้อความ ' +
+        '            <h3 id="dataPatternTitle">Regex ของแต่ละ field</h3>',
+        '            <p id="dataPatternHint" class="hint">พิมพ์ regex ที่ใช้ดึงค่าของช่องนั้นจากข้อความ ' +
             'เช่น <code>เลขที่\\s*([^\\n]+)</code> — ถ้ามีวงเล็บจะใช้กลุ่มแรก ' +
             'ถ้าไม่มีจะใช้ข้อความที่ตรงทั้งก้อน (พิมพ์แบบ <code>/.../i</code> เพื่อใส่ flag ได้)' +
             '<br>ช่องที่เป็น "รายการ" ใช้ regex ของ <b>1 แถว</b> และเก็บทุก match เป็นแถว ' +
@@ -277,7 +282,8 @@
         el('dataDialogMeta').textContent = [
             settings.templateName ? 'แม่แบบ: ' + settings.templateName : '',
             (settings.fields || []).length + ' field',
-            patternCountOf(patterns) + ' field มี regex'
+            patternCountOf(patterns) +
+                (mode === 'kv' ? ' field มี regex คีย์-ค่า' : ' field มี regex')
         ].filter(Boolean).join(' · ');
     }
 
@@ -299,7 +305,10 @@
 
     function renderPatternList() {
         const list = el('dataPatternList');
-        const patterns = settings.patterns || {};
+        // โหมด kv ใช้รายการ field เดียวกัน แต่ค่ามาจากชุดคีย์-ค่า
+        const patterns = mode === 'kv'
+            ? (settings.kvPatterns || {})
+            : (settings.patterns || {});
         const fields = settings.fields || [];
         const types = settings.types || {};
         const groups = settings.listGroups || {};
@@ -651,6 +660,169 @@
         }
     }
 
+    // regex ชุดคีย์-ค่าของแม่แบบ — โหมด kv ใช้ค่าที่กำลังแก้ในรายการ
+    function currentKvPatterns() {
+        if (mode === 'kv') return collectPatterns();
+
+        return settings.kvPatterns || {};
+    }
+
+    // สรุปว่าการแก้คำผิดรอบนี้ทำอะไรไปบ้าง
+    function correctSummary(engine, response) {
+        const parts = [];
+
+        if (engine === 'difflib') {
+            if (Number(response.changed) > 0) {
+                parts.push('แก้คำ ' + response.changed + ' คำ');
+            }
+
+            if (Number(response.dots) > 0) {
+                parts.push('แทนจุด ' + response.dots + ' จุด');
+            }
+
+            if (Number(response.phrases) > 0) {
+                parts.push('ต่อวลี ' + response.phrases + ' จุด');
+            }
+        } else if (Number(response.masked) > 0) {
+            parts.push('ปกปิดคำเฉพาะ ' + response.masked + ' จุด');
+        }
+
+        return parts.join(' · ');
+    }
+
+    // แก้คำผิดด้วยวิธีที่ตั้งไว้ (AI หรือ difflib) — คืนข้อความที่แก้แล้ว
+    // skipped = 'key' เมื่อยังไม่ได้ตั้ง Gemini API key (ผู้เรียกเลือกเองว่าจะข้ามหรือหยุด)
+    async function correctText(original) {
+        const improve = await improveConfig();
+
+        if (improve.engine === 'ai' && !improve.hasKey) {
+            return { skipped: 'key' };
+        }
+
+        setSourceStatus(
+            improve.engine === 'difflib'
+                ? 'กำลังแก้คำผิดด้วย difflib.js...'
+                : 'กำลังให้ AI ตรวจคำผิด...'
+        );
+
+        const response = await window.electronAPI.ocrImproveText({
+            text: original,
+            // ฟิลด์ของแม่แบบ (ชื่อ + ชนิด + ตัวอย่าง) — main process แนบไปใน prompt
+            // ตามสวิตช์ "ส่งชื่อฟิลด์ไปใน prompt" ในหน้า ตั้งค่าแม่แบบ
+            fields: improveFields()
+        });
+
+        if (!response || response.ok === false) {
+            throw new Error(
+                (response && response.error) || 'ปรับปรุงข้อความไม่สำเร็จ'
+            );
+        }
+
+        const improved = String(response.text || '');
+
+        if (improved.trim() === '') {
+            throw new Error(
+                improve.engine === 'difflib'
+                    ? 'difflib.js ไม่ได้ส่งข้อความกลับมา'
+                    : 'AI ไม่ได้ส่งข้อความกลับมา'
+            );
+        }
+
+        return { improved: improved, response: response, engine: improve.engine };
+    }
+
+    // กด "ปรับปรุง" → แก้คำผิดก่อน แล้วจับค่าด้วย regex คีย์-ค่า
+    // เขียนทับเป็น "field: ค่า"
+    async function runKvImprove(textarea, original) {
+        if (improveBusy) return;
+
+        const patterns = currentKvPatterns();
+        let corrected = original;
+        let fixLabel = '';
+        let fixWarn = '';
+
+        if (window.electronAPI && window.electronAPI.ocrImproveText) {
+            improveBusy = true;
+            updateImproveState();
+            hideResults();
+
+            try {
+                const fixed = await correctText(original);
+
+                if (fixed.skipped === 'key') {
+                    fixWarn = 'ข้ามการแก้คำผิด (ยังไม่ใส่ Gemini API key)';
+                } else {
+                    corrected = fixed.improved;
+
+                    const summary = correctSummary(
+                        fixed.engine,
+                        fixed.response
+                    );
+
+                    fixLabel =
+                        fixed.engine === 'difflib'
+                            ? 'แก้คำผิดด้วย difflib.js'
+                            : 'แก้คำผิดด้วย AI';
+
+                    fixLabel += summary === '' ? ' · ไม่พบคำที่ต้องแก้' : ' · ' + summary;
+                }
+
+            } catch (error) {
+                // แก้คำผิดไม่สำเร็จ = หยุด ไม่จับคู่ต่อจากข้อความที่ยังผิด
+                setSourceStatus(
+                    (error && error.message) || 'แก้คำผิดไม่สำเร็จ',
+                    'error'
+                );
+                return;
+
+            } finally {
+                improveBusy = false;
+                updateImproveState();
+            }
+        } else {
+            fixWarn = 'ข้ามการแก้คำผิด (เปิดหน้านี้ในแอปเพื่อแก้คำผิด)';
+        }
+
+        const result = scope.DataExtract.keyValueText(corrected, patterns);
+        const kvErrors =
+            result.errors.length > 0
+                ? ' · regex ไม่ถูกต้อง ' + result.errors.length + ' field'
+                : '';
+
+        if (result.found === 0) {
+            // ยังเก็บผลการแก้คำผิดไว้ให้ผู้ใช้ แม้จะจับคู่ไม่ได้
+            if (corrected !== original) {
+                improveUndo = original;
+                el('dataImproveUndoBtn').hidden = false;
+                textarea.value = corrected;
+                updateImproveState();
+            }
+
+            setSourceStatus(
+                'ไม่พบค่าที่ตรงกับ regex คีย์-ค่า' +
+                kvErrors +
+                (fixWarn !== '' ? ' · ' + fixWarn : ''),
+                'warn'
+            );
+
+            return;
+        }
+
+        improveUndo = original;
+        el('dataImproveUndoBtn').hidden = false;
+
+        textarea.value = result.text;
+        updateImproveState();
+        hideResults();
+
+        setSourceStatus(
+            (fixLabel !== '' ? fixLabel + ' · ' : '') +
+            (fixWarn !== '' ? fixWarn + ' · ' : '') +
+            'จับคู่ คีย์-ค่าแล้ว: ' + result.found + '/' + result.total + ' field' +
+            kvErrors
+        );
+    }
+
     // ส่งข้อความให้ Gemini ตรวจคำผิดและจัดเป็น "ชื่อฟิลด์: ค่า" ทีละบรรทัด
     async function runImprove() {
         if (improveBusy) return;
@@ -662,6 +834,12 @@
             await scope.AppDialog.alert(
                 'วางข้อความหรืออัปโหลดไฟล์ .pdf / .docx ก่อนใช้ปุ่มนี้'
             );
+            return;
+        }
+
+        // มีชุด regex คีย์-ค่า = แก้คำผิดก่อน แล้วจึงจับคู่ในเครื่อง
+        if (Object.keys(currentKvPatterns()).length > 0) {
+            await runKvImprove(textarea, original);
             return;
         }
 
@@ -678,9 +856,9 @@
         hideResults();
 
         try {
-            const improve = await improveConfig();
+            const fixed = await correctText(original);
 
-            if (improve.engine === 'ai' && !improve.hasKey) {
+            if (fixed.skipped === 'key') {
                 await scope.AppDialog.alert(
                     'ยังไม่ได้ใส่ API key ของ Gemini\n\n' +
                     'ไปที่ ตั้งค่า OCR › Gemini API แล้วบันทึก key ก่อน ' +
@@ -689,34 +867,9 @@
                 return;
             }
 
-            setSourceStatus(
-                improve.engine === 'difflib'
-                    ? 'กำลังปรับปรุงข้อความด้วย difflib.js...'
-                    : 'กำลังให้ AI ตรวจคำผิดและจัดเป็น key-value...'
-            );
-
-            const response = await window.electronAPI.ocrImproveText({
-                text: original,
-                // ฟิลด์ของแม่แบบ (ชื่อ + ชนิด + ตัวอย่าง) — main process แนบไปใน prompt
-                // ตามสวิตช์ "ส่งชื่อฟิลด์ไปใน prompt" ในหน้า ตั้งค่าแม่แบบ
-                fields: improveFields()
-            });
-
-            if (!response || response.ok === false) {
-                throw new Error(
-                    (response && response.error) || 'ปรับปรุงข้อความไม่สำเร็จ'
-                );
-            }
-
-            const improved = String(response.text || '');
-
-            if (improved.trim() === '') {
-                throw new Error(
-                    improve.engine === 'difflib'
-                        ? 'difflib.js ไม่ได้ส่งข้อความกลับมา'
-                        : 'AI ไม่ได้ส่งข้อความกลับมา'
-                );
-            }
+            const improve = { engine: fixed.engine };
+            const response = fixed.response;
+            const improved = fixed.improved;
 
             improveUndo = original;
             el('dataImproveUndoBtn').hidden = false;
@@ -987,7 +1140,9 @@
 
             const hint = document.createElement('p');
             hint.className = 'hint';
-            hint.textContent = 'กด "ทดสอบ" เพื่อดูว่าแต่ละ field จับค่าอะไรได้';
+            hint.textContent = mode === 'kv'
+                ? 'กด "ทดสอบ" เพื่อดูว่าแต่ละคู่จับค่าอะไรได้'
+                : 'กด "ทดสอบ" เพื่อดูว่าแต่ละ field จับค่าอะไรได้';
             body.appendChild(hint);
         }
     }
@@ -1095,7 +1250,61 @@
             return;
         }
 
+        if (mode === 'kv') {
+            renderKvResult();
+            return;
+        }
+
         runExtraction();
+    }
+
+    // ทดสอบชุดคีย์-ค่า: แสดงทุกคู่ที่ตั้งไว้ (ค่าที่ไม่พบก็แสดง)
+    function renderKvResult() {
+        const body = el('dataResultBody');
+        const pairs = scope.DataExtract.keyValuePairs(
+            sourceText(),
+            collectPatterns()
+        );
+
+        const found = pairs.filter(function (pair) {
+            return pair.error === null && pair.value !== '';
+        });
+
+        body.innerHTML = '';
+
+        const summary = document.createElement('p');
+        summary.className =
+            'hint' +
+            (pairs.some(function (pair) { return pair.error; }) ? ' error' : '');
+        summary.textContent = [
+            'จับได้ ' + found.length + ' field',
+            'ไม่พบ ' + (pairs.length - found.length) + ' field'
+        ].join(' · ');
+
+        body.appendChild(summary);
+
+        pairs.forEach(function (pair) {
+            if (pair.error) {
+                addResultRow(
+                    body,
+                    label,
+                    'regex ไม่ถูกต้อง: ' + pair.error,
+                    'error'
+                );
+                return;
+            }
+
+            addResultRow(
+                body,
+                pair.key,
+                pair.value === ''
+                    ? 'ไม่พบข้อมูลที่ตรงกับ regex'
+                    : pair.value,
+                pair.value === '' ? 'unmatched' : 'matched'
+            );
+        });
+
+        return pairs;
     }
 
     async function runFill() {
@@ -1232,6 +1441,7 @@
 
             // ไฟล์ค่าตั้งทั้งชุด (จากหน้าแก้ไข) ก็นำเข้าได้ — เอาเฉพาะ regex
             const source = parsed.settings.patterns || {};
+
             const fields = settings.fields || [];
 
             const matched = scope.TemplateSettings.matchFields(
@@ -1293,7 +1503,7 @@
     }
 
     async function savePatterns() {
-        if (!settings.onSavePatterns) {
+        if (!settings.onSavePatterns && !settings.onSaveKvPatterns) {
             return;
         }
 
@@ -1301,9 +1511,25 @@
 
         button.disabled = true;
 
+        const isKv = mode === 'kv';
+
         try {
-            await settings.onSavePatterns(collectPatterns());
-            setSourceStatus('บันทึก regex ลงแม่แบบแล้ว');
+            const patterns = collectPatterns();
+
+            if (isKv && !settings.onSaveKvPatterns) {
+                return;
+            }
+
+            if (isKv) {
+                await settings.onSaveKvPatterns(patterns);
+                setSourceStatus(
+                    'บันทึก regex คีย์-ค่าแล้ว: ' +
+                    Object.keys(patterns).length + ' field'
+                );
+            } else {
+                await settings.onSavePatterns(patterns);
+                setSourceStatus('บันทึก regex ลงแม่แบบแล้ว');
+            }
         } catch (error) {
             console.error(error);
 
@@ -1322,13 +1548,15 @@
 
     /**
      * options = {
-     *   mode: 'config' | 'report',
+     *   mode: 'config' | 'kv' | 'report' | 'source',
      *   title, templateName,
      *   fields: string[],
      *   types: { field: type },
      *   placeholders: { field: ข้อความตัวอย่าง },
      *   patterns: { field: regex },
+     *   kvPatterns: { field: regex },
      *   onSavePatterns: async (patterns) => {},
+     *   onSaveKvPatterns: async (patterns) => {},
      *   onFill: (values, result) => {}
      * }
      */
@@ -1338,23 +1566,45 @@
         settings = options || {};
         mode = settings.mode === 'config'
             ? 'config'
-            : (settings.mode === 'source' ? 'source' : 'report');
+            : (settings.mode === 'kv'
+                ? 'kv'
+                : (settings.mode === 'source' ? 'source' : 'report'));
 
         const isConfig = mode === 'config';
+        const isKv = mode === 'kv';
         const isSource = mode === 'source';
+
+        el('dataPatternTitle').textContent = isKv
+            ? 'Regex คีย์-ค่า ของแต่ละ field'
+            : 'Regex ของแต่ละ field';
+
+        el('dataPatternHint').textContent = isKv
+            ? 'ตั้ง regex ของแต่ละ field สำหรับจับคู่ คีย์ → ค่า — ' +
+                'กด “ปรับปรุง” ในกล่องข้อมูล ระบบจะแก้คำผิดก่อน ' +
+                '(ตามวิธีที่เลือกในหน้า ตั้งค่า OCR) แล้วจึงจับค่าด้วย regex ชุดนี้ ' +
+                'และเขียนข้อความใหม่เป็น “ชื่อ field: ค่า” ทีละบรรทัด ' +
+                'ถ้ามีวงเล็บจะใช้กลุ่มแรก ถ้าไม่มีจะใช้ข้อความที่ตรงทั้งก้อน ' +
+                '(พิมพ์แบบ /.../i เพื่อใส่ flag ได้) — ชุดนี้ไม่ถูกใช้ตอนกด “ใส่ข้อมูล” โดยตรง'
+            : 'พิมพ์ regex ที่ใช้ดึงค่าของช่องนั้นจากข้อความ ' +
+                'เช่น เลขที่\\s*([^\\n]+) — ถ้ามีวงเล็บจะใช้กลุ่มแรก ' +
+                'ถ้าไม่มีจะใช้ข้อความที่ตรงทั้งก้อน (พิมพ์แบบ /.../i เพื่อใส่ flag ได้) ' +
+                'ช่องที่เป็น "รายการ" ใช้ regex ของ 1 แถว และเก็บทุก match เป็นแถว ' +
+                'ถ้าอยู่กลุ่มเดียวกัน วงเล็บที่ 2, 3, ... คือคอลัมน์ที่ 2, 3, ... ของกลุ่ม';
 
         el('dataDialogTitle').textContent = settings.title || 'ใส่ข้อมูล';
 
-        updateMeta(settings.patterns || {});
+        updateMeta(isKv
+            ? (settings.kvPatterns || {})
+            : (settings.patterns || {}));
 
-        el('dataPatternSection').hidden = !isConfig;
-        el('dataTestBtn').hidden = !isConfig;
-        el('dataSavePatternsBtn').hidden = !isConfig;
-        el('dataFillBtn').hidden = isConfig;
+        el('dataPatternSection').hidden = !(isConfig || isKv);
+        el('dataTestBtn').hidden = !(isConfig || isKv);
+        el('dataSavePatternsBtn').hidden = !(isConfig || isKv);
+        el('dataFillBtn').hidden = isConfig || isKv;
 
-        // ส่งออก/นำเข้า regex มีเฉพาะโหมดแก้ค่าของแม่แบบ (หน้าข้อมูล)
-        el('dataSettingsExportBtn').hidden = !isConfig;
-        el('dataSettingsImportBtn').hidden = !isConfig;
+        // ส่งออก/นำเข้า regex มีเฉพาะโหมดแก้ค่าของแม่แบบ (หน้าข้อมูล/คีย์-ค่า)
+        el('dataSettingsExportBtn').hidden = !(isConfig || isKv);
+        el('dataSettingsImportBtn').hidden = !(isConfig || isKv);
 
         // โหมด "แหล่งข้อมูล" = เหลือแค่ช่องวางข้อความ/อัปโหลดไฟล์ + ปุ่มตกลง
         const results = overlay.querySelector('.data-results');
@@ -1376,7 +1626,7 @@
         updateImproveState();
         overlay.classList.add('open');
 
-        const focusTarget = isConfig
+        const focusTarget = (isConfig || isKv)
             ? overlay.querySelector('[data-pattern-field]')
             : el('dataSourceText');
 

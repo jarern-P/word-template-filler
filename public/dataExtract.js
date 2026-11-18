@@ -434,6 +434,79 @@
     }
 
     /**
+     * จับคู่ คีย์ → ค่า จากข้อความ (Key-Value Pair Extraction)
+     *   kvPatterns = { ชื่อคีย์: regex } — ใช้กลุ่มแรกที่จับได้ (หรือทั้งก้อน)
+     *   ต่างจาก apply ตรงที่ไม่ผูกกับชนิดของ field และไม่สน list/table
+     * @returns {{key: string, value: string, error: string|null}[]}
+     */
+    function keyValuePairs(text, kvPatterns) {
+        const source = String(text == null ? '' : text);
+        const pairs = [];
+
+        Object.keys(kvPatterns || {}).forEach(function (key) {
+            const pattern = String(kvPatterns[key] == null ? '' : kvPatterns[key]).trim();
+
+            if (pattern === '') return;
+
+            const parsed = parsePattern(pattern);
+
+            if (!parsed) {
+                pairs.push({
+                    key: key,
+                    value: '',
+                    error: 'regex ว่างหรือไม่ถูกต้อง'
+                });
+                return;
+            }
+
+            try {
+                const regex = new RegExp(parsed.source, parsed.flags);
+                const match = regex.exec(source);
+
+                pairs.push({
+                    key: key,
+                    value: match ? cleanValue(captureValue(match)) : '',
+                    error: null
+                });
+            } catch (error) {
+                pairs.push({
+                    key: key,
+                    value: '',
+                    error: error && error.message ? error.message : String(error)
+                });
+            }
+        });
+
+        return pairs;
+    }
+
+    /**
+     * แปลงข้อความเป็นคู่ "field: ค่า" ด้วยชุด regex คีย์-ค่า
+     *   ใช้ตอนกด "ปรับปรุง" ในกล่องข้อมูล — เฉพาะ field ที่จับค่าได้
+     * @param {string} text ข้อความต้นทาง
+     * @param {Object} kvPatterns field → regex
+     * @returns {{text: string, found: number, total: number, errors: Array}}
+     */
+    function keyValueText(text, kvPatterns) {
+        const pairs = keyValuePairs(text, kvPatterns);
+        const found = pairs.filter(function (pair) {
+            return pair.error === null && pair.value !== '';
+        });
+
+        return {
+            text: found.map(function (pair) {
+                return pair.key + ': ' +
+                    pair.value.replace(/\s+/g, ' ').trim();
+            }).join('\n'),
+            found: found.length,
+            total: pairs.length,
+            errors: pairs.filter(function (pair) {
+                return pair.error !== null;
+            })
+        };
+    }
+
+    /**
      * จับค่าทุก field จากข้อความ
      * @param {string} text ข้อความต้นทาง
      * @param {string[]} fields ชื่อ field ทั้งหมดของแม่แบบ
@@ -516,6 +589,8 @@
         parsePattern: parsePattern,
         listColumns: listColumns,
         matchField: matchField,
+        keyValuePairs: keyValuePairs,
+        keyValueText: keyValueText,
         apply: apply
     };
 })(window);

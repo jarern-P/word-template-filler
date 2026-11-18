@@ -455,6 +455,18 @@
         dataBtn.dataset.action = 'data';
         dataBtn.dataset.id = String(record.id);
 
+        // ตั้ง regex ชุด "คีย์-ค่า" (Key-Value Pair Extraction)
+        // แยกจาก regex ของ field — ใช้ตอนกด "ปรับปรุง"
+        const kvBtn = document.createElement('button');
+        kvBtn.type = 'button';
+        kvBtn.className = 'plain';
+        kvBtn.textContent = 'คีย์-ค่า';
+        kvBtn.title =
+            'ตั้ง regex ชุดคีย์-ค่า (Key-Value) ของแต่ละ field — ' +
+            'ใช้ตอนกด "ปรับปรุง" เพื่อจับค่าแล้วเขียนเป็น "field: ค่า"';
+        kvBtn.dataset.action = 'kv';
+        kvBtn.dataset.id = String(record.id);
+
         // เปิดเอกสารจริง (docx-preview) เพื่อดูตำแหน่งและแก้ข้อความ
         // (logic อยู่ใน app.js เพราะต้องอ่าน/เขียนฐานข้อมูล)
         const layoutBtn = document.createElement('button');
@@ -486,6 +498,7 @@
         actions.appendChild(layoutBtn);
         actions.appendChild(loadBtn);
         actions.appendChild(dataBtn);
+        actions.appendChild(kvBtn);
         actions.appendChild(copyBtn);
         actions.appendChild(deleteBtn);
 
@@ -1217,6 +1230,9 @@
     // regex ที่ใช้ดึงค่าของแต่ละ field (แก้ที่ปุ่ม "ข้อมูล" ของรายการแม่แบบ)
     let patternState = {};
 
+    // regex ชุดคีย์-ค่า (แก้ที่ปุ่ม "คีย์-ค่า") — หนึ่งค่า regex ต่อหนึ่ง field
+    let kvPatternState = {};
+
     // เติมสถานะติ๊กกลับเข้า checkbox หลังฟอร์มถูกวาดใหม่
     function renderLockState() {
         const form = document.getElementById('form');
@@ -1525,6 +1541,25 @@
                 const value = String(patterns[field] == null ? '' : patterns[field]);
 
                 if (value.trim() !== '') patternState[field] = value;
+            });
+        }
+    };
+
+    // ── regex ชุดคีย์-ค่า (Key-Value) ──
+
+    page.getKvPatterns = function () {
+        return Object.assign({}, kvPatternState);
+    };
+
+    // null/{} = ไม่มีชุดคีย์-ค่า
+    page.setKvPatterns = function (kvPatterns) {
+        kvPatternState = {};
+
+        if (kvPatterns && typeof kvPatterns === 'object') {
+            Object.keys(kvPatterns).forEach(function (key) {
+                const value = String(kvPatterns[key] == null ? '' : kvPatterns[key]);
+
+                if (value.trim() !== '') kvPatternState[key] = value;
             });
         }
     };

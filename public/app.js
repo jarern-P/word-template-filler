@@ -142,6 +142,11 @@
             config.setPatterns(null);
         }
 
+        // ล้างชุด regex คีย์-ค่าของแม่แบบเดิมด้วย
+        if (config && config.setKvPatterns) {
+            config.setKvPatterns(null);
+        }
+
         // ล้างโครงตารางที่ตั้งไว้ (type = Table)
         if (
             config &&
@@ -2060,6 +2065,12 @@
                         recordId
                     );
 
+                } else if (action === 'kv') {
+
+                    onOpenTemplateKv(
+                        recordId
+                    );
+
                 } else if (action === 'copy') {
 
                     onCopyTemplate(
@@ -2542,6 +2553,9 @@
             placeholders: scope.App.getFieldPlaceholders(),
 
             patterns: scope.App.getFieldPatterns(),
+
+            // regex ชุดคีย์-ค่า — ใช้เมื่อกด "ปรับปรุง" (จับค่าแล้วเขียนเป็น field: ค่า)
+            kvPatterns: scope.App.getFieldKvPatterns(),
 
             // list ที่อยู่กลุ่มเดียวกัน = แถวเดียวหลายคอลัมน์
             // regex ของแต่ละ field ใช้วงเล็บตามลำดับคอลัมน์
@@ -3590,6 +3604,12 @@
                             ? config.getPatterns()
                             : {},
 
+                    // regex ชุดคีย์-ค่า (ปุ่ม "คีย์-ค่า")
+                    kvPatterns:
+                        config.getKvPatterns
+                            ? config.getKvPatterns()
+                            : {},
+
                     // โครงตาราง (จำนวนคอลัมน์ / ชื่อหัวคอลัมน์)
                     // ของ field ที่เป็น type Table
                     tables:
@@ -4211,6 +4231,13 @@
                 );
             }
 
+            // คืน regex ชุดคีย์-ค่า (ใช้กับปุ่ม "คีย์-ค่า")
+            if (config.setKvPatterns) {
+                config.setKvPatterns(
+                    record.kv_patterns
+                );
+            }
+
             // คืนโครงตารางที่บันทึกไว้ใน template
             if (config.setTableSchemas) {
                 config.setTableSchemas(
@@ -4509,6 +4536,9 @@
                 patterns:
                     record.patterns || {},
 
+                kvPatterns:
+                    record.kv_patterns || {},
+
                 tables:
                     record.tables || {},
 
@@ -4550,6 +4580,10 @@
 
         await ensureDb();
 
+        // อ่านชุดคีย์-ค่าล่าสุด (อาจเพิ่งแก้ในกล่อง "คีย์-ค่า")
+        const latest =
+            (await scope.Db.get(record.id)) || record;
+
         await scope.Db.save({
 
             id:
@@ -4578,6 +4612,10 @@
 
             patterns:
                 patterns || {},
+
+            // คงชุดคีย์-ค่าเดิมไว้ (ปุ่ม "ข้อมูล" ไม่แตะชุดนี้)
+            kvPatterns:
+                latest.kv_patterns || {},
 
             tables:
                 record.tables,
@@ -4660,6 +4698,9 @@
 
                 patterns: record.patterns || {},
 
+                // ให้ปุ่ม "ปรับปรุง" ในกล่องนี้ใช้ชุดคีย์-ค่าได้ด้วย
+                kvPatterns: record.kv_patterns || {},
+
                 listGroups: record.list_groups || {},
 
                 onSavePatterns: function (patterns) {
@@ -4673,6 +4714,144 @@
 
             await scope.AppDialog.alert(
                 'เปิดหน้าข้อมูลไม่สำเร็จ: ' + error.message
+            );
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // คีย์-ค่า (หน้ารายการแม่แบบ → ปุ่ม "คีย์-ค่า")
+    //
+    // หน้าตาเหมือนปุ่ม "ข้อมูล" แต่แก้ regex ชุด Key-Value Pair Extraction
+    // ที่แยกจาก regex ของ field — คีย์คือ field ของแม่แบบ
+    // ชุดนี้ถูกใช้เมื่อกด "ปรับปรุง": จับค่าแล้วเขียนข้อความเป็น "field: ค่า"
+    // ──────────────────────────────────────────────────────────────
+
+    // บันทึกชุดคีย์-ค่าลงแม่แบบ (ไม่แตะ regex ของ field)
+    async function saveTemplateKvPatterns(record, kvPatterns) {
+
+        await ensureDb();
+
+        // อ่าน record ล่าสุดก่อนบันทึก — กัน regex ของ field ที่เพิ่งแก้ในกล่อง
+        // "ข้อมูล" ถูกทับด้วยค่าเก่าที่ค้างอยู่ในหน่วยความจำ
+        const latest =
+            (await scope.Db.get(record.id)) || record;
+
+        await scope.Db.save({
+
+            id:
+                latest.id,
+
+            name:
+                latest.name,
+
+            fileName:
+                latest.file_name,
+
+            docx:
+                latest.docx,
+
+            fields:
+                latest.fields,
+
+            types:
+                latest.types,
+
+            locks:
+                latest.locks,
+
+            placeholders:
+                latest.placeholders,
+
+            patterns:
+                latest.patterns || {},
+
+            kvPatterns:
+                kvPatterns || {},
+
+            tables:
+                latest.tables,
+
+            listGroups:
+                latest.list_groups,
+
+            listLimits:
+                latest.list_limits
+        });
+
+        // record ในหน่วยความจำต้องตรงกับสิ่งที่เพิ่งบันทึก
+        record.kv_patterns = kvPatterns || {};
+
+        // ถ้าแม่แบบนี้เป็นตัวที่โหลดอยู่ — อัปเดต state ของหน้า config ด้วย
+        if (state.templateId === record.id) {
+
+            const config =
+                getComponent(CONFIG_PAGE);
+
+            if (config.setKvPatterns) {
+                config.setKvPatterns(record.kv_patterns);
+            }
+        }
+
+        setDbStatus(
+            'บันทึกชุดคีย์-ค่าแล้ว: ' + record.name
+        );
+
+        await refreshTemplateList();
+    }
+
+    async function onOpenTemplateKv(recordId) {
+
+        if (!recordId) {
+            return;
+        }
+
+        try {
+
+            await ensureDb();
+
+            const record =
+                await scope.Db.get(
+                    recordId
+                );
+
+            if (!record) {
+
+                await scope.AppDialog.alert(
+                    'ไม่พบ template นี้ (อาจถูกลบไปแล้ว)'
+                );
+
+                await refreshTemplateList();
+
+                return;
+            }
+
+            scope.DataExtractDialog.open({
+
+                mode: 'kv',
+
+                title: 'คีย์-ค่า — ' + record.name,
+
+                templateName: record.name,
+
+                fields: record.fields || [],
+
+                types: record.types || {},
+
+                placeholders: record.placeholders || {},
+
+                kvPatterns: record.kv_patterns || {},
+
+                onSaveKvPatterns: function (kvPatterns) {
+                    return saveTemplateKvPatterns(record, kvPatterns);
+                }
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            await scope.AppDialog.alert(
+                'เปิดหน้าคีย์-ค่าไม่สำเร็จ: ' + error.message
             );
         }
     }
@@ -7521,6 +7700,24 @@
                     config.getPlaceholders
                 )
                     ? config.getPlaceholders()
+                    : {};
+            },
+
+        // regex ชุดคีย์-ค่า (ตั้งค่าในหน้า "ตั้งค่าแม่แบบ" → ปุ่ม "คีย์-ค่า")
+        // ใช้เมื่อกด "ปรับปรุง" — จับค่าแล้วเขียนเป็น "field: ค่า"
+        getFieldKvPatterns:
+            function () {
+
+                const config =
+                    getComponent(
+                        CONFIG_PAGE
+                    );
+
+                return (
+                    config &&
+                    config.getKvPatterns
+                )
+                    ? config.getKvPatterns()
                     : {};
             },
 

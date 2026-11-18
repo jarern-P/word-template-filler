@@ -61,6 +61,7 @@ const SCHEMA = `
         locks      TEXT NOT NULL DEFAULT '{}',
         placeholders TEXT NOT NULL DEFAULT '{}',
         patterns   TEXT NOT NULL DEFAULT '{}',
+        kv_patterns TEXT NOT NULL DEFAULT '{}',
         tables     TEXT NOT NULL DEFAULT '{}',
         list_groups TEXT NOT NULL DEFAULT '{}',
         list_limits TEXT NOT NULL DEFAULT '{}',
@@ -388,6 +389,39 @@ function migrateTemplatePatterns() {
 
 
 // ============================================================
+// Migration: เพิ่มคอลัมน์ kv_patterns ให้ตาราง templates
+// ============================================================
+
+// เก็บ regex ของชุด "คีย์-ค่า" (Key-Value Pair Extraction)
+// (ตั้งค่าในหน้าตั้งค่าแม่แบบ → ปุ่ม "คีย์-ค่า")
+function migrateTemplateKvPatterns() {
+
+    const columns =
+        db.prepare(`
+            PRAGMA table_info(templates)
+        `).all();
+
+    // ยังไม่มีตาราง templates (ฐานข้อมูลใหม่) SCHEMA จะสร้างให้พร้อมคอลัมน์อยู่แล้ว
+    if (columns.length === 0) {
+        return;
+    }
+
+    if (columns.some(column => column.name === "kv_patterns")) {
+        return;
+    }
+
+    db.exec(`
+        ALTER TABLE templates
+        ADD COLUMN kv_patterns TEXT NOT NULL DEFAULT '{}'
+    `);
+
+    console.log(
+        "Migrated templates table: added 'kv_patterns' column"
+    );
+}
+
+
+// ============================================================
 // Migration: เพิ่มคอลัมน์ tables ให้ตาราง templates
 // ============================================================
 
@@ -596,6 +630,7 @@ function openDatabase() {
     migrateTemplateListGroups();
     migrateTemplateListLimits();
     migrateTemplatePatterns();
+    migrateTemplateKvPatterns();
     migrateSensitiveTermsRequireKnown();
     db.exec(SCHEMA);
 
@@ -658,6 +693,7 @@ function handleSave(message) {
             locks,
             placeholders,
             patterns,
+            kvPatterns,
             tables,
             listGroups,
             listLimits
@@ -688,6 +724,9 @@ function handleSave(message) {
 
         const patternsJson =
             JSON.stringify(patterns || {});
+
+        const kvPatternsJson =
+            JSON.stringify(kvPatterns || {});
 
         const tablesJson =
             JSON.stringify(tables || {});
@@ -724,6 +763,7 @@ function handleSave(message) {
                         locks = @locks,
                         placeholders = @placeholders,
                         patterns = @patterns,
+                        kv_patterns = @kv_patterns,
                         tables = @tables,
                         list_groups = @list_groups,
                         list_limits = @list_limits,
@@ -740,6 +780,7 @@ function handleSave(message) {
                     locks: locksJson,
                     placeholders: placeholdersJson,
                     patterns: patternsJson,
+                    kv_patterns: kvPatternsJson,
                     tables: tablesJson,
                     list_groups: listGroupsJson,
                     list_limits: listLimitsJson,
@@ -778,6 +819,7 @@ function handleSave(message) {
                         locks,
                         placeholders,
                         patterns,
+                        kv_patterns,
                         tables,
                         list_groups,
                         list_limits,
@@ -793,6 +835,7 @@ function handleSave(message) {
                         @locks,
                         @placeholders,
                         @patterns,
+                        @kv_patterns,
                         @tables,
                         @list_groups,
                         @list_limits,
@@ -809,6 +852,7 @@ function handleSave(message) {
                     locks: locksJson,
                     placeholders: placeholdersJson,
                     patterns: patternsJson,
+                    kv_patterns: kvPatternsJson,
                     tables: tablesJson,
                     list_groups: listGroupsJson,
                     list_limits: listLimitsJson,
@@ -876,6 +920,7 @@ function handleList(message) {
                     locks,
                     placeholders,
                     patterns,
+                    kv_patterns,
                     tables,
                     list_groups,
                     list_limits,
@@ -897,6 +942,7 @@ function handleList(message) {
                 locks: JSON.parse(row.locks || "{}"),
                 placeholders: JSON.parse(row.placeholders || "{}"),
                 patterns: JSON.parse(row.patterns || "{}"),
+                kv_patterns: JSON.parse(row.kv_patterns || "{}"),
                 tables: JSON.parse(row.tables || "{}"),
                 list_groups: JSON.parse(row.list_groups || "{}"),
                 list_limits: JSON.parse(row.list_limits || "{}"),
@@ -955,6 +1001,7 @@ function handleGet(message) {
                     locks,
                     placeholders,
                     patterns,
+                    kv_patterns,
                     tables,
                     list_groups,
                     list_limits,
@@ -1004,6 +1051,9 @@ function handleGet(message) {
 
             patterns:
                 JSON.parse(row.patterns || "{}"),
+
+            kv_patterns:
+                JSON.parse(row.kv_patterns || "{}"),
 
             tables:
                 JSON.parse(row.tables || "{}"),

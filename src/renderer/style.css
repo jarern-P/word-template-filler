@@ -4181,6 +4181,7 @@ body.table-ratio-dragging .table-ratio-handle {
 .data-pattern-type {
     font-size: 12px;
     color: var(--ink-faint);
+    overflow-wrap: anywhere;
 }
 
 .data-pattern-input {
@@ -4241,6 +4242,16 @@ body.table-ratio-dragging .table-ratio-handle {
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius);
+}
+
+/* ข้อความที่จัดตามพิกัด (OCR/PDF) — ใช้ฟอนต์ความกว้างเท่ากัน
+   เพื่อให้ช่องว่างนำหน้า/คั่นทำให้คอลัมน์ตรงกัน */
+.data-source-text.is-layout {
+    font-family: ui-monospace, "Cascadia Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: pre;
+    overflow-x: auto;
 }
 
 /* ข้อความที่จัดตามพิกัด (OCR/PDF) — ใช้ฟอนต์ความกว้างเท่ากัน
